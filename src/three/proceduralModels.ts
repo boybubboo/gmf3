@@ -2924,13 +2924,90 @@ export function buildEntityMesh(entity: LevelEntity): THREE.Group {
     }
 
     case 'platform': {
+      const preset = entity.platformPreset ?? 'stoneLift';
+      if (preset === 'bouncePad') {
+        const baseMat = new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.45, metalness: 0.72 });
+        const coilMat = new THREE.MeshStandardMaterial({ color: '#94A3B8', roughness: 0.35, metalness: 0.85 });
+        const padMat = new THREE.MeshStandardMaterial({
+          color: entity.styleTint || '#F59E0B',
+          emissive: '#F97316',
+          emissiveIntensity: 0.35,
+          roughness: 0.4,
+        });
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.05, 0.16, 20), baseMat);
+        base.position.y = 0.08;
+        const spring = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.09, 10, 20), coilMat);
+        spring.rotation.x = Math.PI / 2;
+        spring.position.y = 0.24;
+        const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.86, 0.18, 22), padMat);
+        pad.position.y = 0.36;
+        pad.castShadow = true;
+        pad.receiveShadow = true;
+        group.add(base, spring, pad);
+        break;
+      }
+      if (preset === 'sawWheel') {
+        const hubMat = new THREE.MeshStandardMaterial({ color: '#1E293B', roughness: 0.4, metalness: 0.82 });
+        const bladeMat = new THREE.MeshStandardMaterial({
+          color: '#E2E8F0',
+          emissive: '#EF4444',
+          emissiveIntensity: 0.22,
+          roughness: 0.25,
+          metalness: 0.9,
+        });
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.24, 16), hubMat);
+        hub.position.y = 0.24;
+        const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.08, 24), bladeMat);
+        disc.position.y = 0.24;
+        disc.castShadow = true;
+        group.add(hub, disc);
+        for (let i = 0; i < 8; i++) {
+          const ang = (i / 8) * Math.PI * 2;
+          const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.34, 4), bladeMat);
+          tooth.position.set(Math.cos(ang) * 1.22, 0.24, Math.sin(ang) * 1.22);
+          tooth.rotation.z = -Math.PI / 2;
+          tooth.rotation.y = -ang;
+          group.add(tooth);
+        }
+        break;
+      }
+      if (preset === 'jungleVine') {
+        const logMat = new THREE.MeshStandardMaterial({ color: entity.styleTint || '#6D442B', roughness: 0.82 });
+        const leafMat = new THREE.MeshStandardMaterial({ color: '#22C55E', roughness: 0.72 });
+        const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, 2.4, 10), logMat);
+        branch.rotation.z = Math.PI / 2;
+        branch.position.y = 0.22;
+        branch.castShadow = true;
+        branch.receiveShadow = true;
+        const topLeaf1 = new THREE.Mesh(new THREE.DodecahedronGeometry(0.42, 0), leafMat);
+        topLeaf1.position.set(-0.95, 0.3, 0.12);
+        topLeaf1.scale.set(1.2, 0.45, 0.9);
+        const topLeaf2 = new THREE.Mesh(new THREE.DodecahedronGeometry(0.38, 0), leafMat);
+        topLeaf2.position.set(0.95, 0.3, -0.1);
+        topLeaf2.scale.set(1.2, 0.45, 0.9);
+        group.add(branch, topLeaf1, topLeaf2);
+        break;
+      }
+      if (preset === 'crumbleStone') {
+        const stoneMat = new THREE.MeshStandardMaterial({ color: entity.styleTint || '#A89F91', roughness: 0.92, flatShading: true });
+        const crackMat = new THREE.MeshStandardMaterial({ color: '#57534E', roughness: 0.95 });
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.32, 1.8, 3, 2, 3), stoneMat);
+        deck.position.y = 0.16;
+        deck.castShadow = true;
+        deck.receiveShadow = true;
+        const seam = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.06, 0.12), crackMat);
+        seam.position.set(0, 0.31, 0.1);
+        seam.rotation.y = 0.35;
+        group.add(deck, seam);
+        break;
+      }
       const stoneMat = new THREE.MeshStandardMaterial({
-        color: entity.platformPreset === 'swingingBridge' ? '#9C6B3F' : entity.platformPreset === 'spinningDisc' ? '#5E6885' : '#8A93A2',
+        color: entity.styleTint || (preset === 'swingingBridge' ? '#9C6B3F' : preset === 'spinningDisc' ? '#5E6885' : '#8A93A2'),
         roughness: 0.72,
       });
       const trimMat = new THREE.MeshStandardMaterial({ color: '#6C4CF1', emissive: '#6C4CF1', emissiveIntensity: 0.35, roughness: 0.35 });
-      const isDisc = entity.platformPreset === 'spinningDisc';
-      const isBridge = entity.platformPreset === 'swingingBridge';
+      const isDisc = preset === 'spinningDisc';
+      const isBridge = preset === 'swingingBridge';
       const deck = new THREE.Mesh(
         isDisc
           ? new THREE.CylinderGeometry(1.1, 1.0, 0.3, 24, 2)

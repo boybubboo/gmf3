@@ -16,7 +16,7 @@ import type {
 } from '../types/maker';
 import { uid } from '../utils/terrain';
 
-export type PresetCategory = 'doors' | 'chests' | 'switches' | 'traps' | 'saved';
+export type PresetCategory = 'doors' | 'chests' | 'switches' | 'traps' | 'contraptions' | 'saved';
 
 export interface MechanismPresetDef {
   id: string;
@@ -34,6 +34,12 @@ export interface MechanismPresetDef {
   easing: MotionEasing;
   playbackMode: MechanismPlaybackMode;
   autoReturnDelay?: number;
+  spinSpeedDegPerSec?: number;
+  swingAmplitudeDeg?: number;
+  swingFrequencyHz?: number;
+  bounceVelocity?: number;
+  transportTarget?: { x: number; y: number };
+  isHazard?: boolean;
   triggers: Omit<MechanismTriggerRule, 'id'>[];
   isCustom?: boolean;
 }
@@ -384,6 +390,101 @@ export const BUILTIN_MECHANISM_PRESETS: MechanismPresetDef[] = [
       },
     ],
   },
+  {
+    id: 'preset_giant_spring',
+    name: 'Giant Launch Spring',
+    category: 'contraptions',
+    summary: 'Squashes & stretches upward on touch, launching the hero high into upper tiers.',
+    kind: 'springBounce',
+    axis: 'y',
+    pivotSnap: 'bottomCenter',
+    restAngleDeg: 0,
+    openAngleDeg: 0,
+    restOffset: 0,
+    openOffset: 0.85,
+    duration: 0.28,
+    easing: 'elastic',
+    playbackMode: 'autoReturn',
+    autoReturnDelay: 0.35,
+    bounceVelocity: 19.0,
+    triggers: [
+      {
+        event: 'playerTouches',
+        radius: 1.5,
+        condition: 'none',
+        action: 'open',
+        message: 'BOING! High launch!',
+        sound: 'jump',
+      },
+    ],
+  },
+  {
+    id: 'preset_spinning_saw',
+    name: 'Continuous Spinning Rotor',
+    category: 'contraptions',
+    summary: 'Continuously rotates around its axis (ideal for saw blades, millwheels, propellers).',
+    kind: 'spinner',
+    axis: 'z',
+    pivotSnap: 'partCenter',
+    restAngleDeg: 0,
+    openAngleDeg: 360,
+    restOffset: 0,
+    openOffset: 0,
+    duration: 1.0,
+    easing: 'linear',
+    playbackMode: 'toggle',
+    spinSpeedDegPerSec: 165,
+    isHazard: true,
+    triggers: [],
+  },
+  {
+    id: 'preset_pendulum_vine',
+    name: 'Swinging Pendulum',
+    category: 'contraptions',
+    summary: 'Swings back and forth rhythmically from its top pivot (wrecking balls, axes, vines).',
+    kind: 'pendulum',
+    axis: 'z',
+    pivotSnap: 'topCenter',
+    restAngleDeg: 0,
+    openAngleDeg: 48,
+    restOffset: 0,
+    openOffset: 0,
+    duration: 1.0,
+    easing: 'smooth',
+    playbackMode: 'toggle',
+    swingAmplitudeDeg: 50,
+    swingFrequencyHz: 0.65,
+    isHazard: true,
+    triggers: [],
+  },
+  {
+    id: 'preset_warp_cannon',
+    name: 'Transporter / Warp Pad',
+    category: 'contraptions',
+    summary: 'Teleports or blasts the player to another spot or secret room on Interact or Touch.',
+    kind: 'transporter',
+    axis: 'y',
+    pivotSnap: 'partCenter',
+    restAngleDeg: 0,
+    openAngleDeg: 0,
+    restOffset: 0,
+    openOffset: 0.3,
+    duration: 0.45,
+    easing: 'elastic',
+    playbackMode: 'autoReturn',
+    autoReturnDelay: 0.5,
+    transportTarget: { x: 0.72, y: 0.5 },
+    triggers: [
+      {
+        event: 'playerUses',
+        radius: 2.1,
+        condition: 'none',
+        action: 'open',
+        message: 'Warped through transporter!',
+        sound: 'sparkle',
+      },
+    ],
+  },
 ];
 
 export const PUZZLE_CHAIN_PRESETS: PuzzleChainPresetDef[] = [
@@ -534,11 +635,26 @@ export function instantiatePresetForPart(
     easing: preset.easing,
     playbackMode: preset.playbackMode,
     autoReturnDelay: preset.autoReturnDelay,
+    spinSpeedDegPerSec: preset.spinSpeedDegPerSec,
+    swingAmplitudeDeg: preset.swingAmplitudeDeg,
+    swingFrequencyHz: preset.swingFrequencyHz,
+    bounceVelocity: preset.bounceVelocity,
+    transportTarget: preset.transportTarget,
+    isHazard: preset.isHazard,
     triggers: preset.triggers.map((t) => ({ ...t, id: uid() })),
   };
 }
 
 const CUSTOM_PRESETS_STORAGE_KEY = 'maker_interaction_custom_presets_v1';
+
+const VALID_MECH_KINDS: MechanismKind[] = [
+  'hinge',
+  'slider',
+  'spinner',
+  'pendulum',
+  'springBounce',
+  'transporter',
+];
 
 export function loadSavedMechanismPresets(): MechanismPresetDef[] {
   try {
@@ -547,7 +663,11 @@ export function loadSavedMechanismPresets(): MechanismPresetDef[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
-      (p) => p && typeof p.id === 'string' && typeof p.name === 'string' && (p.kind === 'hinge' || p.kind === 'slider')
+      (p) =>
+        p &&
+        typeof p.id === 'string' &&
+        typeof p.name === 'string' &&
+        VALID_MECH_KINDS.includes(p.kind)
     );
   } catch {
     return [];
@@ -566,14 +686,31 @@ export function createPresetFromMechanism(
   mech: ObjectMechanism,
   customName: string
 ): MechanismPresetDef {
+  const kindLabel =
+    mech.kind === 'hinge'
+      ? `Hinge ${mech.axis.toUpperCase()} (${mech.openAngleDeg}°)`
+      : mech.kind === 'spinner'
+      ? `Spinner ${mech.axis.toUpperCase()} (${mech.spinSpeedDegPerSec ?? 140}°/s)`
+      : mech.kind === 'pendulum'
+      ? `Pendulum ${mech.axis.toUpperCase()} (±${mech.swingAmplitudeDeg ?? 46}°)`
+      : mech.kind === 'springBounce'
+      ? `Spring Bounce (${mech.bounceVelocity ?? 18.5}m/s)`
+      : mech.kind === 'transporter'
+      ? `Transporter Warp`
+      : `Slider ${mech.axis.toUpperCase()} (${mech.openOffset}m)`;
   return {
     id: `custom_${uid()}`,
     name: customName.trim() || mech.name,
     category: 'saved',
-    summary: `${mech.kind === 'hinge' ? `Hinge ${mech.axis.toUpperCase()} (${mech.openAngleDeg}°)` : `Slider ${mech.axis.toUpperCase()} (${mech.openOffset}m)`} · ${mech.triggers.length} trigger${mech.triggers.length === 1 ? '' : 's'}`,
+    summary: `${kindLabel} · ${mech.triggers.length} trigger${mech.triggers.length === 1 ? '' : 's'}`,
     kind: mech.kind,
     axis: mech.axis,
-    pivotSnap: mech.kind === 'hinge' ? 'backEdge' : 'partCenter',
+    pivotSnap:
+      mech.kind === 'hinge'
+        ? 'backEdge'
+        : mech.kind === 'pendulum'
+        ? 'topCenter'
+        : 'partCenter',
     restAngleDeg: mech.restAngleDeg,
     openAngleDeg: mech.openAngleDeg,
     restOffset: mech.restOffset,
@@ -582,6 +719,12 @@ export function createPresetFromMechanism(
     easing: mech.easing,
     playbackMode: mech.playbackMode,
     autoReturnDelay: mech.autoReturnDelay,
+    spinSpeedDegPerSec: mech.spinSpeedDegPerSec,
+    swingAmplitudeDeg: mech.swingAmplitudeDeg,
+    swingFrequencyHz: mech.swingFrequencyHz,
+    bounceVelocity: mech.bounceVelocity,
+    transportTarget: mech.transportTarget,
+    isHazard: mech.isHazard,
     triggers: mech.triggers.map(({ id: _omit, ...rest }) => ({ ...rest })),
     isCustom: true,
   };

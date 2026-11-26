@@ -5,9 +5,15 @@ import type {
   EnvironmentType,
   GameLevel,
   MountainProfileConfig,
+  PlatformMotionType,
   PropPresetId,
   RoadSpline,
   ScatterItem,
+  SidePlatformSegment,
+  SideScrollerConfig,
+  SideScrollerLayersConfig,
+  SideScrollerLayoutStyle,
+  SideScrollerThemeId,
   TerrainBrush,
   TerrainBrushFalloff,
   TerrainBrushOptions,
@@ -16,7 +22,7 @@ import type {
   WallColliderBox,
   WaterBodyConfig,
 } from '../types/maker';
-export type { WallColliderBox } from '../types/maker';
+export type { SidePlatformSegment, WallColliderBox } from '../types/maker';
 
 export function createDefaultMountainConfig(): MountainProfileConfig {
   return {
@@ -168,14 +174,6 @@ export interface IslandHill {
   center: [number, number];
   radii: [number, number];
   height: number;
-}
-
-export interface SidePlatformSegment {
-  minX: number;
-  maxX: number;
-  y: number;
-  thickness: number;
-  style: 'cliff' | 'bridge' | 'stone';
 }
 
 // Reachable enterable cave carved into the southern base of the western mountain near the starting trail
@@ -563,6 +561,318 @@ export const SIDE_SCROLLER_SEGMENTS: SidePlatformSegment[] = [
   { minX: 23, maxX: 37, y: 1.4, thickness: 4.5, style: 'cliff' },
   { minX: 39.5, maxX: 56, y: 2.6, thickness: 4.5, style: 'cliff' },
 ];
+
+export function getSideScrollerThemeLayers(theme: SideScrollerThemeId): SideScrollerLayersConfig {
+  switch (theme) {
+    case 'jungleCanopy':
+      return {
+        foregroundStyle: 'jungleFraming',
+        foregroundColor: '#1F4D2A',
+        heroLaneColor: '#4F772D',
+        heroTrimColor: '#8C5E34',
+        midgroundStyle: 'jungleTreesAndVines',
+        midgroundColor: '#2D6A4F',
+        farStyle: 'jungleMistCanopy',
+        farColor: '#74C69D',
+        liquidType: 'water',
+        liquidLevelY: -5.8,
+        liquidColor: '#2A9D8F',
+      };
+    case 'underwaterCoral':
+      return {
+        foregroundStyle: 'coralSilhouette',
+        foregroundColor: '#114B5F',
+        heroLaneColor: '#E9C46A',
+        heroTrimColor: '#F4A261',
+        midgroundStyle: 'coralReefAndKelp',
+        midgroundColor: '#1B7F79',
+        farStyle: 'deepOceanRays',
+        farColor: '#0B3954',
+        liquidType: 'water',
+        liquidLevelY: 22.0,
+        liquidColor: '#1CA3EC',
+      };
+    case 'volcanicForge':
+      return {
+        foregroundStyle: 'cavernStalactites',
+        foregroundColor: '#2B1B17',
+        heroLaneColor: '#4A3B39',
+        heroTrimColor: '#EA580C',
+        midgroundStyle: 'volcanicSpires',
+        midgroundColor: '#3F2724',
+        farStyle: 'volcanoPeaks',
+        farColor: '#7C2D12',
+        liquidType: 'lava',
+        liquidLevelY: -4.8,
+        liquidColor: '#F97316',
+      };
+    case 'crystalCavern':
+      return {
+        foregroundStyle: 'cavernStalactites',
+        foregroundColor: '#1E1B4B',
+        heroLaneColor: '#4338CA',
+        heroTrimColor: '#38BDF8',
+        midgroundStyle: 'crystalCaverns',
+        midgroundColor: '#312E81',
+        farStyle: 'cavernVault',
+        farColor: '#1E1B4B',
+        liquidType: 'water',
+        liquidLevelY: -6.0,
+        liquidColor: '#22D3EE',
+      };
+    case 'skyTemple':
+      return {
+        foregroundStyle: 'none',
+        foregroundColor: '#64748B',
+        heroLaneColor: '#E2E8F0',
+        heroTrimColor: '#F59E0B',
+        midgroundStyle: 'floatingTemples',
+        midgroundColor: '#94A3B8',
+        farStyle: 'cloudPillars',
+        farColor: '#DBEAFE',
+        liquidType: 'mist',
+        liquidLevelY: -6.5,
+        liquidColor: '#E0F2FE',
+      };
+    case 'sunnyCliffs':
+    default:
+      return {
+        foregroundStyle: 'shrubsAndRocks',
+        foregroundColor: '#39414E',
+        heroLaneColor: '#6E9F4E',
+        heroTrimColor: '#9C6638',
+        midgroundStyle: 'cliffsAndPines',
+        midgroundColor: '#616E7D',
+        farStyle: 'alpineMountains',
+        farColor: '#9EB3C8',
+        liquidType: 'water',
+        liquidLevelY: -6.2,
+        liquidColor: '#38BDF8',
+      };
+  }
+}
+
+export function createSideScrollerPresetConfig(
+  layoutStyle: SideScrollerLayoutStyle,
+  themeOverride?: SideScrollerThemeId
+): SideScrollerConfig {
+  const defaultTheme: SideScrollerThemeId =
+    themeOverride ??
+    (layoutStyle === 'layeredJungle'
+      ? 'jungleCanopy'
+      : layoutStyle === 'underwater'
+      ? 'underwaterCoral'
+      : layoutStyle === 'verticalClimber'
+      ? 'volcanicForge'
+      : layoutStyle === 'skyTemple'
+      ? 'skyTemple'
+      : layoutStyle === 'cavern'
+      ? 'crystalCavern'
+      : 'sunnyCliffs');
+  const layers = getSideScrollerThemeLayers(defaultTheme);
+
+  if (layoutStyle === 'verticalClimber') {
+    return {
+      layoutStyle: 'verticalClimber',
+      theme: defaultTheme,
+      layers,
+      gravityScale: 1.0,
+      swimPhysics: false,
+      segments: [
+        { id: 'v_base', minX: -36, maxX: 36, y: 0.2, thickness: 4.5, style: 'girder', oneWay: false },
+        { id: 'v_tier1_l', minX: -32, maxX: -2, y: 4.2, thickness: 0.9, style: 'girder', oneWay: true },
+        { id: 'v_tier1_r', minX: 4, maxX: 32, y: 4.8, thickness: 0.9, style: 'girder', oneWay: true },
+        { id: 'v_tier2_l', minX: -28, maxX: 8, y: 8.8, thickness: 0.9, style: 'girder', oneWay: true },
+        { id: 'v_tier2_r', minX: 12, maxX: 32, y: 9.4, thickness: 0.9, style: 'girder', oneWay: true },
+        { id: 'v_tier3_c', minX: -24, maxX: 26, y: 13.4, thickness: 0.9, style: 'girder', oneWay: true },
+        { id: 'v_summit', minX: -16, maxX: 18, y: 17.6, thickness: 1.1, style: 'stone', oneWay: true },
+      ],
+      vines: [
+        { id: 'lad_1', kind: 'ladder', x: 14, bottomY: 0.2, topY: 4.9 },
+        { id: 'lad_2', kind: 'ladder', x: -16, bottomY: 4.2, topY: 8.9 },
+        { id: 'lad_3', kind: 'ladder', x: 4, bottomY: 8.8, topY: 13.5 },
+        { id: 'lad_4', kind: 'ladder', x: -8, bottomY: 13.4, topY: 17.7 },
+      ],
+      secretRooms: [
+        {
+          id: 'sec_climber_vault',
+          name: 'Hidden Boiler Loft',
+          entranceX: -29,
+          entranceY: 4.2,
+          roomCenterX: 46,
+          roomCenterY: 6.0,
+          width: 12,
+          height: 6,
+          floorColor: '#3B2820',
+          wallColor: '#1E1514',
+          accentColor: '#F59E0B',
+          exitX: 41,
+          exitY: 6.0,
+        },
+      ],
+    };
+  }
+
+  if (layoutStyle === 'layeredJungle') {
+    return {
+      layoutStyle: 'layeredJungle',
+      theme: defaultTheme,
+      layers,
+      gravityScale: 1.0,
+      swimPhysics: false,
+      segments: [
+        { id: 'j_floor_1', minX: -54, maxX: -18, y: 0.2, thickness: 4.5, style: 'jungleFloor', oneWay: false },
+        { id: 'j_branch_1', minX: -32, maxX: -14, y: 4.0, thickness: 0.85, style: 'branch', oneWay: true },
+        { id: 'j_floor_2', minX: -13, maxX: 18, y: 0.4, thickness: 4.5, style: 'jungleFloor', oneWay: false },
+        { id: 'j_branch_2', minX: -6, maxX: 14, y: 4.6, thickness: 0.85, style: 'branch', oneWay: true },
+        { id: 'j_canopy_top', minX: 4, maxX: 24, y: 8.4, thickness: 0.85, style: 'branch', oneWay: true },
+        { id: 'j_floor_3', minX: 23, maxX: 54, y: 1.1, thickness: 4.5, style: 'jungleFloor', oneWay: false },
+        { id: 'j_branch_3', minX: 28, maxX: 46, y: 5.1, thickness: 0.85, style: 'branch', oneWay: true },
+      ],
+      vines: [
+        { id: 'vine_1', kind: 'vine', x: -15.5, bottomY: 1.2, topY: 7.4 },
+        { id: 'vine_2', kind: 'vine', x: 3.0, bottomY: 0.5, topY: 8.8 },
+        { id: 'vine_3', kind: 'vine', x: 20.5, bottomY: 1.5, topY: 7.6 },
+      ],
+      secretRooms: [
+        {
+          id: 'sec_jungle_hollow',
+          name: 'Secret Banana Hollow',
+          entranceX: -2,
+          entranceY: 0.4,
+          roomCenterX: 0,
+          roomCenterY: -13.0,
+          width: 16,
+          height: 6.5,
+          floorColor: '#3B5E2B',
+          wallColor: '#1E3119',
+          accentColor: '#FACC15',
+          exitX: -6,
+          exitY: -13.0,
+        },
+      ],
+    };
+  }
+
+  if (layoutStyle === 'underwater') {
+    return {
+      layoutStyle: 'underwater',
+      theme: defaultTheme,
+      layers,
+      gravityScale: 0.38,
+      swimPhysics: true,
+      segments: [
+        { id: 'u_reef_1', minX: -54, maxX: -20, y: 0.2, thickness: 4.5, style: 'coral', oneWay: false },
+        { id: 'u_shelf_1', minX: -28, maxX: -12, y: 4.4, thickness: 0.9, style: 'coral', oneWay: true },
+        { id: 'u_reef_2', minX: -14, maxX: 16, y: -0.6, thickness: 4.5, style: 'coral', oneWay: false },
+        { id: 'u_shelf_2', minX: -4, maxX: 14, y: 5.2, thickness: 0.9, style: 'coral', oneWay: true },
+        { id: 'u_reef_3', minX: 22, maxX: 54, y: 0.8, thickness: 4.5, style: 'coral', oneWay: false },
+      ],
+      vines: [
+        { id: 'bub_1', kind: 'bubbleStream', x: -17, bottomY: -1.0, topY: 8.5 },
+        { id: 'bub_2', kind: 'bubbleStream', x: 19, bottomY: -0.5, topY: 9.2 },
+      ],
+      secretRooms: [
+        {
+          id: 'sec_sunken_grotto',
+          name: 'Sunken Pearl Grotto',
+          entranceX: 6,
+          entranceY: -0.6,
+          roomCenterX: 0,
+          roomCenterY: -13.5,
+          width: 16,
+          height: 7,
+          floorColor: '#0E7490',
+          wallColor: '#083344',
+          accentColor: '#38BDF8',
+          exitX: -6,
+          exitY: -13.5,
+        },
+      ],
+    };
+  }
+
+  // flat2D / skyTemple / cavern default layout
+  const defaultStyle =
+    layoutStyle === 'skyTemple' ? 'cloud' : layoutStyle === 'cavern' ? 'crystal' : 'cliff';
+  return {
+    layoutStyle,
+    theme: defaultTheme,
+    layers,
+    gravityScale: 1.0,
+    swimPhysics: false,
+    segments: SIDE_SCROLLER_SEGMENTS.map((seg, i) => ({
+      ...seg,
+      id: `flat_${i}`,
+      style: i === 1 ? 'bridge' : i === 3 ? 'stone' : defaultStyle,
+      oneWay: i === 1 || i === 3,
+    })),
+    vines:
+      layoutStyle === 'cavern'
+        ? [{ id: 'lad_cav_1', kind: 'ladder', x: 9.5, bottomY: 0.8, topY: 2.6 }]
+        : [],
+    secretRooms: [],
+  };
+}
+
+export function getSideScrollerConfig(level?: Partial<GameLevel> | null): SideScrollerConfig {
+  if (level?.sideScrollerConfig && Array.isArray(level.sideScrollerConfig.segments)) {
+    return level.sideScrollerConfig;
+  }
+  const layers = getSideScrollerThemeLayers('sunnyCliffs');
+  return {
+    layoutStyle: 'flat2D',
+    theme: 'sunnyCliffs',
+    segments: SIDE_SCROLLER_SEGMENTS.map((s, idx) => ({ ...s, id: `seg_${idx}` })),
+    vines: [],
+    secretRooms: [],
+    layers,
+    gravityScale: 1.0,
+    swimPhysics: false,
+  };
+}
+
+export function getSideScrollerSegments(level?: Partial<GameLevel> | null): SidePlatformSegment[] {
+  const cfg = level?.sideScrollerConfig;
+  const baseSegs =
+    cfg && Array.isArray(cfg.segments) && cfg.segments.length > 0
+      ? cfg.segments
+      : SIDE_SCROLLER_SEGMENTS;
+  if (!cfg?.secretRooms?.length) return baseSegs;
+  const roomFloors: SidePlatformSegment[] = cfg.secretRooms.map((r) => ({
+    id: `secfloor_${r.id}`,
+    minX: r.roomCenterX - r.width * 0.5,
+    maxX: r.roomCenterX + r.width * 0.5,
+    y: r.roomCenterY,
+    thickness: 1.4,
+    style: 'stone',
+    color: r.floorColor,
+    oneWay: false,
+    isSecretFloor: true,
+  }));
+  return [...baseSegs, ...roomFloors];
+}
+
+export function sampleSideScrollerSurfaceAtY(
+  level: GameLevel,
+  x: number,
+  z: number,
+  actorY: number,
+  allowDropThrough = false
+): number {
+  if (Math.abs(z) > 3.6) return -28;
+  const segs = getSideScrollerSegments(level);
+  let bestY = -28;
+  for (const seg of segs) {
+    if (x >= seg.minX && x <= seg.maxX) {
+      if (allowDropThrough && seg.oneWay) continue;
+      if (seg.y <= actorY + 0.65 && seg.y > bestY) {
+        bestY = seg.y;
+      }
+    }
+  }
+  return bestY;
+}
 
 export const DUNGEON_WALL_BOXES: WallColliderBox[] = [
   // Outer stone perimeter walls (south parapet lower so front camera never clips)
@@ -2023,13 +2333,18 @@ export function sampleLevelHeight(level: GameLevel, x: number, z: number): numbe
     return rim * rim * 2.4;
   }
   if (env === 'sideScroller') {
-    if (Math.abs(z) > 3.6) return -10;
-    for (const seg of SIDE_SCROLLER_SEGMENTS) {
+    if (Math.abs(z) > 3.6) return -28;
+    const segs = getSideScrollerSegments(level);
+    let lowestBaseY: number | null = null;
+    for (const seg of segs) {
+      if (seg.isSecretFloor) continue;
       if (x >= seg.minX && x <= seg.maxX) {
-        return seg.y;
+        if (lowestBaseY === null || seg.y < lowestBaseY) {
+          lowestBaseY = seg.y;
+        }
       }
     }
-    return -10;
+    return lowestBaseY ?? -28;
   }
 
   let h = sampleTerrainHeight(level.terrain, x, z);
@@ -2619,15 +2934,22 @@ export const PlatformMotion = {
     { id: 'stoneLift', title: 'Stone lift' },
     { id: 'swingingBridge', title: 'Swinging bridge' },
     { id: 'spinningDisc', title: 'Spinning disc' },
+    { id: 'jungleVine', title: 'Jungle canopy platform' },
+    { id: 'bouncePad', title: 'Giant bounce pad' },
+    { id: 'crumbleStone', title: 'Mossy ledge' },
+    { id: 'sawWheel', title: 'Spinning saw wheel' },
   ] as const,
 
   hover(preset: string): number {
-    return preset === 'spinningDisc' ? 0.45 : 0.55;
+    if (preset === 'spinningDisc' || preset === 'sawWheel') return 0.45;
+    if (preset === 'bouncePad') return 0.15;
+    return 0.55;
   },
 
   halfExtent(preset: string): number {
-    if (preset === 'swingingBridge') return 1.45;
-    if (preset === 'spinningDisc') return 1.25;
+    if (preset === 'swingingBridge' || preset === 'jungleVine') return 1.45;
+    if (preset === 'spinningDisc' || preset === 'sawWheel') return 1.25;
+    if (preset === 'bouncePad') return 1.1;
     return 1.2;
   },
 
@@ -2637,15 +2959,40 @@ export const PlatformMotion = {
     end: [number, number, number],
     speed: number,
     wait: number,
-    spin: boolean
-  ): { position: [number, number, number]; yaw: number } {
-    if (spin) {
-      const yaw = (time * Math.max(0.2, speed) * 1.3) % (Math.PI * 2);
+    spinOrMotion: boolean | PlatformMotionType
+  ): { position: [number, number, number]; yaw: number; swingAngle?: number } {
+    const motion: PlatformMotionType =
+      typeof spinOrMotion === 'boolean'
+        ? spinOrMotion
+          ? 'spin'
+          : 'slide'
+        : spinOrMotion;
+
+    if (motion === 'spin') {
+      const yaw = (time * Math.max(0.2, speed) * 1.4) % (Math.PI * 2);
       return { position: start, yaw };
     }
-    const dx = end[0] - start[0];
-    const dy = end[1] - start[1];
-    const dz = end[2] - start[2];
+
+    if (motion === 'pendulum') {
+      const freq = Math.max(0.25, speed * 0.7);
+      const phase = Math.sin(time * freq * 2.0);
+      const radiusX = Math.abs(end[0] - start[0]) > 0.2 ? end[0] - start[0] : 3.2;
+      const arcDrop = Math.abs(Math.cos(phase * 0.65)) * 0.65 - 0.65;
+      return {
+        position: [start[0] + phase * radiusX, start[1] + arcDrop, start[2]],
+        yaw: 0,
+        swingAngle: phase * 0.38,
+      };
+    }
+
+    const effEnd: [number, number, number] =
+      motion === 'vertical' && Math.hypot(end[0] - start[0], end[1] - start[1], end[2] - start[2]) <= 0.1
+        ? [start[0], start[1] + 4.4, start[2]]
+        : end;
+
+    const dx = effEnd[0] - start[0];
+    const dy = effEnd[1] - start[1];
+    const dz = effEnd[2] - start[2];
     const dist = Math.hypot(dx, dy, dz);
     if (dist <= 0.05) return { position: start, yaw: 0 };
 

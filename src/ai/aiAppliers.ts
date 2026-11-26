@@ -87,6 +87,7 @@ import type {
   CompleteCondition,
   ConiferShapeStyle,
   CreatureExpressionMood,
+  BuiltinMechanismTemplate,
   CustomClipSlot,
   CustomMotionPreset,
   CustomPoseKeyframe,
@@ -97,6 +98,7 @@ import type {
   HUDWidget,
   LeafSeasonPresetId,
   LevelEntity,
+  MechanismKind,
   MonsterAbilityId,
   MonsterAttackType,
   MonsterBlueprint,
@@ -120,8 +122,18 @@ import type {
   PlantClusterRecipe,
   PlantLeafPatternId,
   PlantShapeId,
+  PlatformMotionType,
+  PlatformPreset,
   RigBoneRole,
   RoadSpline,
+  SidePlatformSegment,
+  SidePlatformSegmentStyle,
+  SideScrollerBackdropStyle,
+  SideScrollerConfig,
+  SideScrollerLayoutStyle,
+  SideScrollerSecretRoom,
+  SideScrollerThemeId,
+  SideScrollerVineOrLadder,
   SkyPresetId,
   StorybookThemeId,
   StylizedCanopyConfig,
@@ -134,6 +146,7 @@ import type {
   WidgetAnchor,
   WidgetKind,
 } from '../types/maker';
+import { getDefaultMechanismsForTemplate } from '../three/mechanismController';
 import type { AiApplyOptions, CharacterPromptGuide } from './studioBridge';
 import {
   IslandTerrain,
@@ -142,10 +155,14 @@ import {
   carveWaterBodyIntoTerrain,
   createDefaultMountainConfig,
   createInitialTerrain,
+  createSideScrollerPresetConfig,
   ensureUpgradedTerrain,
+  getEnvironmentType,
+  getSideScrollerThemeLayers,
   getTerrainRadius,
   levelWorldToBoard,
   normalizeCaveGrotto,
+  sampleLevelHeight,
   sampleTerrainHeight,
   uid,
 } from '../utils/terrain';
@@ -704,22 +721,62 @@ export function sanitizeObjectMakerResult(
       doc.parts.find((pt) => pt.name.toLowerCase() === targetName.toLowerCase()) ??
       doc.parts[0];
     if (!matchPart) return;
+    const mechKind = oneOf<MechanismKind>(
+      m.kind,
+      ['hinge', 'slider', 'spinner', 'pendulum', 'springBounce', 'transporter'],
+      'hinge'
+    );
+    const defaultTriggers =
+      mechKind === 'springBounce'
+        ? [
+            {
+              id: uid(),
+              event: 'playerTouches' as const,
+              radius: 1.5,
+              action: 'open' as const,
+              condition: 'none' as const,
+              sound: 'jump' as const,
+            },
+          ]
+        : mechKind === 'transporter'
+        ? [
+            {
+              id: uid(),
+              event: 'playerUses' as const,
+              radius: 2.2,
+              action: 'toggle' as const,
+              condition: 'none' as const,
+              sound: 'sparkle' as const,
+            },
+          ]
+        : [];
     const nextMech: ObjectMechanism = {
       id: uid(),
       name: str(m.name, `${matchPart.name} Motion`),
       targetNodePath: matchPart.name,
       targetLabel: matchPart.name,
-      kind: m.kind === 'slider' ? 'slider' : 'hinge',
-      axis: oneOf(m.axis, ['x', 'y', 'z'] as const, 'y'),
+      kind: mechKind,
+      axis: oneOf(m.axis, ['x', 'y', 'z'] as const, mechKind === 'pendulum' ? 'z' : 'y'),
       pivot: [...matchPart.position] as [number, number, number],
       restAngleDeg: 0,
       openAngleDeg: num(m.openAngleDeg, 90, -180, 180),
       restOffset: 0,
-      openOffset: num(m.openOffset, 0.5, -2, 2),
-      duration: num(m.duration, 0.7, 0.2, 4),
+      openOffset: num(m.openOffset, mechKind === 'springBounce' ? 0.45 : 0.5, -2, 2),
+      duration: num(m.duration, mechKind === 'springBounce' ? 0.25 : 0.7, 0.15, 4),
       easing: 'smooth',
-      playbackMode: 'toggle',
-      triggers: [],
+      playbackMode: mechKind === 'spinner' || mechKind === 'pendulum' ? 'loop' : 'toggle',
+      spinSpeedDegPerSec:
+        mechKind === 'spinner' ? num(m.spinSpeedDegPerSec, 150, -720, 720) : undefined,
+      swingAmplitudeDeg:
+        mechKind === 'pendulum' ? num(m.swingAmplitudeDeg, 48, 5, 140) : undefined,
+      swingFrequencyHz:
+        mechKind === 'pendulum' ? num(m.swingFrequencyHz, 0.7, 0.15, 3.0) : undefined,
+      bounceVelocity:
+        mechKind === 'springBounce' ? num(m.bounceVelocity, 18.5, 6, 36) : undefined,
+      transportLabel:
+        mechKind === 'transporter' ? str(m.transportLabel, 'Warp!') : undefined,
+      isHazard: Boolean(m.isHazard),
+      triggers: defaultTriggers,
     };
     const existingMechIdx = mechanisms.findIndex(
       (em) => em.name.toLowerCase() === nextMech.name.toLowerCase()
@@ -2596,6 +2653,446 @@ function syncTerrainOntoProjectWorldMap(
   };
 }
 
+export function applyPlatformerAiToStore(
+  store: MakerStore,
+  raw: Record<string, unknown>,
+  options?: AiApplyOptions
+): string {
+  const lvl = store.currentLevel;
+  const proj = store.currentProject;
+  if (!lvl || !proj) throw new Error('No active platformer level found.');
+
+  const modifyExisting = Boolean(options?.modifyExisting);
+  const guide = options?.platformerGuide;
+
+  const layoutHint =
+    guide && guide.layoutStyle !== 'auto' ? guide.layoutStyle : raw.layoutStyle;
+  const layoutStyle = oneOf<SideScrollerLayoutStyle>(
+    layoutHint,
+    ['flat2D', 'verticalClimber', 'layeredJungle', 'underwater', 'skyTemple', 'cavern'],
+    modifyExisting && lvl.sideScrollerConfig ? lvl.sideScrollerConfig.layoutStyle : 'layeredJungle'
+  );
+
+  const inferredThemeDefault: SideScrollerThemeId =
+    layoutStyle === 'layeredJungle'
+      ? 'jungleCanopy'
+      : layoutStyle === 'underwater'
+      ? 'underwaterCoral'
+      : layoutStyle === 'verticalClimber'
+      ? 'volcanicForge'
+      : layoutStyle === 'skyTemple'
+      ? 'skyTemple'
+      : layoutStyle === 'cavern'
+      ? 'crystalCavern'
+      : 'sunnyCliffs';
+  const themeHint = guide && guide.theme !== 'auto' ? guide.theme : raw.theme;
+  const theme = oneOf<SideScrollerThemeId>(
+    themeHint,
+    ['sunnyCliffs', 'jungleCanopy', 'underwaterCoral', 'volcanicForge', 'crystalCavern', 'skyTemple'],
+    modifyExisting && lvl.sideScrollerConfig ? lvl.sideScrollerConfig.theme : inferredThemeDefault
+  );
+
+  const presetBase = createSideScrollerPresetConfig(layoutStyle, theme);
+  const existingSide = modifyExisting ? lvl.sideScrollerConfig : undefined;
+
+  const rawLayers =
+    raw.layers && typeof raw.layers === 'object' ? (raw.layers as Record<string, unknown>) : null;
+  const themeLayers = getSideScrollerThemeLayers(theme);
+  const layers: SideScrollerConfig['layers'] = {
+    foregroundStyle: oneOf<SideScrollerConfig['layers']['foregroundStyle']>(
+      rawLayers?.foregroundStyle,
+      ['shrubsAndRocks', 'jungleFraming', 'coralSilhouette', 'cavernStalactites', 'none'],
+      existingSide?.layers.foregroundStyle ?? themeLayers.foregroundStyle
+    ),
+    foregroundColor: hexColor(
+      rawLayers?.foregroundColor,
+      existingSide?.layers.foregroundColor ?? themeLayers.foregroundColor
+    ),
+    heroLaneColor: hexColor(
+      rawLayers?.heroLaneColor,
+      existingSide?.layers.heroLaneColor ?? themeLayers.heroLaneColor
+    ),
+    heroTrimColor: hexColor(
+      rawLayers?.heroTrimColor,
+      existingSide?.layers.heroTrimColor ?? themeLayers.heroTrimColor
+    ),
+    midgroundStyle: oneOf<SideScrollerBackdropStyle>(
+      rawLayers?.midgroundStyle ?? rawLayers?.backdropStyle,
+      [
+        'cliffsAndPines',
+        'jungleTreesAndVines',
+        'coralReefAndKelp',
+        'volcanicSpires',
+        'crystalCaverns',
+        'floatingTemples',
+      ],
+      existingSide?.layers.midgroundStyle ?? themeLayers.midgroundStyle
+    ),
+    midgroundColor: hexColor(
+      rawLayers?.midgroundColor,
+      existingSide?.layers.midgroundColor ?? themeLayers.midgroundColor
+    ),
+    farStyle: oneOf<SideScrollerConfig['layers']['farStyle']>(
+      rawLayers?.farStyle,
+      [
+        'alpineMountains',
+        'jungleMistCanopy',
+        'deepOceanRays',
+        'volcanoPeaks',
+        'cavernVault',
+        'cloudPillars',
+      ],
+      existingSide?.layers.farStyle ?? themeLayers.farStyle
+    ),
+    farColor: hexColor(
+      rawLayers?.farColor ?? rawLayers?.farHorizonColor,
+      existingSide?.layers.farColor ?? themeLayers.farColor
+    ),
+    liquidType: oneOf<'water' | 'lava' | 'mist' | 'none'>(
+      rawLayers?.liquidType,
+      ['water', 'lava', 'mist', 'none'],
+      existingSide?.layers.liquidType ?? themeLayers.liquidType
+    ),
+    liquidColor: hexColor(
+      rawLayers?.liquidColor,
+      existingSide?.layers.liquidColor ?? themeLayers.liquidColor
+    ),
+    liquidLevelY: num(
+      rawLayers?.liquidLevelY,
+      existingSide?.layers.liquidLevelY ?? themeLayers.liquidLevelY,
+      -14,
+      10
+    ),
+  };
+
+  const rawSegs = Array.isArray(raw.segments) ? raw.segments : [];
+  const parsedSegs: SidePlatformSegment[] = [];
+  rawSegs.slice(0, 18).forEach((entry, idx) => {
+    if (!entry || typeof entry !== 'object') return;
+    const s = entry as Record<string, unknown>;
+    const minX = num(s.minX, -20 + idx * 8, -54, 48);
+    const maxX = Math.max(minX + 2.5, num(s.maxX, minX + 10, -48, 54));
+    const style = oneOf<SidePlatformSegmentStyle>(
+      s.style,
+      ['cliff', 'bridge', 'stone', 'jungleFloor', 'branch', 'girder', 'coral', 'crystal', 'cloud'],
+      layoutStyle === 'layeredJungle' ? 'branch' : layoutStyle === 'verticalClimber' ? 'girder' : 'cliff'
+    );
+    const oneWay =
+      s.oneWay !== undefined
+        ? Boolean(s.oneWay)
+        : style === 'branch' || style === 'girder' || style === 'cloud';
+    parsedSegs.push({
+      id: uid(),
+      minX,
+      maxX,
+      y: num(s.y, 0, -6, 28),
+      thickness: num(s.thickness, oneWay ? 0.9 : 4.5, 0.3, 8),
+      style,
+      oneWay,
+      color: typeof s.color === 'string' ? hexColor(s.color, layers.heroLaneColor) : undefined,
+    });
+  });
+
+  const segments =
+    parsedSegs.length > 0
+      ? parsedSegs
+      : modifyExisting && existingSide?.segments.length
+      ? existingSide.segments
+      : presetBase.segments;
+
+  const rawVines = Array.isArray(raw.vines) ? raw.vines : [];
+  const parsedVines: SideScrollerVineOrLadder[] = [];
+  rawVines.slice(0, 10).forEach((entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    const v = entry as Record<string, unknown>;
+    const bY = num(v.bottomY, 0, -6, 22);
+    const tY = Math.max(bY + 2.5, num(v.topY, bY + 6, -2, 30));
+    parsedVines.push({
+      id: uid(),
+      kind: oneOf(
+        v.kind,
+        ['vine', 'ladder', 'bubbleStream'] as const,
+        layoutStyle === 'verticalClimber'
+          ? 'ladder'
+          : layoutStyle === 'underwater'
+          ? 'bubbleStream'
+          : 'vine'
+      ),
+      x: num(v.x, 0, -46, 46),
+      bottomY: bY,
+      topY: tY,
+    });
+  });
+  const vines =
+    parsedVines.length > 0
+      ? modifyExisting && existingSide
+        ? [...existingSide.vines, ...parsedVines]
+        : parsedVines
+      : modifyExisting && existingSide
+      ? existingSide.vines
+      : presetBase.vines;
+
+  const rawRooms = Array.isArray(raw.secretRooms) ? raw.secretRooms : [];
+  const parsedRooms: SideScrollerSecretRoom[] = [];
+  rawRooms.slice(0, 3).forEach((entry, idx) => {
+    if (!entry || typeof entry !== 'object') return;
+    const r = entry as Record<string, unknown>;
+    parsedRooms.push({
+      id: uid(),
+      name: str(r.name, `Secret Chamber ${idx + 1}`),
+      entranceX: num(r.entranceX, 14, -44, 44),
+      entranceY: num(r.entranceY, 0, -4, 24),
+      roomCenterX: num(r.roomCenterX, idx * 18, -36, 36),
+      roomCenterY: num(r.roomCenterY, -16, -24, 30),
+      width: num(r.width ?? r.roomWidth, 14, 8, 22),
+      height: num(r.height, 6.5, 4, 12),
+      floorColor: layers.heroLaneColor,
+      wallColor: layers.midgroundColor,
+      accentColor: layers.heroTrimColor,
+    });
+  });
+  const secretRooms =
+    parsedRooms.length > 0
+      ? modifyExisting && existingSide
+        ? [...existingSide.secretRooms, ...parsedRooms]
+        : parsedRooms
+      : modifyExisting && existingSide
+      ? existingSide.secretRooms
+      : presetBase.secretRooms;
+
+  const nextSideConfig: SideScrollerConfig = {
+    layoutStyle,
+    theme,
+    gravityScale: num(
+      raw.gravityScale,
+      existingSide?.gravityScale ?? presetBase.gravityScale ?? 1,
+      0.32,
+      1.6
+    ),
+    swimPhysics:
+      raw.swimPhysics !== undefined
+        ? Boolean(raw.swimPhysics)
+        : existingSide?.swimPhysics ?? presetBase.swimPhysics ?? layoutStyle === 'underwater',
+    layers,
+    segments,
+    vines,
+    secretRooms,
+  };
+
+  const tempLvl: GameLevel = {
+    ...lvl,
+    environmentType: 'sideScroller',
+    sideScrollerConfig: nextSideConfig,
+  };
+  const boardPosAt = (wx: number, wz = 0) => levelWorldToBoard(tempLvl, wx, wz);
+  const elevAt = (wx: number, wz: number, targetY: number) => {
+    const base = sampleLevelHeight(tempLvl, wx, wz);
+    return Number((targetY - base).toFixed(2));
+  };
+
+  const nextEntities: LevelEntity[] = modifyExisting ? [...lvl.entities] : [];
+
+  // Moving/spinning platforms, bounce pads, saw wheels
+  const rawPlats = Array.isArray(raw.platforms) ? raw.platforms : [];
+  rawPlats.slice(0, 8).forEach((entry, idx) => {
+    if (!entry || typeof entry !== 'object') return;
+    const p = entry as Record<string, unknown>;
+    const wx = num(p.x, -8 + idx * 6, -46, 46);
+    const wy = num(p.y, 2, -6, 26);
+    const ex = num(p.endX, wx, -46, 46);
+    const ey = num(p.endY, wy, -6, 26);
+    const bp = boardPosAt(wx, 0);
+    const endBp = boardPosAt(ex, 0);
+    const preset = oneOf<PlatformPreset>(
+      p.preset,
+      ['stoneLift', 'swingingBridge', 'spinningDisc', 'jungleVine', 'bouncePad', 'crumbleStone', 'sawWheel'],
+      'stoneLift'
+    );
+    const motion = oneOf<PlatformMotionType>(
+      p.motion,
+      ['slide', 'vertical', 'spin', 'pendulum'],
+      preset === 'spinningDisc' || preset === 'sawWheel'
+        ? 'spin'
+        : Math.abs(ey - wy) > 0.6
+        ? 'vertical'
+        : 'slide'
+    );
+    nextEntities.push(
+      createEntity('platform', str(p.name, `Platform ${idx + 1}`), bp.x, bp.y, {
+        platformPreset: preset,
+        platformMotion: motion,
+        platformEnd: endBp,
+        platformSpeed: num(p.speed, 2.6, 0.5, 8),
+        platformRunning: true,
+        elevationY: elevAt(wx, 0, wy),
+      })
+    );
+  });
+
+  // Mechanical contraptions (giant springs, blade spinners, swinging traps, warp cannons)
+  const rawContrap = Array.isArray(raw.contraptions) ? raw.contraptions : [];
+  rawContrap.slice(0, 8).forEach((entry, idx) => {
+    if (!entry || typeof entry !== 'object') return;
+    const c = entry as Record<string, unknown>;
+    const template = oneOf<BuiltinMechanismTemplate>(
+      c.template,
+      ['bounceSpring', 'spinHazard', 'pendulumVine', 'warpCannon'],
+      'bounceSpring'
+    );
+    const wx = num(c.x, 4 + idx * 6, -46, 46);
+    const wy = num(c.y, 0, -22, 28);
+    const bp = boardPosAt(wx, 0);
+    const mechs = getDefaultMechanismsForTemplate(template).map((m) => {
+      if (m.kind === 'springBounce' && c.bounceVelocity !== undefined) {
+        return { ...m, bounceVelocity: num(c.bounceVelocity, 19, 10, 32) };
+      }
+      if (m.kind === 'transporter') {
+        const tx = num(c.targetX, wx + 12, -46, 46);
+        const ty = num(c.targetY, wy + 5, -22, 28);
+        return {
+          ...m,
+          transportTarget: boardPosAt(tx, 0),
+          transportTargetY: ty,
+          transportLabel: str(c.name, 'Barrel Blast!'),
+        };
+      }
+      return m;
+    });
+    const kind = template === 'spinHazard' || template === 'pendulumVine' ? 'trap' : 'prop';
+    nextEntities.push(
+      createEntity(kind, str(c.name, template), bp.x, bp.y, {
+        mechTemplate: template,
+        mechanisms: mechs,
+        scale: num(c.scale, 1.0, 0.65, 2.2),
+        elevationY: elevAt(wx, 0, wy),
+      })
+    );
+  });
+
+  // Patrolling baddies placed cleanly on floor OR upper tree branches/girders
+  const rawBaddies = Array.isArray(raw.baddies) ? raw.baddies : [];
+  rawBaddies.slice(0, 10).forEach((entry, idx) => {
+    if (!entry || typeof entry !== 'object') return;
+    const b = entry as Record<string, unknown>;
+    const wx = num(b.x, -4 + idx * 7, -46, 46);
+    const wy = num(b.y, 0, -6, 26);
+    const bp = boardPosAt(wx, 0);
+    nextEntities.push(
+      createEntity('baddie', str(b.name, `Patrol Critter ${idx + 1}`), bp.x, bp.y, {
+        brain: 'Patroller',
+        isBoss: Boolean(b.isBoss),
+        health: Math.round(num(b.health, 3, 1, 16)),
+        speed: num(b.speed, 3.0, 1.0, 7.5),
+        styleTint: hexColor(b.tint, '#E11D48'),
+        elevationY: elevAt(wx, 0, wy),
+      })
+    );
+  });
+
+  // Traps
+  const rawTraps = Array.isArray(raw.traps) ? raw.traps : [];
+  rawTraps.slice(0, 8).forEach((entry, idx) => {
+    if (!entry || typeof entry !== 'object') return;
+    const tr = entry as Record<string, unknown>;
+    const wx = num(tr.x, idx * 8, -46, 46);
+    const wy = num(tr.y, 0, -22, 26);
+    const bp = boardPosAt(wx, 0);
+    nextEntities.push(
+      createEntity('trap', str(tr.name, `Spike Trap ${idx + 1}`), bp.x, bp.y, {
+        elevationY: elevAt(wx, 0, wy),
+      })
+    );
+  });
+
+  // Treasures (bonus chests including any placed inside Secret Rooms!)
+  const rawTreasures = Array.isArray(raw.treasures) ? raw.treasures : [];
+  rawTreasures.slice(0, 6).forEach((entry, idx) => {
+    if (!entry || typeof entry !== 'object') return;
+    const t = entry as Record<string, unknown>;
+    const wx = num(t.x, idx * 10, -46, 46);
+    const wy = num(t.y, 0, -24, 30);
+    const bp = boardPosAt(wx, 0);
+    nextEntities.push(
+      createEntity('treasure', str(t.name, `Bonus Chest ${idx + 1}`), bp.x, bp.y, {
+        elevationY: elevAt(wx, 0, wy),
+      })
+    );
+  });
+
+  const startObj =
+    raw.startPoint && typeof raw.startPoint === 'object'
+      ? (raw.startPoint as Record<string, unknown>)
+      : null;
+  const portalObj =
+    raw.portalPoint && typeof raw.portalPoint === 'object'
+      ? (raw.portalPoint as Record<string, unknown>)
+      : null;
+
+  const nextStart = startObj
+    ? boardPosAt(num(startObj.x, -26, -46, 46), 0)
+    : modifyExisting
+    ? lvl.startPoint
+    : boardPosAt(-24, 0);
+  const nextPortal = portalObj
+    ? boardPosAt(num(portalObj.x, 30, -46, 46), 0)
+    : modifyExisting
+    ? lvl.portalPoint
+    : boardPosAt(28, 0);
+
+  const biome = oneOf<BiomeId>(
+    raw.biome,
+    ['meadow', 'island', 'forest', 'snow', 'desert', 'cave', 'swamp', 'night'],
+    theme === 'jungleCanopy'
+      ? 'forest'
+      : theme === 'underwaterCoral'
+      ? 'island'
+      : theme === 'crystalCavern'
+      ? 'cave'
+      : theme === 'volcanicForge'
+      ? 'night'
+      : 'meadow'
+  );
+  const sky = oneOf<SkyPresetId>(
+    raw.sky,
+    ['sunny', 'golden', 'night', 'mist', 'storm', 'cave'],
+    theme === 'crystalCavern'
+      ? 'cave'
+      : theme === 'volcanicForge'
+      ? 'night'
+      : theme === 'underwaterCoral'
+      ? 'mist'
+      : 'sunny'
+  );
+  const weather = oneOf<WeatherKind>(
+    raw.weather,
+    ['none', 'fireflies', 'leaves', 'rain', 'snow'],
+    theme === 'jungleCanopy' ? 'leaves' : theme === 'crystalCavern' ? 'fireflies' : 'none'
+  );
+
+  store.updateLevel(
+    modifyExisting ? 'AI modify platformer level' : 'AI direct platformer stage',
+    (current) => ({
+      ...current,
+      environmentType: 'sideScroller',
+      cameraMode: 'sideScroll',
+      biome,
+      sky,
+      weather,
+      sideScrollerConfig: nextSideConfig,
+      startPoint: nextStart,
+      portalPoint: nextPortal,
+      entities: nextEntities,
+    })
+  );
+  store.setSelectedEntityID(null);
+  store.setWorldEditorScope(lvl.id);
+
+  return str(
+    raw.summary,
+    `${modifyExisting ? 'Updated' : 'Built'} ${layoutStyle} platformer (${theme}) with ${segments.length} platforms, ${vines.length} climbs, and ${secretRooms.length} secret rooms.`
+  );
+}
+
 export function applyWorldTerraformToStore(
   store: MakerStore,
   raw: Record<string, unknown>,
@@ -2604,6 +3101,10 @@ export function applyWorldTerraformToStore(
   const lvl = store.currentLevel;
   const proj = store.currentProject;
   if (!lvl || !proj) throw new Error('No active level found to terraform.');
+
+  if (getEnvironmentType(lvl) === 'sideScroller' || typeof raw.layoutStyle === 'string') {
+    return applyPlatformerAiToStore(store, raw, options);
+  }
 
   const modifyExisting = Boolean(options?.modifyExisting);
   const oceanOnly = !modifyExisting && Boolean(raw.oceanOnly);

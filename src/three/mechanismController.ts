@@ -267,7 +267,7 @@ export interface BuiltinMechanismMeta {
   id: BuiltinMechanismTemplate;
   name: string;
   summary: string;
-  entityKind: 'treasure' | 'door' | 'puzzle' | 'prop';
+  entityKind: 'treasure' | 'door' | 'puzzle' | 'prop' | 'trap';
 }
 
 export const BUILTIN_MECHANISM_TEMPLATES: BuiltinMechanismMeta[] = [
@@ -293,6 +293,30 @@ export const BUILTIN_MECHANISM_TEMPLATES: BuiltinMechanismMeta[] = [
     id: 'drawbridge',
     name: 'Castle Drawbridge',
     summary: 'Twin stone gate pillars with a heavy hinged timber drawbridge deck',
+    entityKind: 'prop',
+  },
+  {
+    id: 'bounceSpring',
+    name: 'Giant Bounce Spring',
+    summary: 'Coiled golden spring pad that launches the player high into the air on touch',
+    entityKind: 'prop',
+  },
+  {
+    id: 'spinHazard',
+    name: 'Spinning Saw Rotor',
+    summary: 'Continuously spinning multi-blade mechanical hazard mounted on an iron pedestal',
+    entityKind: 'trap',
+  },
+  {
+    id: 'pendulumVine',
+    name: 'Swinging Pendulum Mace',
+    summary: 'Overhead beam with a rhythmic swinging spiked pendulum arm',
+    entityKind: 'trap',
+  },
+  {
+    id: 'warpCannon',
+    name: 'Transporter Warp Cannon',
+    summary: 'Glowing barrel cannon that launches/warps the player to another spot or secret room',
     entityKind: 'prop',
   },
 ];
@@ -587,11 +611,13 @@ interface MechanismStateEntry {
   targetProgress: number;
   holdTimer: number;
   hasRewardedOnce: boolean;
+  continuousAngleDeg: number;
+  continuousPhase: number;
 }
 
 /**
- * Runtime & studio kinematic driver for hinge and linear slider constraints
- * on nested child elements of any complex 3D object.
+ * Runtime & studio kinematic driver for hinge, slider, spinner, pendulum,
+ * springBounce, and transporter constraints on child elements of any complex 3D object.
  */
 export class MechanismRuntimeController {
   private modelRoot: THREE.Object3D;
@@ -622,6 +648,11 @@ export class MechanismRuntimeController {
         p = p.parent;
       }
 
+      const startsRunning =
+        (mech.kind === 'spinner' || mech.kind === 'pendulum') &&
+        (mech.triggers.length === 0 ||
+          mech.triggers.some((t) => t.event === 'levelStarts'));
+
       const entry: MechanismStateEntry = {
         mechanism: mech,
         target,
@@ -629,10 +660,12 @@ export class MechanismRuntimeController {
         restPos: target.position.clone(),
         restQuat: target.quaternion.clone(),
         restScale: target.scale.clone(),
-        progress: 0,
-        targetProgress: 0,
+        progress: startsRunning ? 1 : 0,
+        targetProgress: startsRunning ? 1 : 0,
         holdTimer: 0,
         hasRewardedOnce: false,
+        continuousAngleDeg: 0,
+        continuousPhase: 0,
       };
       this.entries.push(entry);
       this.entryById.set(mech.id, entry);
@@ -728,10 +761,11 @@ export class MechanismRuntimeController {
     let dirty = false;
 
     for (const entry of this.entries) {
-      const duration = Math.max(0.08, entry.mechanism.duration || 0.75);
+      const { mechanism } = entry;
+      const duration = Math.max(0.08, mechanism.duration || 0.75);
 
       if (
-        entry.mechanism.playbackMode === 'autoReturn' &&
+        mechanism.playbackMode === 'autoReturn' &&
         entry.targetProgress >= 1 &&
         entry.progress >= 0.999
       ) {
@@ -751,6 +785,27 @@ export class MechanismRuntimeController {
         }
         dirty = true;
       }
+
+      if (mechanism.kind === 'spinner') {
+        const activeFactor =
+          mechanism.triggers.length === 0 ? 1 : entry.progress;
+        if (activeFactor > 0.01) {
+          const spd = mechanism.spinSpeedDegPerSec ?? 140;
+          entry.continuousAngleDeg =
+            (entry.continuousAngleDeg + spd * clampedDt * activeFactor) % 36000;
+          dirty = true;
+        }
+      } else if (mechanism.kind === 'pendulum') {
+        const activeFactor =
+          mechanism.triggers.length === 0 ? 1 : entry.progress;
+        if (activeFactor > 0.01) {
+          entry.continuousPhase += clampedDt;
+          dirty = true;
+        }
+      } else if (mechanism.kind === 'transporter') {
+        entry.continuousPhase += clampedDt;
+        dirty = true;
+      }
     }
 
     if (dirty) {
@@ -759,7 +814,7 @@ export class MechanismRuntimeController {
     return dirty;
   }
 
-  /** Applies exact pivot-hinge or linear-slider transforms to all managed child elements */
+  /** Applies exact kinematic transforms to all managed child elements */
   public applyAll() {
     if (this.entries.length === 0) return;
 
@@ -774,7 +829,7 @@ export class MechanismRuntimeController {
 
     // 2. Apply each mechanism in shallow-to-deep order
     for (const entry of this.entries) {
-      const { mechanism, target, restPos, restQuat, progress } = entry;
+      const { mechanism, target, restPos, restQuat, restScale, progress } = entry;
       const parent = target.parent;
       if (!parent) continue;
 
@@ -799,6 +854,66 @@ export class MechanismRuntimeController {
         _offsetVec.copy(restPos).sub(_pivotLocal).applyQuaternion(_rotQuat);
         target.position.copy(_pivotLocal).add(_offsetVec);
         target.quaternion.copy(_rotQuat).multiply(restQuat);
+      } else if (mechanism.kind === 'spinner') {
+        const activeDeg =
+          entry.continuousAngleDeg !== 0
+            ? entry.continuousAngleDeg
+            : (mechanism.openAngleDeg || 360) * eased;
+        const angleRad = THREE.MathUtils.degToRad(activeDeg);
+
+        _pivotLocal
+          .set(mechanism.pivot[0], mechanism.pivot[1], mechanism.pivot[2])
+          .applyMatrix4(_rootToParent);
+        getAxisVector(mechanism.axis, _axisLocal).transformDirection(_rootToParent).normalize();
+
+        _rotQuat.setFromAxisAngle(_axisLocal, angleRad);
+        _offsetVec.copy(restPos).sub(_pivotLocal).applyQuaternion(_rotQuat);
+        target.position.copy(_pivotLocal).add(_offsetVec);
+        target.quaternion.copy(_rotQuat).multiply(restQuat);
+      } else if (mechanism.kind === 'pendulum') {
+        const ampDeg = mechanism.swingAmplitudeDeg ?? 46;
+        const freq = mechanism.swingFrequencyHz ?? 0.65;
+        const factor = mechanism.triggers.length === 0 ? 1 : eased;
+        const angleDeg =
+          entry.continuousPhase > 0
+            ? Math.sin(entry.continuousPhase * Math.PI * 2 * freq) * ampDeg * factor
+            : ampDeg * eased;
+        const angleRad = THREE.MathUtils.degToRad(angleDeg);
+
+        _pivotLocal
+          .set(mechanism.pivot[0], mechanism.pivot[1], mechanism.pivot[2])
+          .applyMatrix4(_rootToParent);
+        getAxisVector(mechanism.axis, _axisLocal).transformDirection(_rootToParent).normalize();
+
+        _rotQuat.setFromAxisAngle(_axisLocal, angleRad);
+        _offsetVec.copy(restPos).sub(_pivotLocal).applyQuaternion(_rotQuat);
+        target.position.copy(_pivotLocal).add(_offsetVec);
+        target.quaternion.copy(_rotQuat).multiply(restQuat);
+      } else if (mechanism.kind === 'springBounce') {
+        const stroke =
+          mechanism.restOffset + (mechanism.openOffset - mechanism.restOffset || 0.72) * eased;
+        _dispOrigin.set(0, 0, 0).applyMatrix4(_rootToParent);
+        getAxisVector(mechanism.axis || 'y', _dispEnd)
+          .multiplyScalar(stroke)
+          .applyMatrix4(_rootToParent)
+          .sub(_dispOrigin);
+        target.position.copy(restPos).add(_dispEnd);
+        const stretch = 1 + Math.sin(eased * Math.PI) * 0.36;
+        target.scale.set(
+          restScale.x * (1 - Math.sin(eased * Math.PI) * 0.12),
+          restScale.y * stretch,
+          restScale.z * (1 - Math.sin(eased * Math.PI) * 0.12)
+        );
+      } else if (mechanism.kind === 'transporter') {
+        const pulse = 1 + Math.sin(entry.continuousPhase * 3.4) * 0.06 + eased * 0.22;
+        const recoil = Math.sin(eased * Math.PI) * (mechanism.openOffset || 0.28);
+        _dispOrigin.set(0, 0, 0).applyMatrix4(_rootToParent);
+        getAxisVector(mechanism.axis || 'y', _dispEnd)
+          .multiplyScalar(recoil)
+          .applyMatrix4(_rootToParent)
+          .sub(_dispOrigin);
+        target.position.copy(restPos).add(_dispEnd);
+        target.scale.set(restScale.x * pulse, restScale.y * pulse, restScale.z * pulse);
       } else {
         const dist =
           mechanism.restOffset + (mechanism.openOffset - mechanism.restOffset) * eased;
@@ -1085,8 +1200,7 @@ export function createBuiltinMechanismModel(template: BuiltinMechanismTemplate):
     armGroup.add(knob);
 
     root.add(armGroup);
-  } else {
-    // drawbridge
+  } else if (template === 'drawbridge') {
     const stoneMat = new THREE.MeshStandardMaterial({
       color: '#737A88',
       roughness: 0.88,
@@ -1154,6 +1268,102 @@ export function createBuiltinMechanismModel(template: BuiltinMechanismTemplate):
     }
 
     root.add(deckGroup);
+  } else if (template === 'bounceSpring') {
+    const baseMat = new THREE.MeshStandardMaterial({ color: '#334155', roughness: 0.45, metalness: 0.65 });
+    const coilMat = new THREE.MeshStandardMaterial({ color: '#F59E0B', roughness: 0.25, metalness: 0.85 });
+    const padMat = new THREE.MeshStandardMaterial({ color: '#EF4444', roughness: 0.38, emissive: '#991B1B', emissiveIntensity: 0.25 });
+
+    const baseGroup = new THREE.Group();
+    baseGroup.name = 'Spring_Base';
+    const plate = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.95, 0.18, 16), baseMat));
+    plate.position.y = 0.09;
+    baseGroup.add(plate);
+    root.add(baseGroup);
+
+    const springHead = new THREE.Group();
+    springHead.name = 'Spring_Head';
+    for (let i = 0; i < 3; i++) {
+      const ring = setShadow(new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.08, 10, 20), coilMat));
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 0.28 + i * 0.22;
+      springHead.add(ring);
+    }
+    const topPad = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.82, 0.74, 0.22, 20), padMat));
+    topPad.name = 'Bounce_Pad';
+    topPad.position.y = 0.94;
+    const starCore = setShadow(
+      new THREE.Mesh(
+        new THREE.CylinderGeometry(0.46, 0.46, 0.24, 12),
+        new THREE.MeshStandardMaterial({ color: '#FACC15', emissive: '#F59E0B', emissiveIntensity: 0.45, roughness: 0.25 })
+      )
+    );
+    starCore.position.y = 0.96;
+    springHead.add(topPad, starCore);
+    root.add(springHead);
+  } else if (template === 'spinHazard') {
+    const postMat = new THREE.MeshStandardMaterial({ color: '#3F4654', roughness: 0.5, metalness: 0.7 });
+    const bladeMat = new THREE.MeshStandardMaterial({ color: '#CBD5E1', roughness: 0.2, metalness: 0.92 });
+    const coreMat = new THREE.MeshStandardMaterial({ color: '#EF4444', emissive: '#DC2626', emissiveIntensity: 0.38, roughness: 0.3 });
+
+    const stand = new THREE.Group();
+    stand.name = 'Axle_Stand';
+    const pillar = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, 1.35, 12), postMat));
+    pillar.position.y = 0.675;
+    stand.add(pillar);
+    root.add(stand);
+
+    const rotor = new THREE.Group();
+    rotor.name = 'Saw_Rotor';
+    rotor.position.set(0, 1.35, 0);
+    const hub = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.24, 16), coreMat));
+    hub.rotation.x = Math.PI / 2;
+    rotor.add(hub);
+    for (let i = 0; i < 4; i++) {
+      const arm = setShadow(new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.2, 0.08), bladeMat));
+      arm.rotation.z = (i * Math.PI) / 4;
+      rotor.add(arm);
+    }
+    root.add(rotor);
+  } else if (template === 'pendulumVine') {
+    const woodMat = new THREE.MeshStandardMaterial({ color: '#6D4529', roughness: 0.78 });
+    const ironMat = new THREE.MeshStandardMaterial({ color: '#334155', roughness: 0.32, metalness: 0.84 });
+
+    const frame = new THREE.Group();
+    frame.name = 'Gallows_Frame';
+    const cross = setShadow(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.22, 0.28), woodMat));
+    cross.position.set(0, 3.2, 0);
+    frame.add(cross);
+    root.add(frame);
+
+    const arm = new THREE.Group();
+    arm.name = 'Pendulum_Arm';
+    const rod = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.35, 10), ironMat));
+    rod.position.set(0, 2.02, 0);
+    const mace = setShadow(new THREE.Mesh(new THREE.DodecahedronGeometry(0.46, 0), ironMat));
+    mace.position.set(0, 0.82, 0);
+    arm.add(rod, mace);
+    root.add(arm);
+  } else if (template === 'warpCannon') {
+    const baseMat = new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.48, metalness: 0.72 });
+    const barrelMat = new THREE.MeshStandardMaterial({ color: '#1E293B', roughness: 0.3, metalness: 0.82 });
+    const glowMat = new THREE.MeshStandardMaterial({ color: '#38BDF8', emissive: '#38BDF8', emissiveIntensity: 0.85, roughness: 0.2 });
+
+    const mount = new THREE.Group();
+    mount.name = 'Cannon_Mount';
+    const base = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.85, 0.34, 16), baseMat));
+    base.position.y = 0.17;
+    mount.add(base);
+    root.add(mount);
+
+    const barrel = new THREE.Group();
+    barrel.name = 'Warp_Barrel';
+    const tube = setShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.62, 1.45, 20), barrelMat));
+    tube.position.set(0, 0.95, 0);
+    const rim = setShadow(new THREE.Mesh(new THREE.TorusGeometry(0.54, 0.08, 10, 24), glowMat));
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(0, 1.66, 0);
+    barrel.add(tube, rim);
+    root.add(barrel);
   }
 
   root.updateMatrixWorld(true);
@@ -1272,6 +1482,124 @@ export function getDefaultMechanismsForTemplate(
             setFlagOnOpen: 'lever_pulled',
             clearFlagOnClose: true,
             message: 'Lever pulled! Distant mechanisms unlocked.',
+            sound: 'sparkle',
+          },
+        ],
+      },
+    ];
+  }
+
+  if (template === 'bounceSpring') {
+    return [
+      {
+        id: 'mech_bounce_spring',
+        name: 'Giant Bounce Pad',
+        targetNodePath: '1:Spring_Head',
+        targetLabel: 'Spring Head',
+        kind: 'springBounce',
+        axis: 'y',
+        pivot: [0, 0.2, 0],
+        restAngleDeg: 0,
+        openAngleDeg: 0,
+        restOffset: 0,
+        openOffset: 0.85,
+        duration: 0.28,
+        easing: 'elastic',
+        playbackMode: 'autoReturn',
+        autoReturnDelay: 0.35,
+        bounceVelocity: 18.5,
+        triggers: [
+          {
+            id: 'trig_spring_bounce',
+            event: 'playerTouches',
+            radius: 1.5,
+            condition: 'none',
+            action: 'open',
+            message: 'BOING! High jump launch!',
+            sound: 'jump',
+          },
+        ],
+      },
+    ];
+  }
+
+  if (template === 'spinHazard') {
+    return [
+      {
+        id: 'mech_spin_rotor',
+        name: 'Saw Rotor Spinner',
+        targetNodePath: '1:Saw_Rotor',
+        targetLabel: 'Saw Rotor',
+        kind: 'spinner',
+        axis: 'z',
+        pivot: [0, 1.35, 0],
+        restAngleDeg: 0,
+        openAngleDeg: 360,
+        restOffset: 0,
+        openOffset: 0,
+        duration: 1.0,
+        easing: 'linear',
+        playbackMode: 'toggle',
+        spinSpeedDegPerSec: 180,
+        isHazard: true,
+        triggers: [],
+      },
+    ];
+  }
+
+  if (template === 'pendulumVine') {
+    return [
+      {
+        id: 'mech_pendulum_arm',
+        name: 'Pendulum Swing',
+        targetNodePath: '1:Pendulum_Arm',
+        targetLabel: 'Pendulum Arm',
+        kind: 'pendulum',
+        axis: 'z',
+        pivot: [0, 3.18, 0],
+        restAngleDeg: 0,
+        openAngleDeg: 48,
+        restOffset: 0,
+        openOffset: 0,
+        duration: 1.0,
+        easing: 'smooth',
+        playbackMode: 'toggle',
+        swingAmplitudeDeg: 52,
+        swingFrequencyHz: 0.65,
+        isHazard: true,
+        triggers: [],
+      },
+    ];
+  }
+
+  if (template === 'warpCannon') {
+    return [
+      {
+        id: 'mech_warp_cannon',
+        name: 'Warp Transporter',
+        targetNodePath: '1:Warp_Barrel',
+        targetLabel: 'Warp Barrel',
+        kind: 'transporter',
+        axis: 'y',
+        pivot: [0, 0.4, 0],
+        restAngleDeg: 0,
+        openAngleDeg: 0,
+        restOffset: 0,
+        openOffset: 0.35,
+        duration: 0.45,
+        easing: 'elastic',
+        playbackMode: 'autoReturn',
+        autoReturnDelay: 0.6,
+        transportTarget: { x: 0.72, y: 0.5 },
+        transportTargetY: 6.0,
+        transportLabel: 'Cannon Blast! Warped across the stage!',
+        triggers: [
+          {
+            id: 'trig_warp_use',
+            event: 'playerUses',
+            radius: 2.0,
+            condition: 'none',
+            action: 'open',
             sound: 'sparkle',
           },
         ],

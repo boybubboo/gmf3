@@ -84,6 +84,7 @@ import {
 import { FxEmitterRuntime } from '../../three/fxEmitterRuntime';
 import { getBuildingBlockDimensions } from '../../three/buildingBlocks';
 import { PostProcessingPipeline } from '../../three/postProcessingPipeline';
+import { MechanismRuntimeController } from '../../three/mechanismController';
 import { buildEntityMesh, buildHeroModel, buildPortalMarker } from '../../three/proceduralModels';
 import { buildCarModel } from '../../three/vehicleModels';
 import { applyVertexPaintStrokesToObject } from '../../three/vertexPainter';
@@ -1563,21 +1564,29 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
               const grp = refs.entityGroups.get(ent.id);
               if (!grp) continue;
               const [sx, sz] = levelBoardToWorld(curLevel, ent.position);
-              const sy = sampleLevelHeight(curLevel, sx, sz) + PlatformMotion.hover(ent.platformPreset);
+              const sy =
+                sampleLevelHeight(curLevel, sx, sz) +
+                PlatformMotion.hover(ent.platformPreset) +
+                (ent.elevationY ?? 0);
               const endBp = ent.platformEnd ?? ent.position;
               const [ex, ez] = levelBoardToWorld(curLevel, endBp);
-              const ey = sampleLevelHeight(curLevel, ex, ez) + PlatformMotion.hover(ent.platformPreset);
+              const ey =
+                sampleLevelHeight(curLevel, ex, ez) +
+                PlatformMotion.hover(ent.platformPreset) +
+                (ent.elevationY ?? 0);
               const pose = PlatformMotion.pose(
                 t,
                 [sx, sy, sz],
                 [ex, ey, ez],
                 ent.platformSpeed,
                 ent.platformWait,
-                ent.platformMotion === 'spin'
+                ent.platformMotion
               );
               grp.position.set(pose.position[0], pose.position[1], pose.position[2]);
               if (ent.platformMotion === 'spin') {
                 grp.rotation.y = pose.yaw;
+              } else if (ent.platformMotion === 'pendulum') {
+                grp.rotation.z = pose.swingAngle ?? 0;
               }
             }
           }
@@ -2309,6 +2318,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       waterBodiesGeoSig,
       roadsSig,
       level.customWallBoxes ?? null,
+      level.sideScrollerConfig ?? null,
       level.roguelikeTorchAnchors ?? null,
       level.dungeonStyle ?? level.roguelikeConfig?.dungeonStyle ?? null,
       scatterSig,
@@ -2428,6 +2438,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     level.terrain?.waterBodies,
     level.terrain?.freeformWorld,
     level.customWallBoxes,
+    level.sideScrollerConfig,
     level.roguelikeTorchAnchors,
     level.dungeonStyle,
     level.roguelikeConfig?.dungeonStyle,
@@ -2863,6 +2874,11 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       }
       refs.entitiesContainer.add(mesh);
       refs.entityGroups.set(ent.id, mesh);
+      if (ent.mechanisms && ent.mechanisms.length > 0) {
+        const mechRoot = (mesh.userData.mechRoot as THREE.Object3D | undefined) ?? mesh;
+        const editorMechCtrl = new MechanismRuntimeController(mechRoot, ent.mechanisms);
+        refs.customUpdaters.push((stepDt) => editorMechCtrl.update(stepDt));
+      }
     }
     void refs.precompileObject(refs.entitiesContainer);
     refs.markShadowDirty();
@@ -3034,6 +3050,14 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
             anchor.add(pt);
           }
           refs.customUpdaters.push((stepDt) => inst.update(stepDt));
+          const resolvedMechs =
+            latestEnt.mechanisms && latestEnt.mechanisms.length > 0
+              ? latestEnt.mechanisms
+              : meta?.mechanisms ?? [];
+          if (resolvedMechs.length > 0) {
+            const editorMechCtrl = new MechanismRuntimeController(inst.scaledRoot, resolvedMechs);
+            refs.customUpdaters.push((stepDt) => editorMechCtrl.update(stepDt));
+          }
         };
 
         const cachedCustom = deferredCustomEntities.filter((d) => d.isCached);

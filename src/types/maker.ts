@@ -83,9 +83,15 @@ export interface ObjectInteractionCalibration {
   presetId?: string;
 }
 
-export type MechanismKind = 'hinge' | 'slider';
+export type MechanismKind =
+  | 'hinge'
+  | 'slider'
+  | 'spinner'
+  | 'pendulum'
+  | 'springBounce'
+  | 'transporter';
 export type MechanismAxis = 'x' | 'y' | 'z';
-export type MechanismPlaybackMode = 'toggle' | 'once' | 'autoReturn';
+export type MechanismPlaybackMode = 'toggle' | 'once' | 'autoReturn' | 'loop';
 export type MechanismTriggerEvent =
   | 'playerUses'
   | 'playerNear'
@@ -103,7 +109,11 @@ export type BuiltinMechanismTemplate =
   | 'treasureChest'
   | 'slidingDoor'
   | 'leverSwitch'
-  | 'drawbridge';
+  | 'drawbridge'
+  | 'bounceSpring'
+  | 'spinHazard'
+  | 'pendulumVine'
+  | 'warpCannon';
 
 export interface MechanismTriggerRule {
   id: string;
@@ -132,7 +142,7 @@ export interface MechanismTriggerRule {
   /** Optional toast shown on activation */
   message?: string;
   /** Sound cue on activation */
-  sound?: 'door' | 'coin' | 'sparkle' | 'chime' | 'none';
+  sound?: 'door' | 'coin' | 'sparkle' | 'chime' | 'jump' | 'whoosh' | 'none';
 }
 
 export interface ObjectMechanism {
@@ -160,6 +170,26 @@ export interface ObjectMechanism {
   playbackMode: MechanismPlaybackMode;
   /** Hold seconds before auto-return closes (when playbackMode === 'autoReturn') */
   autoReturnDelay?: number;
+  /** Continuous angular speed in deg/s (used by 'spinner') */
+  spinSpeedDegPerSec?: number;
+  /** Peak swing amplitude in degrees (used by 'pendulum') */
+  swingAmplitudeDeg?: number;
+  /** Swing frequency in Hz (used by 'pendulum') */
+  swingFrequencyHz?: number;
+  /** Upward launch impulse m/s on touch/use (used by 'springBounce') */
+  bounceVelocity?: number;
+  /** Optional horizontal forward impulse m/s (used by 'springBounce' / 'transporter') */
+  bounceForwardBoost?: number;
+  /** Destination board coordinate when triggered (used by 'transporter') */
+  transportTarget?: BoardPoint;
+  /** Optional explicit destination world Y (used by 'transporter') */
+  transportTargetY?: number;
+  /** Optional secret room ID to warp inside (used by 'transporter') */
+  transportToSecretRoomId?: string;
+  /** Optional toast label shown on warp */
+  transportLabel?: string;
+  /** Marks spinning/pendulum contraption as hazardous on contact */
+  isHazard?: boolean;
   /** Conditional game triggers controlling this mechanism */
   triggers: MechanismTriggerRule[];
 }
@@ -1322,8 +1352,15 @@ export interface ConversationLine {
   replies: string[];
 }
 
-export type PlatformPreset = 'stoneLift' | 'swingingBridge' | 'spinningDisc';
-export type PlatformMotionType = 'slide' | 'spin';
+export type PlatformPreset =
+  | 'stoneLift'
+  | 'swingingBridge'
+  | 'spinningDisc'
+  | 'jungleVine'
+  | 'bouncePad'
+  | 'crumbleStone'
+  | 'sawWheel';
+export type PlatformMotionType = 'slide' | 'spin' | 'vertical' | 'pendulum';
 
 export interface LevelEntity {
   id: string;
@@ -1854,6 +1891,117 @@ export interface GrassFieldConfig {
   tuftClumpiness?: number; // 0..1
 }
 
+export type SideScrollerLayoutStyle =
+  | 'flat2D'
+  | 'verticalClimber'
+  | 'layeredJungle'
+  | 'underwater'
+  | 'skyTemple'
+  | 'cavern';
+
+export type SideScrollerThemeId =
+  | 'sunnyCliffs'
+  | 'jungleCanopy'
+  | 'underwaterCoral'
+  | 'volcanicForge'
+  | 'crystalCavern'
+  | 'skyTemple';
+
+export type SideScrollerBackdropStyle =
+  | 'cliffsAndPines'
+  | 'jungleTreesAndVines'
+  | 'coralReefAndKelp'
+  | 'volcanicSpires'
+  | 'crystalCaverns'
+  | 'floatingTemples';
+
+export type SidePlatformSegmentStyle =
+  | 'cliff'
+  | 'bridge'
+  | 'stone'
+  | 'jungleFloor'
+  | 'branch'
+  | 'girder'
+  | 'coral'
+  | 'crystal'
+  | 'cloud';
+
+export interface SidePlatformSegment {
+  id?: string;
+  minX: number;
+  maxX: number;
+  y: number;
+  thickness: number;
+  style: SidePlatformSegmentStyle;
+  color?: string;
+  oneWay?: boolean;
+  isSecretFloor?: boolean;
+  z?: number;
+  depth?: number;
+}
+
+export interface SideScrollerVineOrLadder {
+  id: string;
+  kind: 'vine' | 'ladder' | 'bubbleStream';
+  x: number;
+  z?: number;
+  bottomY: number;
+  topY: number;
+  color?: string;
+}
+
+export interface SideScrollerSecretRoom {
+  id: string;
+  name: string;
+  entranceX: number;
+  entranceY: number;
+  roomCenterX: number;
+  roomCenterY: number;
+  width: number;
+  height: number;
+  floorColor?: string;
+  wallColor?: string;
+  accentColor?: string;
+  exitX?: number;
+  exitY?: number;
+}
+
+export interface SideScrollerLayersConfig {
+  foregroundStyle:
+    | 'shrubsAndRocks'
+    | 'jungleFraming'
+    | 'coralSilhouette'
+    | 'cavernStalactites'
+    | 'none';
+  foregroundColor: string;
+  heroLaneColor: string;
+  heroTrimColor: string;
+  midgroundStyle: SideScrollerBackdropStyle;
+  midgroundColor: string;
+  farStyle:
+    | 'alpineMountains'
+    | 'jungleMistCanopy'
+    | 'deepOceanRays'
+    | 'volcanoPeaks'
+    | 'cavernVault'
+    | 'cloudPillars';
+  farColor: string;
+  liquidType: 'water' | 'lava' | 'mist' | 'none';
+  liquidLevelY: number;
+  liquidColor: string;
+}
+
+export interface SideScrollerConfig {
+  layoutStyle: SideScrollerLayoutStyle;
+  theme: SideScrollerThemeId;
+  segments: SidePlatformSegment[];
+  vines: SideScrollerVineOrLadder[];
+  secretRooms: SideScrollerSecretRoom[];
+  layers: SideScrollerLayersConfig;
+  gravityScale?: number;
+  swimPhysics?: boolean;
+}
+
 export interface GameLevel {
   id: string;
   name: string;
@@ -1911,6 +2059,7 @@ export interface GameLevel {
   dungeonRooms?: DungeonRoomSpec[];
   customWallBoxes?: WallColliderBox[];
   roguelikeTorchAnchors?: RoguelikeTorchAnchor[];
+  sideScrollerConfig?: SideScrollerConfig;
   storyShots?: StoryCameraShot[];
   storySkits?: StorySkit[];
 }

@@ -1,5 +1,16 @@
 import type { SkeletonInspection } from '../three/proceduralRigAnimator';
-import type { AiStudioContextId, CharacterPromptGuide } from './studioBridge';
+import type {
+  AiStudioContextId,
+  CharacterPromptGuide,
+  PlatformerPromptGuide,
+} from './studioBridge';
+
+export const PLATFORMER_WORLD_STARTER_PROMPTS: string[] = [
+  'Donkey Kong style vertical steel girder tower going upward with ladders, rolling hazards, spring launcher and treasure at the summit',
+  'Donkey Kong Country layered jungle floor with elevated wooden canopy branches, climbable vines, baddies patrolling limbs and a secret bonus room',
+  'Classic flat 2D sunny cliff run with moving platforms, spinning saw trap, giant bounce spring and hidden cavern treasure vault',
+  'Deep coral underwater platformer with low-gravity swim feel, rising bubble streams, glowing kelp ledges, coral arches and sunken pearl vault',
+];
 
 export interface AiContextMeta {
   id: AiStudioContextId;
@@ -161,6 +172,26 @@ function formatCharacterGuideSection(
   return `USER PROMPT HELPER SELECTIONS (HIGHEST PRIORITY — MUST OBEY):\n${lines.join('\n')}`;
 }
 
+function formatPlatformerGuideSection(
+  guide?: PlatformerPromptGuide | null
+): string {
+  if (!guide) return '';
+  const lines: string[] = [];
+  if (guide.layoutStyle !== 'auto') {
+    lines.push(`- Platformer Layout Architecture: ${guide.layoutStyle}`);
+  }
+  if (guide.theme !== 'auto') {
+    lines.push(`- Visual Theme & Layer Palette: ${guide.theme}`);
+  }
+  if (guide.mechanics.length > 0) {
+    lines.push(
+      `- Required Platformer Elements (MUST build all checked): ${guide.mechanics.join(', ')}`
+    );
+  }
+  if (lines.length === 0) return '';
+  return `USER PLATFORMER PROMPT HELPER SELECTIONS (HIGHEST PRIORITY — MUST OBEY):\n${lines.join('\n')}`;
+}
+
 export function buildContextualAiPrompts(params: {
   context: AiStudioContextId;
   userRequest: string;
@@ -168,6 +199,7 @@ export function buildContextualAiPrompts(params: {
   glbSummary?: GlbAiSummary | null;
   modifyExisting?: boolean;
   characterGuide?: CharacterPromptGuide | null;
+  platformerGuide?: PlatformerPromptGuide | null;
   hasReferenceImage?: boolean;
 }): { systemPrompt: string; userPrompt: string } {
   const {
@@ -177,6 +209,7 @@ export function buildContextualAiPrompts(params: {
     glbSummary,
     modifyExisting,
     characterGuide,
+    platformerGuide,
     hasReferenceImage,
   } = params;
 
@@ -191,14 +224,18 @@ Use exact bone names from boneNames / autoBoneMap whenever targeting bones!\n`
     : '';
 
   const guideSection =
-    context === 'character' ? formatCharacterGuideSection(characterGuide) : '';
+    context === 'character'
+      ? formatCharacterGuideSection(characterGuide)
+      : context === 'world' && snapshot?.environmentType === 'sideScroller'
+      ? formatPlatformerGuideSection(platformerGuide)
+      : '';
 
   const refImageSection = hasReferenceImage
     ? `ATTACHED VISUAL GUIDE IMAGE:
 Study the attached reference image carefully. Match the subject's silhouette, species/humanoid build, clothing or armor colors, headgear/helmets, eyewear/visor, facial hair, ears/horns/wings/tail, and personality while staying strictly inside the exact Maker schema and anatomical meter bounds.`
     : '';
 
-  const schemaSpec = getSchemaSpecForContext(context);
+  const schemaSpec = getSchemaSpecForContext(context, snapshot);
   const modeRule = modifyExisting
     ? 'MODE: MODIFY EXISTING ONLY. Keep everything currently in CURRENT STUDIO SNAPSHOT intact! Only output the specific fields, additions, or edits the user asked to change (omit untouched properties and do NOT clear or regenerate unrelated existing terrain, weather, biome, parts, or entities).'
     : 'MODE: FRESH CREATE. Design a clean complete result from scratch matching the prompt—do NOT inherit leftover theme/snow/weather from the old snapshot unless requested.';
@@ -227,7 +264,10 @@ Study the attached reference image carefully. Match the subject's silhouette, sp
   return { systemPrompt, userPrompt };
 }
 
-function getSchemaSpecForContext(context: AiStudioContextId): string {
+function getSchemaSpecForContext(
+  context: AiStudioContextId,
+  snapshot?: Record<string, unknown>
+): string {
   switch (context) {
     case 'object':
       return `TARGET SCHEMA (Object Maker Multi-Part & Curved/Sculpted Prop):
@@ -308,15 +348,21 @@ CONSTRUCTION RULES & CAPABILITIES (READ CAREFULLY):
       "emissiveIntensity": number (0..2.5)
     }
   ],
-  "mechanisms": [ (optional interactive hinge/slider animations)
+  "mechanisms": [ (optional interactive joints OR platformer contraptions like spinners, swings, bounce springs & transporters)
     {
       "name": string,
       "targetPartName": string (must match a non-cutter part.name above),
-      "kind": "hinge" | "slider",
+      "kind": "hinge" | "slider" | "spinner" | "pendulum" | "springBounce" | "transporter",
       "axis": "x" | "y" | "z",
       "openAngleDeg": number (-160..160),
       "openOffset": number (-1.5..1.5),
-      "duration": number (0.25..2.5)
+      "duration": number (0.25..2.5),
+      "spinSpeedDegPerSec": number (-720..720, for spinner),
+      "swingAmplitudeDeg": number (5..140, for pendulum),
+      "swingFrequencyHz": number (0.15..3.0, for pendulum),
+      "bounceVelocity": number (8..32, for springBounce),
+      "isHazard": boolean (optional, true for deadly saws/blades/spiked pendulums),
+      "transportLabel": string (optional, for transporter cannons/pads)
     }
   ]
 }`;
@@ -587,6 +633,118 @@ IMPORTANT FOR NATURAL ANIMALS:
 IMPORTANT: Use ONLY bone names present in CURRENT STUDIO SNAPSHOT.boneNames (or GLB boneNames)!`;
 
     case 'world':
+      if (snapshot?.environmentType === 'sideScroller') {
+        return `TARGET SCHEMA (2D / 2.5D Platformer Stage Director — Full Layer, Contraption & Secret Room Control):
+COORDINATE SPACE:
+- World X spans [-48, +48] meters horizontally (player runs left->right or climbs upward); Hero Z is 0.
+- Y is elevation in meters: floor ground typically sits at Y=0..2; upper branches/girders/platforms stack upward at Y=4, Y=8, Y=12, Y=16, Y=20+; secret rooms sit tucked underground around Y=-16 or high sky around Y=24!
+- Set "layoutStyle" intentionally:
+  * "flat2D": Classic left-to-right sunny/castle/cavern run with gaps, cliffs, bridges, moving lifts & secret cavern.
+  * "verticalClimber": Donkey-Kong-style stacked steel girders / tiers climbing upward (Y=0 -> Y=5 -> Y=10 -> Y=15 -> Y=20) connected by "ladder" climbs!
+  * "layeredJungle": Donkey-Kong-Country-style solid jungle ground floor PLUS elevated "branch" canopy platforms (with baddies patrolling branches!) connected by climbable "vine" ropes and bounce pads!
+  * "underwater": Low-gravity underwater coral reef platformer ("swimPhysics": true, "gravityScale": 0.48, "liquidType": "water") with rising "bubbleStream" lifts!
+  * "skyTemple" / "cavern": Cloud ruins or glowing subterranean crystal chasms.
+{
+  "summary": string,
+  "layoutStyle": "flat2D" | "verticalClimber" | "layeredJungle" | "underwater" | "skyTemple" | "cavern",
+  "theme": "sunnyCliffs" | "jungleCanopy" | "underwaterCoral" | "volcanicForge" | "crystalCavern" | "skyTemple",
+  "biome": "meadow" | "island" | "forest" | "snow" | "desert" | "cave" | "swamp" | "night",
+  "sky": "sunny" | "golden" | "night" | "mist" | "storm" | "cave",
+  "weather": "none" | "fireflies" | "leaves" | "rain" | "snow",
+  "gravityScale": number (0.35..1.4, default 1.0; use 0.45..0.6 for underwater),
+  "swimPhysics": boolean (true ONLY for underwater levels),
+  "layers": {
+    "midgroundStyle": "cliffsAndPines" | "jungleTreesAndVines" | "coralReefAndKelp" | "volcanicSpires" | "crystalCaverns" | "floatingTemples",
+    "heroLaneColor": "#RRGGBB",
+    "heroTrimColor": "#RRGGBB",
+    "foregroundColor": "#RRGGBB",
+    "midgroundColor": "#RRGGBB",
+    "farColor": "#RRGGBB",
+    "liquidType": "water" | "lava" | "mist" | "none",
+    "liquidColor": "#RRGGBB",
+    "liquidLevelY": number (-12..2)
+  },
+  "segments": [ (4 to 14 walkable terrain slabs / upper branches / girders)
+    {
+      "minX": number (-48..42),
+      "maxX": number (-42..48),
+      "y": number (-2..24),
+      "style": "cliff" | "bridge" | "stone" | "jungleFloor" | "branch" | "girder" | "coral" | "crystal" | "cloud",
+      "oneWay": boolean (true for upper branches/girders player can jump up through & press Down to drop through),
+      "color": "#RRGGBB" (optional custom tint)
+    }
+  ],
+  "vines": [ (0 to 8 climbable vines, ladders, or underwater bubble streams connecting lower & upper segments)
+    {
+      "kind": "vine" | "ladder" | "bubbleStream",
+      "x": number (-42..42),
+      "bottomY": number (-4..18),
+      "topY": number (2..26)
+    }
+  ],
+  "secretRooms": [ (0 to 2 hidden bonus chambers with entrance warp portal & treasure chest inside!)
+    {
+      "name": string,
+      "entranceX": number (-38..38),
+      "entranceY": number (-2..22),
+      "roomCenterX": number (-30..30),
+      "roomCenterY": number (-20..-12 or 22..28),
+      "width": number (10..18)
+    }
+  ],
+  "platforms": [ (0 to 6 moving/spinning platforms, bounce pads, or saw wheels)
+    {
+      "name": string,
+      "preset": "stoneLift" | "swingingBridge" | "spinningDisc" | "jungleVine" | "bouncePad" | "crumbleStone" | "sawWheel",
+      "motion": "slide" | "vertical" | "spin" | "pendulum",
+      "x": number (-42..42),
+      "y": number (-2..24),
+      "endX": number (-42..42),
+      "endY": number (-2..24),
+      "speed": number (1..7)
+    }
+  ],
+  "contraptions": [ (0 to 5 interactive mechanical objects: giant springs, spinning blade wheels, swinging hazards, warp cannons!)
+    {
+      "name": string,
+      "template": "bounceSpring" | "spinHazard" | "pendulumVine" | "warpCannon",
+      "x": number (-42..42),
+      "y": number (-2..24),
+      "scale": number (0.7..2.0),
+      "bounceVelocity": number (12..28, for bounceSpring),
+      "targetX": number (-42..42, for warpCannon),
+      "targetY": number (-20..26, for warpCannon)
+    }
+  ],
+  "baddies": [ (1 to 8 patrolling enemies placed ON ground or ON elevated branches/girders)
+    {
+      "name": string,
+      "x": number (-42..42),
+      "y": number (-2..24),
+      "isBoss": boolean,
+      "health": number (1..12),
+      "speed": number (1.5..6),
+      "tint": "#RRGGBB"
+    }
+  ],
+  "traps": [ (0 to 6 floor spike/hazard traps)
+    {
+      "name": string,
+      "x": number (-42..42),
+      "y": number (-2..24)
+    }
+  ],
+  "treasures": [ (1 to 5 treasure chests/bonuses — place one inside secretRoom center if secretRooms present!)
+    {
+      "name": string,
+      "x": number (-42..42),
+      "y": number (-22..28)
+    }
+  ],
+  "startPoint": { "x": number (-44..44), "y": number (-2..24) },
+  "portalPoint": { "x": number (-44..44), "y": number (-2..24) }
+}`;
+      }
       return `TARGET SCHEMA (World Maker Terraform, Caves, Spiral Paths & Landmarks):
 Coordinate space: x and z range within [-130, 130] meters on the island (0,0 is island center).
 IMPORTANT: Unless the user explicitly asks for snow/winter/ice, do NOT use biome "snow" or weather "snow", and set mountainConfig.snowStartHeight to 28 so non-snowy tall mountains stay lush green & rocky rather than white snow.

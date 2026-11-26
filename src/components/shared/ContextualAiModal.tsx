@@ -38,6 +38,7 @@ import {
 } from '../../ai/aiAppliers';
 import {
   AI_CONTEXT_META,
+  PLATFORMER_WORLD_STARTER_PROMPTS,
   buildContextualAiPrompts,
   type GlbAiSummary,
 } from '../../ai/contextPacks';
@@ -52,6 +53,8 @@ import {
   type CharacterGuideExtremity,
   type CharacterGuideSurface,
   type CharacterPromptGuide,
+  type PlatformerGuideMechanic,
+  type PlatformerPromptGuide,
 } from '../../ai/studioBridge';
 import { createEntity } from '../../data/registries';
 import type { MakerStore } from '../../store/useMakerStore';
@@ -60,7 +63,12 @@ import {
   loadCustomAssetToCache,
 } from '../../three/gltfAssetManager';
 import { inspectModelSkeleton } from '../../three/proceduralRigAnimator';
-import type { CustomAssetMeta } from '../../types/maker';
+import type {
+  CustomAssetMeta,
+  SideScrollerLayoutStyle,
+  SideScrollerThemeId,
+} from '../../types/maker';
+import { getEnvironmentType } from '../../utils/terrain';
 
 export interface ContextualAiPanelProps {
   store: MakerStore;
@@ -129,6 +137,40 @@ const CHAR_EXTRA_OPTIONS: { id: CharacterGuideExtra; label: string }[] = [
   { id: 'spikes', label: 'Spikes' },
 ];
 
+const DEFAULT_PLATFORMER_GUIDE: PlatformerPromptGuide = {
+  layoutStyle: 'auto',
+  theme: 'auto',
+  mechanics: [],
+};
+
+const PLATFORMER_LAYOUT_OPTIONS: { id: 'auto' | SideScrollerLayoutStyle; label: string }[] = [
+  { id: 'auto', label: 'Auto' },
+  { id: 'flat2D', label: '2D Flat Run' },
+  { id: 'verticalClimber', label: 'Tower Climb' },
+  { id: 'layeredJungle', label: 'Jungle Canopy' },
+  { id: 'underwater', label: 'Underwater' },
+  { id: 'skyTemple', label: 'Sky Temple' },
+];
+
+const PLATFORMER_THEME_OPTIONS: { id: 'auto' | SideScrollerThemeId; label: string }[] = [
+  { id: 'auto', label: 'Auto' },
+  { id: 'sunnyCliffs', label: 'Sunny Cliffs' },
+  { id: 'jungleCanopy', label: 'Jungle' },
+  { id: 'underwaterCoral', label: 'Coral Reef' },
+  { id: 'volcanicForge', label: 'Forge' },
+  { id: 'crystalCavern', label: 'Cavern' },
+];
+
+const PLATFORMER_MECHANIC_OPTIONS: { id: PlatformerGuideMechanic; label: string }[] = [
+  { id: 'movingPlatforms', label: 'Moving Plats' },
+  { id: 'vinesAndLadders', label: 'Vines / Ladders' },
+  { id: 'secretRooms', label: 'Secret Room' },
+  { id: 'springsAndCannons', label: 'Springs & Cannons' },
+  { id: 'spinningHazards', label: 'Spin Hazards' },
+  { id: 'traps', label: 'Floor Traps' },
+  { id: 'platformBaddies', label: 'Branch Baddies' },
+];
+
 async function encodeReferenceImageFile(file: File): Promise<AiReferenceImage> {
   const objectUrl = URL.createObjectURL(file);
   try {
@@ -189,7 +231,21 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
     }
   }, [activeBridge?.context, initialContext, store.selectedTab]);
 
-  const contextMeta = AI_CONTEXT_META[targetContext];
+  const isSideScrollerWorld =
+    targetContext === 'world' &&
+    Boolean(store.currentLevel && getEnvironmentType(store.currentLevel) === 'sideScroller');
+
+  const contextMeta = useMemo(() => {
+    const base = AI_CONTEXT_META[targetContext];
+    if (!isSideScrollerWorld) return base;
+    return {
+      ...base,
+      title: 'Platformer Director AI',
+      tagline:
+        'Builds 2D flat runs, vertical towers, layered jungles, underwater worlds, vines, secret rooms & contraptions.',
+      starterPrompts: PLATFORMER_WORLD_STARTER_PROMPTS,
+    };
+  }, [targetContext, isSideScrollerWorld]);
 
   const [tab, setTab] = useState<ModalTab>('create');
   const [prompt, setPrompt] = useState<string>('');
@@ -229,6 +285,10 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
   const [showCharGuide, setShowCharGuide] = useState(true);
   const [characterGuide, setCharacterGuide] = useState<CharacterPromptGuide>(
     DEFAULT_CHARACTER_GUIDE
+  );
+  const [showPlatGuide, setShowPlatGuide] = useState(true);
+  const [platformerGuide, setPlatformerGuide] = useState<PlatformerPromptGuide>(
+    DEFAULT_PLATFORMER_GUIDE
   );
 
   useEffect(() => {
@@ -290,12 +350,15 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
     const proj = store.currentProject;
 
     if (targetContext === 'world' && lvl) {
+      const envType = getEnvironmentType(lvl);
       return {
         levelName: lvl.name,
+        environmentType: envType,
         worldEditorScope: store.worldEditorScope,
         biome: lvl.biome,
         sky: lvl.sky,
         weather: lvl.weather,
+        sideScrollerConfig: envType === 'sideScroller' ? lvl.sideScrollerConfig ?? null : undefined,
         vistaPreset: lvl.vistaPreset ?? 'none',
         mountainConfig: lvl.terrain?.mountainConfig ?? null,
         cavesCount: lvl.terrain?.caves?.length ?? 0,
@@ -375,7 +438,10 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
     }
 
     if (targetContext === 'world') {
-      return applyWorldTerraformToStore(store, data, { modifyExisting: useModify });
+      return applyWorldTerraformToStore(store, data, {
+        modifyExisting: useModify,
+        platformerGuide: isSideScrollerWorld ? platformerGuide : undefined,
+      });
     }
     if (targetContext === 'logic') {
       return applyLogicMultiLevelToStore(store, data, { modifyExisting: useModify });
@@ -565,6 +631,7 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
         glbSummary,
         modifyExisting,
         characterGuide: targetContext === 'character' ? characterGuide : undefined,
+        platformerGuide: isSideScrollerWorld ? platformerGuide : undefined,
         hasReferenceImage: Boolean(referenceImage),
       });
 
@@ -1274,6 +1341,152 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
                                   extras: checked
                                     ? prev.extras.filter((x) => x !== opt.id)
                                     : [...prev.extras, opt.id],
+                                }))
+                              }
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border inline-flex items-center justify-center gap-1 transition-colors ${
+                                checked
+                                  ? 'bg-[#20B46A]/20 border-[#20B46A] text-emerald-700 dark:text-emerald-200'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              {checked && <Check size={9} className="shrink-0" />}
+                              <span className="truncate">{opt.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Platformer Director Helper Checklist (only when World level is Side-Scroller) */}
+            {isSideScrollerWorld && (
+              <div
+                className={`p-2.5 rounded-xl border space-y-2 ${
+                  embedded
+                    ? 'bg-slate-50 dark:bg-[#12151E] border-slate-200/80 dark:border-white/[0.08]'
+                    : 'bg-[#171A23] border-white/[0.08]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowPlatGuide((v) => !v)}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-left"
+                  >
+                    {showPlatGuide ? (
+                      <ChevronUp size={13} className="text-[#20B46A]" />
+                    ) : (
+                      <ChevronDown size={13} className="text-[#20B46A]" />
+                    )}
+                    <span>Platformer Style &amp; Mechanics</span>
+                  </button>
+                  {(platformerGuide.layoutStyle !== 'auto' ||
+                    platformerGuide.theme !== 'auto' ||
+                    platformerGuide.mechanics.length > 0) && (
+                    <button
+                      type="button"
+                      onClick={() => setPlatformerGuide(DEFAULT_PLATFORMER_GUIDE)}
+                      className="text-[10px] font-bold text-[#20B46A] hover:underline"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {showPlatGuide && (
+                  <div className="space-y-2 pt-0.5">
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Layout Architecture
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {PLATFORMER_LAYOUT_OPTIONS.map((opt) => {
+                          const active = platformerGuide.layoutStyle === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setPlatformerGuide((prev) => ({ ...prev, layoutStyle: opt.id }))
+                              }
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                                active
+                                  ? 'bg-[#20B46A] border-[#20B46A] text-white'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        World Theme &amp; Layers
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {PLATFORMER_THEME_OPTIONS.map((opt) => {
+                          const active = platformerGuide.theme === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setPlatformerGuide((prev) => ({ ...prev, theme: opt.id }))
+                              }
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                                active
+                                  ? 'bg-[#20B46A] border-[#20B46A] text-white'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Tick Mechanics to Include
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {PLATFORMER_MECHANIC_OPTIONS.map((opt) => {
+                          const checked = platformerGuide.mechanics.includes(opt.id);
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setPlatformerGuide((prev) => ({
+                                  ...prev,
+                                  mechanics: checked
+                                    ? prev.mechanics.filter((x) => x !== opt.id)
+                                    : [...prev.mechanics, opt.id],
                                 }))
                               }
                               className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border inline-flex items-center justify-center gap-1 transition-colors ${

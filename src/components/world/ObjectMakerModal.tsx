@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import {
   ArrowLeftRight,
+  ArrowUpRight,
   Bookmark,
   BookmarkPlus,
   Box,
@@ -26,6 +27,7 @@ import {
   Play,
   Plus,
   Redo2,
+  RefreshCw,
   RotateCcw,
   RotateCw,
   Save,
@@ -465,6 +467,200 @@ function buildDocFromBuiltinTemplate(template: BuiltinMechanismTemplate | 'saveP
       category: 'prop',
       doc: { version: 1, parts, groups },
       mechanisms: getDefaultMechanismsForTemplate('leverSwitch'),
+    };
+  }
+
+  if (template === 'bounceSpring') {
+    const baseGroupId = uid();
+    const headGroupId = uid();
+    const groups: ObjectGroupSpec[] = [
+      { id: baseGroupId, name: 'Spring_Base', parentGroupId: null, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      { id: headGroupId, name: 'Spring_Head', parentGroupId: null, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    ];
+    const parts: ObjectPartSpec[] = [
+      createDefaultPartSpec('cylinder', {
+        name: 'Steel_Plate',
+        parentGroupId: baseGroupId,
+        dimensions: [1.65, 0.18, 1.65],
+        position: [0, 0.09, 0],
+        material: createDefaultMaterialFinish('rustedIron'),
+      }),
+      createDefaultPartSpec('torus', {
+        name: 'Gold_Coil_1',
+        parentGroupId: headGroupId,
+        dimensions: [0.95, 0.18, 0.95],
+        position: [0, 0.34, 0],
+        rotation: [90, 0, 0],
+        material: { color: '#F59E0B', roughness: 0.25, metalness: 0.85, weathering: 'none', weatheringIntensity: 0 },
+      }),
+      createDefaultPartSpec('torus', {
+        name: 'Gold_Coil_2',
+        parentGroupId: headGroupId,
+        dimensions: [0.95, 0.18, 0.95],
+        position: [0, 0.58, 0],
+        rotation: [90, 0, 0],
+        material: { color: '#F59E0B', roughness: 0.25, metalness: 0.85, weathering: 'none', weatheringIntensity: 0 },
+      }),
+      createDefaultPartSpec('cylinder', {
+        name: 'Bounce_Pad',
+        parentGroupId: headGroupId,
+        dimensions: [1.6, 0.22, 1.6],
+        position: [0, 0.9, 0],
+        material: { color: '#EF4444', roughness: 0.35, metalness: 0.15, emissive: '#991B1B', emissiveIntensity: 0.25, weathering: 'none', weatheringIntensity: 0 },
+      }),
+    ];
+    return {
+      name: 'Giant Bounce Spring',
+      category: 'prop',
+      doc: { version: 1, parts, groups },
+      mechanisms: [
+        {
+          ...getDefaultMechanismsForTemplate('bounceSpring')[0],
+          targetNodePath: `group:${headGroupId}`,
+          targetLabel: 'Spring_Head',
+        },
+      ],
+    };
+  }
+
+  if (template === 'spinHazard') {
+    const standGroupId = uid();
+    const rotorGroupId = uid();
+    const groups: ObjectGroupSpec[] = [
+      { id: standGroupId, name: 'Axle_Stand', parentGroupId: null, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      { id: rotorGroupId, name: 'Saw_Rotor', parentGroupId: null, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    ];
+    const parts: ObjectPartSpec[] = [
+      createDefaultPartSpec('cylinder', {
+        name: 'Iron_Post',
+        parentGroupId: standGroupId,
+        dimensions: [0.46, 1.35, 0.46],
+        position: [0, 0.675, 0],
+        material: createDefaultMaterialFinish('rustedIron'),
+      }),
+      createDefaultPartSpec('cylinder', {
+        name: 'Red_Hub',
+        parentGroupId: rotorGroupId,
+        dimensions: [0.5, 0.26, 0.5],
+        position: [0, 1.35, 0],
+        rotation: [90, 0, 0],
+        material: { color: '#EF4444', roughness: 0.3, metalness: 0.5, emissive: '#DC2626', emissiveIntensity: 0.3, weathering: 'none', weatheringIntensity: 0 },
+      }),
+      createDefaultPartSpec('cube', {
+        name: 'Blade_A',
+        parentGroupId: rotorGroupId,
+        dimensions: [1.85, 0.2, 0.1],
+        position: [0, 1.35, 0],
+        material: { color: '#E2E8F0', roughness: 0.2, metalness: 0.92, weathering: 'none', weatheringIntensity: 0 },
+      }),
+      createDefaultPartSpec('cube', {
+        name: 'Blade_B',
+        parentGroupId: rotorGroupId,
+        dimensions: [0.2, 1.85, 0.1],
+        position: [0, 1.35, 0],
+        material: { color: '#E2E8F0', roughness: 0.2, metalness: 0.92, weathering: 'none', weatheringIntensity: 0 },
+      }),
+    ];
+    return {
+      name: 'Spinning Saw Rotor',
+      category: 'scenery',
+      doc: { version: 1, parts, groups },
+      mechanisms: [
+        {
+          ...getDefaultMechanismsForTemplate('spinHazard')[0],
+          targetNodePath: `group:${rotorGroupId}`,
+          targetLabel: 'Saw_Rotor',
+        },
+      ],
+    };
+  }
+
+  if (template === 'pendulumVine') {
+    const frameGroupId = uid();
+    const armGroupId = uid();
+    const groups: ObjectGroupSpec[] = [
+      { id: frameGroupId, name: 'Gallows_Frame', parentGroupId: null, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      { id: armGroupId, name: 'Pendulum_Arm', parentGroupId: null, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    ];
+    const parts: ObjectPartSpec[] = [
+      createDefaultPartSpec('beamLarge', {
+        name: 'Overhead_Beam',
+        parentGroupId: frameGroupId,
+        dimensions: [1.7, 0.24, 0.34],
+        position: [0, 3.2, 0],
+        material: createDefaultMaterialFinish('timberPlank'),
+      }),
+      createDefaultPartSpec('cylinder', {
+        name: 'Pendulum_Rod',
+        parentGroupId: armGroupId,
+        dimensions: [0.12, 2.25, 0.12],
+        position: [0, 2.02, 0],
+        material: createDefaultMaterialFinish('rustedIron'),
+      }),
+      createDefaultPartSpec('sphere', {
+        name: 'Pendulum_Weight',
+        parentGroupId: armGroupId,
+        dimensions: [0.85, 0.85, 0.85],
+        position: [0, 0.8, 0],
+        material: createDefaultMaterialFinish('rustedIron'),
+      }),
+    ];
+    return {
+      name: 'Swinging Pendulum Mace',
+      category: 'scenery',
+      doc: { version: 1, parts, groups },
+      mechanisms: [
+        {
+          ...getDefaultMechanismsForTemplate('pendulumVine')[0],
+          targetNodePath: `group:${armGroupId}`,
+          targetLabel: 'Pendulum_Arm',
+        },
+      ],
+    };
+  }
+
+  if (template === 'warpCannon') {
+    const mountGroupId = uid();
+    const barrelGroupId = uid();
+    const groups: ObjectGroupSpec[] = [
+      { id: mountGroupId, name: 'Cannon_Mount', parentGroupId: null, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      { id: barrelGroupId, name: 'Warp_Barrel', parentGroupId: null, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    ];
+    const parts: ObjectPartSpec[] = [
+      createDefaultPartSpec('cylinder', {
+        name: 'Cannon_Base',
+        parentGroupId: mountGroupId,
+        dimensions: [1.55, 0.34, 1.55],
+        position: [0, 0.17, 0],
+        material: createDefaultMaterialFinish('hewnStone'),
+      }),
+      createDefaultPartSpec('cylinder', {
+        name: 'Warp_Tube',
+        parentGroupId: barrelGroupId,
+        dimensions: [1.05, 1.45, 1.05],
+        position: [0, 0.96, 0],
+        material: { color: '#1E293B', roughness: 0.32, metalness: 0.8, weathering: 'none', weatheringIntensity: 0 },
+      }),
+      createDefaultPartSpec('torus', {
+        name: 'Portal_Rim',
+        parentGroupId: barrelGroupId,
+        dimensions: [1.14, 0.16, 1.14],
+        position: [0, 1.68, 0],
+        rotation: [90, 0, 0],
+        material: { color: '#38BDF8', roughness: 0.2, metalness: 0.4, emissive: '#38BDF8', emissiveIntensity: 1.0, weathering: 'none', weatheringIntensity: 0 },
+      }),
+    ];
+    return {
+      name: 'Transporter Warp Cannon',
+      category: 'prop',
+      doc: { version: 1, parts, groups },
+      mechanisms: [
+        {
+          ...getDefaultMechanismsForTemplate('warpCannon')[0],
+          targetNodePath: `group:${barrelGroupId}`,
+          targetLabel: 'Warp_Barrel',
+        },
+      ],
     };
   }
 
@@ -1528,33 +1724,60 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
       flashToast('Add at least one object part first');
       return;
     }
-    const pivot = computePivotPresetForPart(
-      fallbackNode,
-      kind === 'hinge' ? 'backEdge' : 'partCenter'
-    );
+    const snapPreset =
+      kind === 'hinge'
+        ? 'backEdge'
+        : kind === 'pendulum'
+        ? 'topCenter'
+        : 'partCenter';
+    const pivot = computePivotPresetForPart(fallbackNode, snapPreset);
+    const kindTitle =
+      kind === 'hinge'
+        ? 'Hinge'
+        : kind === 'slider'
+        ? 'Slider'
+        : kind === 'spinner'
+        ? 'Spinner'
+        : kind === 'pendulum'
+        ? 'Pendulum'
+        : kind === 'springBounce'
+        ? 'Spring'
+        : 'Transporter';
     const newMech: ObjectMechanism = {
       id: uid(),
-      name: `${fallbackNode.label} ${kind === 'hinge' ? 'Hinge' : 'Slider'}`,
+      name: `${fallbackNode.label} ${kindTitle}`,
       targetNodePath: fallbackNode.path,
       targetLabel: fallbackNode.label,
       kind,
-      axis: 'x',
+      axis: kind === 'springBounce' || kind === 'transporter' ? 'y' : kind === 'pendulum' || kind === 'spinner' ? 'z' : 'x',
       pivot,
       restAngleDeg: 0,
-      openAngleDeg: kind === 'hinge' ? -95 : 0,
+      openAngleDeg: kind === 'hinge' ? -95 : kind === 'spinner' ? 360 : kind === 'pendulum' ? 48 : 0,
       restOffset: 0,
-      openOffset: kind === 'slider' ? 1.1 : 0,
-      duration: 0.8,
-      easing: kind === 'hinge' ? 'smooth' : 'easeOut',
-      playbackMode: 'toggle',
-      triggers: [createDefaultTriggerRule()],
+      openOffset: kind === 'slider' ? 1.1 : kind === 'springBounce' ? 0.85 : kind === 'transporter' ? 0.3 : 0,
+      duration: kind === 'springBounce' ? 0.28 : 0.8,
+      easing: kind === 'springBounce' || kind === 'transporter' ? 'elastic' : kind === 'hinge' ? 'smooth' : 'easeOut',
+      playbackMode: kind === 'springBounce' || kind === 'transporter' ? 'autoReturn' : 'toggle',
+      ...(kind === 'springBounce' || kind === 'transporter' ? { autoReturnDelay: 0.4 } : {}),
+      ...(kind === 'spinner' ? { spinSpeedDegPerSec: 165 } : {}),
+      ...(kind === 'pendulum' ? { swingAmplitudeDeg: 48, swingFrequencyHz: 0.65 } : {}),
+      ...(kind === 'springBounce' ? { bounceVelocity: 18.5 } : {}),
+      ...(kind === 'transporter' ? { transportTarget: { x: 0.72, y: 0.5 }, transportLabel: 'Warped across the stage!' } : {}),
+      triggers:
+        kind === 'spinner' || kind === 'pendulum'
+          ? []
+          : kind === 'springBounce'
+          ? [{ ...createDefaultTriggerRule(), event: 'playerTouches', action: 'open', message: 'BOING!', sound: 'jump' }]
+          : kind === 'transporter'
+          ? [{ ...createDefaultTriggerRule(), event: 'playerUses', action: 'open', message: 'Warped!', sound: 'sparkle' }]
+          : [createDefaultTriggerRule()],
     };
     pushHistory(doc, mechanisms);
     setMechanisms((prev) => [...prev, newMech]);
     setActiveMechanismId(newMech.id);
     setSelectedMechNodePath(fallbackNode.path);
     setMechProgress(0);
-    flashToast(`Added ${kind} to ${fallbackNode.label}`);
+    flashToast(`Added ${kindTitle} to ${fallbackNode.label}`);
   };
 
   const handleApplyMechanismPreset = (preset: MechanismPresetDef, mode: 'replace' | 'add') => {
@@ -3233,7 +3456,11 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
           : '#38BDF8';
       const [px, py, pz] = activeMechanism.pivot;
 
-      if (activeMechanism.kind === 'hinge') {
+      const isRotationalKind =
+        activeMechanism.kind === 'hinge' ||
+        activeMechanism.kind === 'spinner' ||
+        activeMechanism.kind === 'pendulum';
+      if (isRotationalKind) {
         const pivotBall = new THREE.Mesh(
           new THREE.SphereGeometry(0.095, 16, 12),
           new THREE.MeshBasicMaterial({ color: '#F59E0B' })
@@ -3266,7 +3493,9 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     if (
       inspectorTab === 'mechanics' &&
       activeMechanism &&
-      activeMechanism.kind === 'hinge' &&
+      (activeMechanism.kind === 'hinge' ||
+        activeMechanism.kind === 'spinner' ||
+        activeMechanism.kind === 'pendulum') &&
       showPivotGizmo
     ) {
       s.pivotProxy.position.set(
@@ -4090,7 +4319,9 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
                     className="w-32 sm:w-44 accent-[#F59E0B]"
                   />
                   <span className="text-xs font-mono font-bold tabular-nums text-[#F59E0B]">
-                    {activeMechanism.kind === 'hinge'
+                    {activeMechanism.kind === 'hinge' ||
+                    activeMechanism.kind === 'spinner' ||
+                    activeMechanism.kind === 'pendulum'
                       ? `${(
                           activeMechanism.restAngleDeg +
                           (activeMechanism.openAngleDeg - activeMechanism.restAngleDeg) *
@@ -4101,7 +4332,9 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
                           (activeMechanism.openOffset - activeMechanism.restOffset) * mechProgress
                         ).toFixed(2)}m`}
                   </span>
-                  {activeMechanism.kind === 'hinge' && (
+                  {(activeMechanism.kind === 'hinge' ||
+                    activeMechanism.kind === 'spinner' ||
+                    activeMechanism.kind === 'pendulum') && (
                     <button
                       type="button"
                       onClick={() => setShowPivotGizmo((v) => !v)}
@@ -5382,27 +5615,59 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
               {/* TAB 4: HINGES, SLIDERS, TRIGGERS & PRESETS */}
               {inspectorTab === 'mechanics' && (
                 <div className="space-y-3.5">
-                  {/* Mechanisms Header & Add Joint */}
-                  <div className="flex items-center justify-between gap-2">
+                  {/* Mechanisms Header & Add Joint / Contraption */}
+                  <div className="space-y-1.5">
                     <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
-                      Joints &amp; Mechanics
+                      Joints &amp; Mechanical Contraptions
                     </span>
-                    <div className="flex items-center gap-1">
+                    <div className="grid grid-cols-3 gap-1">
                       <button
                         type="button"
                         onClick={() => handleAddMechanism('hinge')}
-                        className="px-2 py-1 rounded-lg bg-[#7C5CFF] hover:bg-[#6A48F5] text-white text-[10px] font-extrabold inline-flex items-center gap-1"
+                        className="px-2 py-1 rounded-lg bg-[#7C5CFF] hover:bg-[#6A48F5] text-white text-[10px] font-extrabold inline-flex items-center justify-center gap-1"
                       >
-                        <RotateCw size={11} />
+                        <RotateCw size={10} />
                         <span>+ Hinge</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => handleAddMechanism('slider')}
-                        className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] hover:bg-slate-200 dark:hover:bg-[#2A3142] text-[10px] font-extrabold inline-flex items-center gap-1"
+                        className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] hover:bg-slate-200 dark:hover:bg-[#2A3142] text-[10px] font-extrabold inline-flex items-center justify-center gap-1"
                       >
-                        <ArrowLeftRight size={11} />
+                        <ArrowLeftRight size={10} />
                         <span>+ Slider</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddMechanism('spinner')}
+                        className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] hover:bg-slate-200 dark:hover:bg-[#2A3142] text-[10px] font-extrabold inline-flex items-center justify-center gap-1"
+                      >
+                        <RefreshCw size={10} />
+                        <span>+ Spinner</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddMechanism('pendulum')}
+                        className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] hover:bg-slate-200 dark:hover:bg-[#2A3142] text-[10px] font-extrabold inline-flex items-center justify-center gap-1"
+                      >
+                        <RotateCw size={10} />
+                        <span>+ Swing</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddMechanism('springBounce')}
+                        className="px-2 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-300 text-[10px] font-extrabold inline-flex items-center justify-center gap-1"
+                      >
+                        <ArrowUpRight size={10} />
+                        <span>+ Spring</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddMechanism('transporter')}
+                        className="px-2 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 text-sky-600 dark:text-sky-300 text-[10px] font-extrabold inline-flex items-center justify-center gap-1"
+                      >
+                        <Sparkles size={10} />
+                        <span>+ Warp</span>
                       </button>
                     </div>
                   </div>
@@ -5423,11 +5688,21 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
                               : 'bg-slate-50 dark:bg-[#12151E]'
                           }`}
                         >
-                          {m.kind === 'hinge' ? <RotateCw size={12} /> : <ArrowLeftRight size={12} />}
+                          {m.kind === 'hinge' || m.kind === 'pendulum' ? (
+                            <RotateCw size={12} />
+                          ) : m.kind === 'spinner' ? (
+                            <RefreshCw size={12} />
+                          ) : m.kind === 'springBounce' ? (
+                            <ArrowUpRight size={12} />
+                          ) : m.kind === 'transporter' ? (
+                            <Sparkles size={12} />
+                          ) : (
+                            <ArrowLeftRight size={12} />
+                          )}
                           <div className="min-w-0 flex-1">
                             <div className="truncate">{m.name}</div>
                             <div className="text-[10px] opacity-70 truncate">
-                              {m.targetLabel} · {m.axis.toUpperCase()} axis · {m.triggers.length} rules
+                              {m.targetLabel} · {m.kind} · {m.axis.toUpperCase()} axis · {m.triggers.length} rules
                             </div>
                           </div>
                           <button
@@ -5483,29 +5758,30 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
                       </div>
 
                       {/* Kind & Axis */}
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => updateActiveMechanism((m) => ({ ...m, kind: 'hinge' }))}
-                          className={`py-1.5 rounded-lg text-[11px] font-bold border ${
-                            activeMechanism.kind === 'hinge'
-                              ? 'border-[#7C5CFF] bg-[#7C5CFF]/15 text-[#7C5CFF]'
-                              : 'border-slate-200/80 dark:border-white/[0.08]'
-                          }`}
-                        >
-                          Hinge Pivot
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => updateActiveMechanism((m) => ({ ...m, kind: 'slider' }))}
-                          className={`py-1.5 rounded-lg text-[11px] font-bold border ${
-                            activeMechanism.kind === 'slider'
-                              ? 'border-[#7C5CFF] bg-[#7C5CFF]/15 text-[#7C5CFF]'
-                              : 'border-slate-200/80 dark:border-white/[0.08]'
-                          }`}
-                        >
-                          Linear Slider
-                        </button>
+                      <div className="grid grid-cols-3 gap-1">
+                        {(
+                          [
+                            ['hinge', 'Hinge'],
+                            ['slider', 'Slider'],
+                            ['spinner', 'Spinner'],
+                            ['pendulum', 'Pendulum'],
+                            ['springBounce', 'Spring'],
+                            ['transporter', 'Warp'],
+                          ] as const
+                        ).map(([k, lbl]) => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => updateActiveMechanism((m) => ({ ...m, kind: k }))}
+                            className={`py-1.5 rounded-lg text-[10px] font-bold border ${
+                              activeMechanism.kind === k
+                                ? 'border-[#7C5CFF] bg-[#7C5CFF]/15 text-[#7C5CFF]'
+                                : 'border-slate-200/80 dark:border-white/[0.08]'
+                            }`}
+                          >
+                            {lbl}
+                          </button>
+                        ))}
                       </div>
 
                       <div className="grid grid-cols-3 gap-1">
@@ -5527,8 +5803,191 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
                         ))}
                       </div>
 
-                      {/* Hinge Pivot Seam Presets + Angle OR Slider Distance */}
-                      {activeMechanism.kind === 'hinge' ? (
+                      {/* Contraption-specific Parameters */}
+                      {activeMechanism.kind === 'spinner' ? (
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-[11px] font-semibold">
+                            <span>Spin Speed</span>
+                            <span className="font-mono text-[#F59E0B] font-bold">
+                              {activeMechanism.spinSpeedDegPerSec ?? 165}°/s
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={-360}
+                            max={360}
+                            step={10}
+                            value={activeMechanism.spinSpeedDegPerSec ?? 165}
+                            onChange={(e) =>
+                              updateActiveMechanism((m) => ({
+                                ...m,
+                                spinSpeedDegPerSec: Number(e.target.value),
+                              }))
+                            }
+                            className="w-full accent-[#F59E0B]"
+                          />
+                          <label className="flex items-center gap-2 text-[11px] font-bold cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(activeMechanism.isHazard)}
+                              onChange={(e) =>
+                                updateActiveMechanism((m) => ({
+                                  ...m,
+                                  isHazard: e.target.checked,
+                                }))
+                              }
+                            />
+                            <span>Damages player on contact (Hazard)</span>
+                          </label>
+                        </div>
+                      ) : activeMechanism.kind === 'pendulum' ? (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-3 gap-1">
+                            {SNAP_PRESETS.map((sp) => (
+                              <button
+                                key={sp.id}
+                                type="button"
+                                onClick={() => {
+                                  const node =
+                                    scenePartNodes.find(
+                                      (n) => n.path === activeMechanism.targetNodePath
+                                    ) ?? selectedMechNode;
+                                  if (!node) return;
+                                  updateActiveMechanism((m) => ({
+                                    ...m,
+                                    pivot: computePivotPresetForPart(node, sp.id),
+                                  }));
+                                }}
+                                className="py-1 px-1.5 rounded-md bg-slate-100 dark:bg-[#12151E] hover:bg-[#7C5CFF] hover:text-white text-[10px] font-bold transition-colors"
+                              >
+                                {sp.label}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="flex justify-between text-[11px] font-semibold">
+                            <span>Swing Angle</span>
+                            <span className="font-mono text-[#F59E0B] font-bold">
+                              ±{activeMechanism.swingAmplitudeDeg ?? 48}°
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={10}
+                            max={120}
+                            step={2}
+                            value={activeMechanism.swingAmplitudeDeg ?? 48}
+                            onChange={(e) =>
+                              updateActiveMechanism((m) => ({
+                                ...m,
+                                swingAmplitudeDeg: Number(e.target.value),
+                              }))
+                            }
+                            className="w-full accent-[#F59E0B]"
+                          />
+                          <div className="flex justify-between text-[11px] font-semibold">
+                            <span>Swing Speed</span>
+                            <span className="font-mono text-[#F59E0B] font-bold">
+                              {(activeMechanism.swingFrequencyHz ?? 0.65).toFixed(2)} Hz
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0.2}
+                            max={2.0}
+                            step={0.05}
+                            value={activeMechanism.swingFrequencyHz ?? 0.65}
+                            onChange={(e) =>
+                              updateActiveMechanism((m) => ({
+                                ...m,
+                                swingFrequencyHz: Number(e.target.value),
+                              }))
+                            }
+                            className="w-full accent-[#F59E0B]"
+                          />
+                          <label className="flex items-center gap-2 text-[11px] font-bold cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(activeMechanism.isHazard)}
+                              onChange={(e) =>
+                                updateActiveMechanism((m) => ({
+                                  ...m,
+                                  isHazard: e.target.checked,
+                                }))
+                              }
+                            />
+                            <span>Damages player on contact (Hazard)</span>
+                          </label>
+                        </div>
+                      ) : activeMechanism.kind === 'springBounce' ? (
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-[11px] font-semibold">
+                            <span>Bounce Launch Power</span>
+                            <span className="font-mono text-[#F59E0B] font-bold">
+                              {(activeMechanism.bounceVelocity ?? 18.5).toFixed(1)} m/s
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={10}
+                            max={32}
+                            step={0.5}
+                            value={activeMechanism.bounceVelocity ?? 18.5}
+                            onChange={(e) =>
+                              updateActiveMechanism((m) => ({
+                                ...m,
+                                bounceVelocity: Number(e.target.value),
+                              }))
+                            }
+                            className="w-full accent-[#F59E0B]"
+                          />
+                        </div>
+                      ) : activeMechanism.kind === 'transporter' ? (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <div className="space-y-0.5">
+                              <span className="text-[10px] font-bold text-slate-500">
+                                Warp Board X (0..1)
+                              </span>
+                              <input
+                                type="number"
+                                min={0.05}
+                                max={0.95}
+                                step={0.05}
+                                value={activeMechanism.transportTarget?.x ?? 0.72}
+                                onChange={(e) =>
+                                  updateActiveMechanism((m) => ({
+                                    ...m,
+                                    transportTarget: {
+                                      x: Math.min(0.95, Math.max(0.05, Number(e.target.value) || 0.5)),
+                                      y: m.transportTarget?.y ?? 0.5,
+                                    },
+                                  }))
+                                }
+                                className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#12151E] text-xs font-mono"
+                              />
+                            </div>
+                            <div className="space-y-0.5">
+                              <span className="text-[10px] font-bold text-slate-500">
+                                Target Elevation Y
+                              </span>
+                              <input
+                                type="number"
+                                min={-20}
+                                max={30}
+                                step={0.5}
+                                value={activeMechanism.transportTargetY ?? 4}
+                                onChange={(e) =>
+                                  updateActiveMechanism((m) => ({
+                                    ...m,
+                                    transportTargetY: Number(e.target.value) || 0,
+                                  }))
+                                }
+                                className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#12151E] text-xs font-mono"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ) : activeMechanism.kind === 'hinge' ? (
                         <div className="space-y-2">
                           <div className="grid grid-cols-3 gap-1">
                             {SNAP_PRESETS.map((sp) => (
@@ -5833,6 +6292,7 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
                       {(
                         [
                           ['all', 'All'],
+                          ['contraptions', 'Contraptions'],
                           ['doors', 'Doors'],
                           ['chests', 'Chests'],
                           ['switches', 'Switches'],

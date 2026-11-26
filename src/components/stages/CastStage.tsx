@@ -1469,8 +1469,8 @@ const EntityInspector: React.FC<{
             ))}
           </select>
 
-          <div className="flex gap-1.5">
-            {(['slide', 'spin'] as PlatformMotionType[]).map((m) => (
+          <div className="grid grid-cols-2 gap-1.5">
+            {(['slide', 'vertical', 'spin', 'pendulum'] as PlatformMotionType[]).map((m) => (
               <button
                 key={m}
                 type="button"
@@ -1480,7 +1480,7 @@ const EntityInspector: React.FC<{
                     platformMotion: m,
                   }))
                 }
-                className={`flex-1 py-1.5 rounded-xl text-xs font-bold capitalize ${
+                className={`py-1.5 rounded-xl text-xs font-bold capitalize ${
                   entity.platformMotion === m
                     ? 'bg-[#7C5CFF] text-white'
                     : 'bg-white dark:bg-[#171A23] text-slate-500 dark:text-[#949BB0]'

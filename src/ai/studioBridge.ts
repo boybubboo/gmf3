@@ -54,6 +54,21 @@ export type CharacterGuideExtra =
   | 'tail'
   | 'spikes';
 
+export type PlatformerGuideMechanic =
+  | 'movingPlatforms'
+  | 'spinningHazards'
+  | 'vinesAndLadders'
+  | 'springsAndCannons'
+  | 'traps'
+  | 'secretRooms'
+  | 'platformBaddies';
+
+export interface PlatformerPromptGuide {
+  layoutStyle: 'auto' | 'flat2D' | 'verticalClimber' | 'layeredJungle' | 'underwater' | 'skyTemple' | 'cavern';
+  theme: 'auto' | 'sunnyCliffs' | 'jungleCanopy' | 'underwaterCoral' | 'volcanicForge' | 'crystalCavern' | 'skyTemple';
+  mechanics: PlatformerGuideMechanic[];
+}
+
 export interface CharacterPromptGuide {
   archetype: CharacterGuideArchetype;
   extremities: CharacterGuideExtremity;
@@ -64,6 +79,7 @@ export interface CharacterPromptGuide {
 export interface AiApplyOptions {
   modifyExisting?: boolean;
   characterGuide?: CharacterPromptGuide;
+  platformerGuide?: PlatformerPromptGuide;
 }
 
 export interface StudioAiBridge {

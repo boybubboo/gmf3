@@ -118,6 +118,7 @@ import { AudioEngine } from '../../utils/audio';
 import { collectReferencedVoiceIds } from '../../utils/voiceVault';
 import {
   getEnvironmentType,
+  getSideScrollerConfig,
   isInsideMountainCave,
   IslandTerrain,
   levelBoardToWorld,
@@ -126,6 +127,7 @@ import {
   PlatformMotion,
   resolveHorizontalCollision,
   sampleLevelHeight,
+  sampleSideScrollerSurfaceAtY,
   sampleTerrainLayer,
   sampleTerrainWeathering,
   terrainHasMainMountainCave,
@@ -2511,6 +2513,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       let respawnX = startX;
       let respawnZ = startZ;
       let respawnYaw = heroYaw;
+      const sideCfgInit = env === 'sideScroller' ? getSideScrollerConfig(activeLevel) : null;
+      let secretRoomWarpCooldown = 0;
+      let mechSpringCooldownUntil = 0;
+      let mechWarpCooldownUntil = 0;
+      let heroInSecretRoom = false;
 
       heroRoot.position.set(heroX, heroY, heroZ);
       scene.add(heroRoot);
@@ -5163,6 +5170,29 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 }
               }
             }
+            if (!climbCandidate && env === 'sideScroller' && sideCfgInit?.vines?.length) {
+              for (const v of sideCfgInit.vines) {
+                const vz = v.z ?? 0;
+                const d = Math.hypot(v.x - heroX, vz - heroZ);
+                if (d <= 1.35 && heroY >= v.bottomY - 0.5 && heroY <= v.topY + 0.45) {
+                  if (!climbCandidate || d < climbCandidate.dist) {
+                    climbCandidate = {
+                      kind: 'entity',
+                      label:
+                        v.kind === 'ladder'
+                          ? 'Ladder'
+                          : v.kind === 'bubbleStream'
+                          ? 'Bubble Stream'
+                          : 'Jungle Vine',
+                      anchorX: v.x,
+                      anchorZ: vz,
+                      maxY: v.topY,
+                      dist: d,
+                    };
+                  }
+                }
+              }
+            }
             if (!climbCandidate && env === 'openWorld') {
               const fwdX = Math.sin(heroYaw);
               const fwdZ = Math.cos(heroYaw);
@@ -5206,13 +5236,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           }
 
-          const climbingForward = -moveZ > 0.22;
+          const climbUpHeld =
+            env === 'sideScroller'
+              ? inp.keys.has('KeyW') || inp.keys.has('ArrowUp')
+              : -moveZ > 0.22;
           if (!isClimbing && !isSitting && !isSwimming && canWalk && climbCandidate) {
-            const dxC = climbCandidate.anchorX - heroX;
-            const dzC = climbCandidate.anchorZ - heroZ;
-            const lenC = Math.max(0.01, Math.hypot(dxC, dzC));
-            const facingDot = (dxC / lenC) * Math.sin(heroYaw) + (dzC / lenC) * Math.cos(heroYaw);
-            if ((climbingForward && facingDot > 0.35) || (heroVelY > 1.2 && facingDot > 0.2)) {
+            if (env === 'sideScroller' && climbUpHeld) {
               isClimbing = true;
               climbKind = climbCandidate.kind;
               climbAnchorX = climbCandidate.anchorX;
@@ -5221,6 +5250,21 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               heroVelY = 0;
               airborneTimer = 0;
               jumpsUsed = 0;
+            } else {
+              const dxC = climbCandidate.anchorX - heroX;
+              const dzC = climbCandidate.anchorZ - heroZ;
+              const lenC = Math.max(0.01, Math.hypot(dxC, dzC));
+              const facingDot = (dxC / lenC) * Math.sin(heroYaw) + (dzC / lenC) * Math.cos(heroYaw);
+              if ((climbUpHeld && facingDot > 0.35) || (heroVelY > 1.2 && facingDot > 0.2)) {
+                isClimbing = true;
+                climbKind = climbCandidate.kind;
+                climbAnchorX = climbCandidate.anchorX;
+                climbAnchorZ = climbCandidate.anchorZ;
+                climbMaxY = climbCandidate.maxY;
+                heroVelY = 0;
+                airborneTimer = 0;
+                jumpsUsed = 0;
+              }
             }
           }
 
@@ -5248,31 +5292,48 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             energy = Math.min(100, energy + dt * 16);
             stamina = Math.min(maxStamina, stamina + dt * 32 * staminaRegenMult);
           } else if (isClimbing) {
-            floorY = sampleLevelHeight(activeLevel, heroX, heroZ);
-            const vertInput = THREE.MathUtils.clamp(-moveZ, -1, 1);
+            floorY =
+              env === 'sideScroller'
+                ? sampleSideScrollerSurfaceAtY(activeLevel, heroX, heroZ, heroY, true)
+                : sampleLevelHeight(activeLevel, heroX, heroZ);
+            const vertInput =
+              env === 'sideScroller'
+                ? (inp.keys.has('KeyW') || inp.keys.has('ArrowUp') ? 1 : 0) -
+                  (inp.keys.has('KeyS') || inp.keys.has('ArrowDown') ? 1 : 0)
+                : THREE.MathUtils.clamp(-moveZ, -1, 1);
             const sideInput = THREE.MathUtils.clamp(moveX, -1, 1);
-            const climbSpeed = 3.4 * heroEnvEval.climbSpeedMult * energySpeedMult;
+            const climbSpeed = 3.8 * heroEnvEval.climbSpeedMult * energySpeedMult;
 
             if (climbKind === 'tree' || climbKind === 'entity') {
               heroYaw = Math.atan2(climbAnchorX - heroX, climbAnchorZ - heroZ);
+              if (env === 'sideScroller') {
+                heroX = THREE.MathUtils.damp(heroX, climbAnchorX, 10, dt);
+              }
             }
             if (Math.abs(vertInput) > 0.1) {
               heroY += vertInput * climbSpeed * dt;
               climbPhase += Math.abs(vertInput) * dt * 8.5;
             }
             if (Math.abs(sideInput) > 0.1) {
-              const tanX = Math.cos(heroYaw);
-              const tanZ = -Math.sin(heroYaw);
-              const [sx, sz] = resolveHorizontalCollision(
-                activeLevel,
-                heroX + tanX * sideInput * 1.45 * dt,
-                heroZ + tanZ * sideInput * 1.45 * dt,
-                0.55,
-                false,
-                collisionCtx
-              );
-              heroX = sx;
-              heroZ = sz;
+              if (env === 'sideScroller') {
+                heroX += sideInput * 2.2 * dt;
+                if (Math.abs(heroX - climbAnchorX) > 1.25) {
+                  isClimbing = false;
+                }
+              } else {
+                const tanX = Math.cos(heroYaw);
+                const tanZ = -Math.sin(heroYaw);
+                const [sx, sz] = resolveHorizontalCollision(
+                  activeLevel,
+                  heroX + tanX * sideInput * 1.45 * dt,
+                  heroZ + tanZ * sideInput * 1.45 * dt,
+                  0.55,
+                  false,
+                  collisionCtx
+                );
+                heroX = sx;
+                heroZ = sz;
+              }
               climbPhase += Math.abs(sideInput) * dt * 5.0;
             }
 
@@ -5571,7 +5632,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           collisionCtx.actorY = undefined;
 
           // Ground, modular building surfaces & platforms
-          floorY = sampleLevelHeight(activeLevel, heroX, heroZ);
+          const sideDropThrough =
+            env === 'sideScroller' && (inp.keys.has('KeyS') || inp.keys.has('ArrowDown'));
+          floorY =
+            env === 'sideScroller'
+              ? sampleSideScrollerSurfaceAtY(activeLevel, heroX, heroZ, heroY, sideDropThrough)
+              : sampleLevelHeight(activeLevel, heroX, heroZ);
           let nearStairSurface = false;
           for (const entData of activeLevel.entities) {
             if (entData.buildingBlock) {
@@ -5612,23 +5678,46 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             const rt = runtimeEntities.find((r) => r.id === entData.id);
             if (!rt) continue;
             const [sx, sz] = levelBoardToWorld(activeLevel, entData.position);
-            const sy = sampleLevelHeight(activeLevel, sx, sz) + PlatformMotion.hover(entData.platformPreset);
+            const sy =
+              sampleLevelHeight(activeLevel, sx, sz) +
+              PlatformMotion.hover(entData.platformPreset) +
+              (entData.elevationY ?? 0);
             const endBp = entData.platformEnd ?? entData.position;
             const [ex, ez] = levelBoardToWorld(activeLevel, endBp);
-            const ey = sampleLevelHeight(activeLevel, ex, ez) + PlatformMotion.hover(entData.platformPreset);
+            const ey =
+              sampleLevelHeight(activeLevel, ex, ez) +
+              PlatformMotion.hover(entData.platformPreset) +
+              (entData.elevationY ?? 0);
             const pose = PlatformMotion.pose(
               gameElapsed,
               [sx, sy, sz],
               [ex, ey, ez],
               entData.platformSpeed,
               entData.platformWait,
-              entData.platformMotion === 'spin'
+              entData.platformMotion
             );
             rt.mesh.position.set(pose.position[0], pose.position[1], pose.position[2]);
             if (entData.platformMotion === 'spin') rt.mesh.rotation.y = pose.yaw;
-            const half = PlatformMotion.halfExtent(entData.platformPreset);
+            else if (entData.platformMotion === 'pendulum') rt.mesh.rotation.z = pose.swingAngle ?? 0;
+            const half = PlatformMotion.halfExtent(entData.platformPreset) * (entData.scale || 1);
             if (Math.abs(heroX - pose.position[0]) < half && Math.abs(heroZ - pose.position[2]) < half) {
-              floorY = Math.max(floorY, pose.position[1] + 0.3);
+              const platTopY = pose.position[1] + 0.34;
+              if (entData.platformPreset === 'sawWheel' && Math.abs(heroY - pose.position[1]) < 1.25 && hitInvuln <= 0) {
+                health -= 1;
+                hitInvuln = 1.0;
+                shakeTimer = 0.25;
+                heroVelY = 7.5;
+                AudioEngine.playSound('hurt');
+                if (health <= 0) triggerHeroDeath();
+              } else if (entData.platformPreset === 'bouncePad' && heroY <= platTopY + 0.65 && heroY >= pose.position[1] - 0.45 && heroVelY <= 1.5) {
+                heroVelY = 18.5;
+                jumpsUsed = 0;
+                airborneTimer = 0.1;
+                AudioEngine.playSound('whoosh');
+                spawnCombatSparks(pose.position[0], platTopY, pose.position[2], '#FBBF24', 10, 4.8);
+              } else if (heroY >= platTopY - 0.85) {
+                floorY = Math.max(floorY, platTopY);
+              }
             }
           }
 
@@ -5669,11 +5758,13 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
           // Coyote time & jump buffering so jumping while running/swimming NEVER drops an input
           const grounded = !isSwimming && heroVelY <= 0.25 && heroY <= floorY + 0.14;
+          const upJumpHeld =
+            env === 'sideScroller' && !climbCandidate && !isClimbing && (inp.keys.has('KeyW') || inp.keys.has('ArrowUp'));
           const jumpHeld =
             inp.keys.has('Space') ||
             inp.keys.has('ShiftLeft') ||
             inp.keys.has('ShiftRight') ||
-            (env === 'sideScroller' && (inp.keys.has('KeyW') || inp.keys.has('ArrowUp'))) ||
+            upJumpHeld ||
             inp.jumpPointerDown;
           const freshJumpPresses = inp.jumpPressQueuedCount;
           inp.jumpPressQueuedCount = 0;
@@ -5706,9 +5797,17 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             jumpBufferTimer = Math.max(0, jumpBufferTimer - dt);
           }
 
+          const isSideSwim = env === 'sideScroller' && Boolean(sideCfgInit?.swimPhysics);
           const maxJumps = enabledSet.has('doubleJump') ? 2 : enabledSet.has('jump') ? 1 : 0;
-          if (jumpBufferTimer > 0 && maxJumps > 0) {
-            if (isSwimming) {
+          if ((jumpBufferTimer > 0 || (isSideSwim && upJumpHeld)) && maxJumps > 0) {
+            if (isSideSwim) {
+              heroVelY = 7.4;
+              jumpsUsed = 0;
+              coyoteTimer = 0;
+              jumpBufferTimer = 0;
+              AudioEngine.playSound('splash');
+              spawnCombatSparks(heroX, heroY + 0.8, heroZ, '#BAE6FD', 4, 2.2);
+            } else if (isSwimming) {
               isSwimming = false;
               swimReenterCooldown = 0.36;
               heroVelY = 9.6 * heroEnvEval.jumpMult;
@@ -5841,7 +5940,14 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           } else {
             const wasGroundedOnSlope = jumpsUsed === 0 && heroVelY <= 0.1 && heroY <= floorY + 0.48;
-            heroVelY -= 19.5 * dt;
+            const gravAccel =
+              env === 'sideScroller' && sideCfgInit?.swimPhysics
+                ? 8.2 * (sideCfgInit.gravityScale ?? 0.48)
+                : 19.5 * (env === 'sideScroller' ? sideCfgInit?.gravityScale ?? 1 : 1);
+            heroVelY -= gravAccel * dt;
+            if (env === 'sideScroller' && sideCfgInit?.swimPhysics) {
+              heroVelY = Math.max(-4.2, heroVelY);
+            }
             heroY += heroVelY * dt;
             // Follow mild downhill slopes smoothly while running so character never bounces into false jump glitches!
             if (heroVelY <= 0 && (heroY <= floorY || (wasGroundedOnSlope && heroY <= floorY + 0.42))) {
@@ -5887,6 +5993,46 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             setGlidePrompt(nextGlidePromptKey || null);
           }
 
+          // Secret Room Warps (SideScroller)
+          if (secretRoomWarpCooldown > 0) secretRoomWarpCooldown = Math.max(0, secretRoomWarpCooldown - dt);
+          heroInSecretRoom = false;
+          if (env === 'sideScroller' && sideCfgInit?.secretRooms?.length) {
+            for (const room of sideCfgInit.secretRooms) {
+              const halfW = Math.max(4, (room.width || 12) * 0.65);
+              if (Math.abs(heroX - room.roomCenterX) <= halfW && Math.abs(heroY - room.roomCenterY) <= 7.5) {
+                heroInSecretRoom = true;
+              }
+              if (secretRoomWarpCooldown <= 0) {
+                const distEnt = Math.hypot(heroX - room.entranceX, heroY - room.entranceY);
+                if (distEnt < 1.35) {
+                  secretRoomWarpCooldown = 1.4;
+                  heroX = room.roomCenterX - (room.width || 12) * 0.2;
+                  heroY = room.roomCenterY + 0.5;
+                  heroZ = 0;
+                  heroVelY = 0;
+                  AudioEngine.playSound('sparkle');
+                  AudioEngine.playSound('whoosh');
+                  spawnCombatSparks(heroX, heroY + 0.8, 0, '#A855F7', 16, 5.2);
+                  showToast(`Discovered Secret Room: ${room.name}!`);
+                  break;
+                }
+                const exitX = room.roomCenterX - (room.width || 12) * 0.34;
+                const distExit = Math.hypot(heroX - exitX, heroY - room.roomCenterY);
+                if (heroInSecretRoom && distExit < 1.25) {
+                  secretRoomWarpCooldown = 1.4;
+                  heroX = room.entranceX + 1.8;
+                  heroY = room.entranceY + 0.4;
+                  heroZ = 0;
+                  heroVelY = 0;
+                  AudioEngine.playSound('whoosh');
+                  spawnCombatSparks(heroX, heroY + 0.8, 0, '#38BDF8', 12, 4.5);
+                  showToast('Returned to main level!');
+                  break;
+                }
+              }
+            }
+          }
+
           // Water / Chasm respawn check when swimming is disabled or in sideScroller
           if (env === 'openWorld' && !canSwim && heroY < waterSurfaceY - 0.35) {
             heroX = respawnX;
@@ -5894,12 +6040,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             heroY = sampleLevelHeight(activeLevel, heroX, heroZ) + 0.5;
             heroVelY = 0;
             showToast('Splashed into the sea!');
-          } else if (env === 'sideScroller' && heroY < -5.2) {
+          } else if (env === 'sideScroller' && !heroInSecretRoom && heroY < -5.2) {
             heroX = respawnX;
             heroZ = respawnZ;
             heroY = Math.max(0.4, sampleLevelHeight(activeLevel, heroX, heroZ) + 0.5);
             heroVelY = 0;
-            showToast('Fell off the cliff!');
+            showToast(sideCfgInit?.layers.liquidType === 'lava' ? 'Fell into the lava!' : 'Fell off the platform!');
           }
           }
 
@@ -8075,9 +8221,47 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               continue;
             }
 
-            // Evaluate Interaction Designer hinge & slider mechanisms and their conditional triggers
+            // Evaluate Interaction Designer mechanisms (hinge, slider, spinner, pendulum, springBounce, transporter)
             if (rt.mechController && rt.mechanisms.length > 0) {
               for (const mech of rt.mechanisms) {
+                // Continuous hazard check for spinner / pendulum traps
+                if (
+                  (mech.kind === 'spinner' || mech.kind === 'pendulum') &&
+                  mech.isHazard &&
+                  dist <= 1.45 &&
+                  vertOk &&
+                  hitInvuln <= 0
+                ) {
+                  health -= 1;
+                  hitInvuln = 1.0;
+                  shakeTimer = 0.25;
+                  heroVelY = 6.5;
+                  AudioEngine.playSound('hurt');
+                  if (health <= 0) {
+                    triggerHeroDeath();
+                  }
+                }
+
+                // Giant Spring / Bounce Contraption
+                if (
+                  mech.kind === 'springBounce' &&
+                  dist <= 1.55 &&
+                  vertOk &&
+                  gameElapsed >= mechSpringCooldownUntil
+                ) {
+                  mechSpringCooldownUntil = gameElapsed + 0.32;
+                  rt.mechController.trigger(mech.id, 'open');
+                  heroVelY = Math.max(heroVelY, mech.bounceVelocity ?? 18.5);
+                  jumpsUsed = 0;
+                  airborneTimer = 0.1;
+                  if (mech.bounceForwardBoost && mech.bounceForwardBoost > 0) {
+                    const fwdX = Math.sin(heroYaw);
+                    heroKnockVX = (Math.abs(fwdX) > 0.2 ? Math.sign(fwdX) : 1) * mech.bounceForwardBoost;
+                  }
+                  AudioEngine.playSound('whoosh');
+                  spawnCombatSparks(rt.x, rtBaseY + 0.8, rt.z, '#FBBF24', 12, 5.4);
+                }
+
                 for (const rule of mech.triggers) {
                   const ruleKey = `${mech.id}:${rule.id}`;
                   let eventMatched = false;
@@ -8085,20 +8269,20 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   if (rule.event === 'levelStarts') {
                     if (!mechLevelStartsFired) eventMatched = true;
                   } else if (rule.event === 'playerUses') {
-                    if (dist <= rule.radius) {
+                    if (dist <= rule.radius && vertOk) {
                       nearInteractableEntity = true;
                     }
-                    if (didInteract && dist <= rule.radius) {
+                    if (didInteract && dist <= rule.radius && vertOk) {
                       eventMatched = true;
                       interactConsumed = true;
                     }
                   } else if (rule.event === 'playerNear') {
-                    const inside = dist <= rule.radius;
+                    const inside = dist <= rule.radius && vertOk;
                     const wasInside = Boolean(rt.mechNearState[ruleKey]);
                     rt.mechNearState[ruleKey] = inside;
                     if (inside && !wasInside) eventMatched = true;
                   } else if (rule.event === 'playerTouches') {
-                    const touching = dist <= Math.min(rule.radius, 1.5);
+                    const touching = dist <= Math.min(rule.radius, 1.5) && vertOk;
                     const wasTouching = Boolean(rt.mechNearState[ruleKey]);
                     rt.mechNearState[ruleKey] = touching;
                     if (touching && !wasTouching) eventMatched = true;
@@ -8139,7 +8323,38 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   }
 
                   const changed = rt.mechController.trigger(mech.id, rule.action);
-                  if (!changed) continue;
+                  if (!changed && mech.kind !== 'transporter') continue;
+
+                  // Transporter contraption warp
+                  if (mech.kind === 'transporter' && gameElapsed >= mechWarpCooldownUntil) {
+                    mechWarpCooldownUntil = gameElapsed + 1.25;
+                    const targetRoom =
+                      mech.transportToSecretRoomId && sideCfgInit?.secretRooms
+                        ? sideCfgInit.secretRooms.find((r) => r.id === mech.transportToSecretRoomId)
+                        : undefined;
+                    if (targetRoom) {
+                      heroX = targetRoom.roomCenterX;
+                      heroY = targetRoom.roomCenterY + 0.6;
+                      heroZ = 0;
+                      heroVelY = 0;
+                    } else if (mech.transportTarget) {
+                      const [tx, tz] = levelBoardToWorld(activeLevel, mech.transportTarget);
+                      heroX = tx;
+                      heroZ = tz;
+                      heroY =
+                        mech.transportTargetY !== undefined
+                          ? mech.transportTargetY
+                          : sampleLevelHeight(activeLevel, tx, tz) + 0.8;
+                      heroVelY = 8.0;
+                    } else {
+                      heroX = rt.x + 9;
+                      heroY = rtBaseY + 3.5;
+                      heroVelY = 10.5;
+                    }
+                    AudioEngine.playSound('sparkle');
+                    spawnCombatSparks(heroX, heroY + 0.8, heroZ, '#38BDF8', 18, 6.2);
+                    showToast(mech.transportLabel?.trim() || `Launched from ${rt.name}!`);
+                  }
 
                   const nowOpen = rt.mechController.isOpen(mech.id);
                   if (nowOpen) {
@@ -11537,8 +11752,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           } else {
             if (camModeNow === 'sideScroll') {
-              _targetCamPos.set(heroX + 2.2 + shakeX, Math.max(2.0, heroY + 2.5) + shakeY, 14.5);
-              _lookTarget.set(heroX + 2.2, Math.max(0.6, heroY + 1.15), 0);
+              const sideY = heroInSecretRoom ? heroY + 2.2 : Math.max(1.8, heroY + 2.5);
+              const sideLookY = heroInSecretRoom ? heroY + 1.15 : Math.max(0.6, heroY + 1.15);
+              const sideDistZ = sideCfgInit?.layoutStyle === 'verticalClimber' ? 16.5 : 14.5;
+              _targetCamPos.set(heroX + 1.8 + shakeX, sideY + shakeY, sideDistZ);
+              _lookTarget.set(heroX + 1.8, sideLookY, 0);
             } else if (camModeNow === 'front') {
               const openDist = Math.max(8.2, camDist);
               const dist = THREE.MathUtils.lerp(openDist, 3.85, caveCamBlend);

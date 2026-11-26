@@ -113,6 +113,8 @@ import {
   evaluateVistaHeight,
   getEnvironmentType,
   getLevelWallBoxes,
+  getSideScrollerConfig,
+  getSideScrollerSegments,
   getTerrainRadius,
   IslandTerrain,
   MountainCave,
@@ -121,7 +123,6 @@ import {
   sampleLevelHeight,
   sampleTerrainHeight,
   sampleTerrainWeathering,
-  SIDE_SCROLLER_SEGMENTS,
 } from '../utils/terrain';
 import {
   applyVisualStyleToObject,
@@ -2088,29 +2089,32 @@ function buildSideScrollerScene(level: GameLevel, customAssets: CustomAssetMeta[
   const atlas = getTerrainTextureAtlas();
   const biome = getBiome(level.biome);
   const timeUniform = uniform(0);
+  const cfg = getSideScrollerConfig(level);
+  const layers = cfg.layers;
+  const segments = getSideScrollerSegments(level);
 
   const grassMat = enableDiffuseRoughnessEon(
     new THREE.MeshStandardMaterial({
       map: atlas.grass,
-      color: biome.ground,
+      color: layers.heroLaneColor || biome.ground,
       roughness: 0.78,
     }),
     0.86
   ) as THREE.MeshStandardMaterial;
   applySurfaceTextureToMaterial(grassMat, level.sceneryTextures?.grass, {
-    baseTintHex: biome.ground,
+    baseTintHex: layers.heroLaneColor || biome.ground,
   });
 
   const cliffMat = enableDiffuseRoughnessEon(
     new THREE.MeshStandardMaterial({
       map: atlas.rock,
-      color: '#7A7269',
+      color: layers.heroTrimColor || '#7A7269',
       roughness: 0.9,
     }),
     0.92
   ) as THREE.MeshStandardMaterial;
   applySurfaceTextureToMaterial(cliffMat, level.sceneryTextures?.rocks, {
-    baseTintHex: '#7A7269',
+    baseTintHex: layers.heroTrimColor || '#7A7269',
   });
 
   const woodMat = enableDiffuseRoughnessEon(
@@ -2124,33 +2128,96 @@ function buildSideScrollerScene(level: GameLevel, customAssets: CustomAssetMeta[
     baseTintHex: '#9C6638',
   });
 
-  // Walkable 3D Platform Lane at Z in [-3.4, +3.4]
-  for (const seg of SIDE_SCROLLER_SEGMENTS) {
-    const width = seg.maxX - seg.minX;
+  const branchMat = new THREE.MeshStandardMaterial({
+    color: layers.heroLaneColor || '#5C4033',
+    roughness: 0.84,
+  });
+  const branchBarkMat = new THREE.MeshStandardMaterial({
+    color: layers.heroTrimColor || '#3F2A1D',
+    roughness: 0.9,
+  });
+  const girderMat = new THREE.MeshStandardMaterial({
+    color: layers.heroLaneColor || '#DC2626',
+    roughness: 0.42,
+    metalness: 0.65,
+  });
+  const coralMat = new THREE.MeshStandardMaterial({
+    color: layers.heroLaneColor || '#F472B6',
+    roughness: 0.65,
+  });
+  const crystalMat = new THREE.MeshStandardMaterial({
+    color: layers.heroLaneColor || '#38BDF8',
+    emissive: layers.heroTrimColor || '#0EA5E9',
+    emissiveIntensity: 0.32,
+    roughness: 0.25,
+    metalness: 0.2,
+  });
+  const cloudDeckMat = new THREE.MeshStandardMaterial({
+    color: layers.heroLaneColor || '#F8FAFC',
+    roughness: 0.92,
+    flatShading: true,
+  });
+
+  // Track min/max X extent for liquid & parallax span
+  let minSpanX = -56;
+  let maxSpanX = 56;
+
+  // Walkable 3D Platform Lane (foreground/hero Z in [-3.4, +3.4])
+  for (const seg of segments) {
+    minSpanX = Math.min(minSpanX, seg.minX - 10);
+    maxSpanX = Math.max(maxSpanX, seg.maxX + 10);
+    const width = Math.max(1.2, seg.maxX - seg.minX);
     const cx = (seg.minX + seg.maxX) * 0.5;
-    if (seg.style === 'cliff') {
+    const laneZ = seg.z ?? 0;
+    const depth = seg.depth ?? (seg.oneWay || seg.style === 'branch' || seg.style === 'girder' ? 4.4 : 6.4);
+    const overrideMat = seg.color
+      ? new THREE.MeshStandardMaterial({
+          color: seg.color,
+          roughness: seg.style === 'girder' ? 0.42 : seg.style === 'crystal' ? 0.25 : 0.78,
+          metalness: seg.style === 'girder' ? 0.65 : 0.08,
+          emissive: seg.style === 'crystal' ? seg.color : '#000000',
+          emissiveIntensity: seg.style === 'crystal' ? 0.28 : 0,
+        })
+      : null;
+
+    if (seg.style === 'cliff' || seg.style === 'jungleFloor') {
       const top = new THREE.Mesh(
-        applyWorldScaledBoxUVs(new THREE.BoxGeometry(width, 0.65, 6.8), width, 0.65, 6.8, 0.25),
-        grassMat
+        applyWorldScaledBoxUVs(new THREE.BoxGeometry(width, 0.65, depth), width, 0.65, depth, 0.25),
+        overrideMat ?? grassMat
       );
-      top.position.set(cx, seg.y - 0.32, 0);
+      top.position.set(cx, seg.y - 0.32, laneZ);
       top.receiveShadow = true;
       top.userData.isGround = true;
 
       const body = new THREE.Mesh(
-        applyWorldScaledBoxUVs(new THREE.BoxGeometry(width - 0.4, 14.0, 6.2), width - 0.4, 14.0, 6.2, 0.25),
-        cliffMat
+        applyWorldScaledBoxUVs(
+          new THREE.BoxGeometry(Math.max(0.8, width - 0.35), 14.0, Math.max(2.2, depth - 0.6)),
+          Math.max(0.8, width - 0.35),
+          14.0,
+          Math.max(2.2, depth - 0.6),
+          0.25
+        ),
+        seg.style === 'jungleFloor' ? branchBarkMat : cliffMat
       );
-      body.position.set(cx, seg.y - 7.6, 0);
+      body.position.set(cx, seg.y - 7.6, laneZ);
       body.castShadow = true;
       body.receiveShadow = true;
       group.add(top, body);
+
+      if (seg.style === 'jungleFloor') {
+        const mossTrim = new THREE.Mesh(
+          new THREE.BoxGeometry(width + 0.14, 0.22, depth + 0.16),
+          grassMat
+        );
+        mossTrim.position.set(cx, seg.y - 0.12, laneZ);
+        group.add(mossTrim);
+      }
     } else if (seg.style === 'bridge') {
       const plank = new THREE.Mesh(
-        applyWorldScaledBoxUVs(new THREE.BoxGeometry(width, 0.45, 5.4), width, 0.45, 5.4, 0.35),
-        woodMat
+        applyWorldScaledBoxUVs(new THREE.BoxGeometry(width, 0.45, depth * 0.85), width, 0.45, depth * 0.85, 0.35),
+        overrideMat ?? woodMat
       );
-      plank.position.set(cx, seg.y - 0.22, 0);
+      plank.position.set(cx, seg.y - 0.22, laneZ);
       plank.receiveShadow = true;
       plank.castShadow = true;
       plank.userData.isGround = true;
@@ -2158,12 +2225,85 @@ function buildSideScrollerScene(level: GameLevel, customAssets: CustomAssetMeta[
 
       for (let px = seg.minX + 1.2; px < seg.maxX - 0.8; px += 3.2) {
         const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 1.3, 8), woodMat);
-        post.position.set(px, seg.y + 0.6, -2.5);
+        post.position.set(px, seg.y + 0.6, laneZ - depth * 0.42);
         group.add(post);
       }
+    } else if (seg.style === 'branch') {
+      const bough = new THREE.Mesh(
+        new THREE.BoxGeometry(width, 0.56, depth),
+        overrideMat ?? branchBarkMat
+      );
+      bough.position.set(cx, seg.y - 0.28, laneZ);
+      bough.castShadow = true;
+      bough.receiveShadow = true;
+      bough.userData.isGround = true;
+      const foliageStrip = new THREE.Mesh(
+        new THREE.BoxGeometry(width + 0.25, 0.24, depth + 0.25),
+        overrideMat ?? branchMat
+      );
+      foliageStrip.position.set(cx, seg.y - 0.12, laneZ);
+      foliageStrip.receiveShadow = true;
+      foliageStrip.userData.isGround = true;
+      group.add(bough, foliageStrip);
+    } else if (seg.style === 'girder') {
+      const beam = new THREE.Mesh(
+        new THREE.BoxGeometry(width, 0.48, depth),
+        overrideMat ?? girderMat
+      );
+      beam.position.set(cx, seg.y - 0.24, laneZ);
+      beam.castShadow = true;
+      beam.receiveShadow = true;
+      beam.userData.isGround = true;
+      group.add(beam);
+      // Cross-truss accents along the steel girder
+      const step = Math.max(2.4, width / Math.max(2, Math.round(width / 2.8)));
+      for (let gx = seg.minX + step * 0.5; gx < seg.maxX - 0.4; gx += step) {
+        const rivet = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.54, depth + 0.08), cliffMat);
+        rivet.position.set(gx, seg.y - 0.24, laneZ);
+        group.add(rivet);
+      }
+    } else if (seg.style === 'coral') {
+      const reef = new THREE.Mesh(
+        new THREE.BoxGeometry(width, 0.8, depth),
+        overrideMat ?? coralMat
+      );
+      reef.position.set(cx, seg.y - 0.4, laneZ);
+      reef.castShadow = true;
+      reef.receiveShadow = true;
+      reef.userData.isGround = true;
+      const baseRock = new THREE.Mesh(
+        new THREE.BoxGeometry(Math.max(1.0, width - 0.6), 9.0, Math.max(2.2, depth - 0.7)),
+        cliffMat
+      );
+      baseRock.position.set(cx, seg.y - 5.0, laneZ);
+      group.add(reef, baseRock);
+    } else if (seg.style === 'crystal') {
+      const ledge = new THREE.Mesh(
+        new THREE.BoxGeometry(width, 0.65, depth),
+        overrideMat ?? crystalMat
+      );
+      ledge.position.set(cx, seg.y - 0.32, laneZ);
+      ledge.castShadow = true;
+      ledge.receiveShadow = true;
+      ledge.userData.isGround = true;
+      group.add(ledge);
+    } else if (seg.style === 'cloud') {
+      const puffDeck = new THREE.Mesh(
+        new THREE.BoxGeometry(width, 0.65, depth),
+        overrideMat ?? cloudDeckMat
+      );
+      puffDeck.position.set(cx, seg.y - 0.32, laneZ);
+      puffDeck.receiveShadow = true;
+      puffDeck.userData.isGround = true;
+      const rimTrim = new THREE.Mesh(
+        new THREE.BoxGeometry(width + 0.2, 0.22, depth + 0.2),
+        new THREE.MeshStandardMaterial({ color: layers.heroTrimColor || '#FBBF24', roughness: 0.4 })
+      );
+      rimTrim.position.set(cx, seg.y - 0.14, laneZ);
+      group.add(puffDeck, rimTrim);
     } else {
-      const slab = new THREE.Mesh(new THREE.BoxGeometry(width, 0.9, 6.0), cliffMat);
-      slab.position.set(cx, seg.y - 0.45, 0);
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(width, 0.9, depth), overrideMat ?? cliffMat);
+      slab.position.set(cx, seg.y - 0.45, laneZ);
       slab.receiveShadow = true;
       slab.castShadow = true;
       slab.userData.isGround = true;
@@ -2171,90 +2311,249 @@ function buildSideScrollerScene(level: GameLevel, customAssets: CustomAssetMeta[
     }
   }
 
-  // Animated sea/mist far below the cliffs
-  const waterMat = new THREE.MeshStandardMaterial({
-    color: biome.water,
-    roughness: 0.18,
-    metalness: 0.15,
-    transparent: true,
-    opacity: 0.82,
-  });
-  const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 120), waterMat);
-  sea.rotation.x = -Math.PI / 2;
-  sea.position.set(0, -6.2, -18);
-  group.add(sea);
+  // Climbable Vines, Ladders & Underwater Bubble Streams
+  if (cfg.vines && cfg.vines.length > 0) {
+    const vineRopeMat = new THREE.MeshStandardMaterial({ color: '#16A34A', roughness: 0.78 });
+    const vineLeafMat = new THREE.MeshStandardMaterial({ color: '#4ADE80', roughness: 0.65 });
+    const ladderRailMat = new THREE.MeshStandardMaterial({ color: '#D97706', roughness: 0.65 });
+    const ladderRungMat = new THREE.MeshStandardMaterial({ color: '#FBBF24', roughness: 0.55 });
+    const bubbleMat = new THREE.MeshStandardMaterial({
+      color: '#BAE6FD',
+      emissive: '#38BDF8',
+      emissiveIntensity: 0.6,
+      transparent: true,
+      opacity: 0.75,
+    });
+
+    for (const v of cfg.vines) {
+      const h = Math.max(2.0, v.topY - v.bottomY);
+      const midY = (v.topY + v.bottomY) * 0.5;
+      const vz = v.z ?? 0;
+      if (v.kind === 'ladder') {
+        const railL = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, h, 8), ladderRailMat);
+        railL.position.set(v.x - 0.42, midY, vz);
+        const railR = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, h, 8), ladderRailMat);
+        railR.position.set(v.x + 0.42, midY, vz);
+        group.add(railL, railR);
+        const rungs = Math.max(3, Math.floor(h / 0.85));
+        for (let r = 0; r <= rungs; r++) {
+          const ry = v.bottomY + 0.35 + (r / rungs) * Math.max(0.4, h - 0.7);
+          const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.88, 8), ladderRungMat);
+          rung.rotation.z = Math.PI / 2;
+          rung.position.set(v.x, ry, vz);
+          group.add(rung);
+        }
+      } else if (v.kind === 'bubbleStream') {
+        const count = Math.max(4, Math.floor(h / 1.15));
+        for (let b = 0; b < count; b++) {
+          const by = v.bottomY + 0.5 + (b / count) * (h - 0.5);
+          const orb = new THREE.Mesh(new THREE.SphereGeometry(0.32 + (b % 2) * 0.1, 12, 10), bubbleMat);
+          orb.position.set(v.x + Math.sin(b * 1.4) * 0.2, by, vz);
+          orb.userData.floatSpin = true;
+          group.add(orb);
+        }
+      } else {
+        const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, h, 10), vineRopeMat);
+        rope.position.set(v.x, midY, vz);
+        group.add(rope);
+        const leaves = Math.max(3, Math.floor(h / 1.1));
+        for (let l = 0; l < leaves; l++) {
+          const ly = v.bottomY + 0.6 + (l / leaves) * (h - 0.7);
+          const leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(0.28, 0), vineLeafMat);
+          leaf.scale.set(1.3, 0.45, 0.8);
+          leaf.position.set(v.x + (l % 2 === 0 ? 0.24 : -0.24), ly, vz);
+          leaf.rotation.z = l % 2 === 0 ? -0.45 : 0.45;
+          group.add(leaf);
+        }
+      }
+    }
+  }
+
+  // Secret Rooms (Glowing Entrances & Cozy Hidden Chambers)
+  if (cfg.secretRooms && cfg.secretRooms.length > 0) {
+    const portalMat = new THREE.MeshStandardMaterial({
+      color: '#A855F7',
+      emissive: '#9333EA',
+      emissiveIntensity: 0.75,
+      roughness: 0.25,
+    });
+    const archMat = new THREE.MeshStandardMaterial({ color: '#FBBF24', roughness: 0.4, metalness: 0.55 });
+    const chamberWallMat = new THREE.MeshStandardMaterial({ color: '#1E1B4B', roughness: 0.88 });
+    const chamberFloorMat = new THREE.MeshStandardMaterial({ color: '#4338CA', roughness: 0.72 });
+
+    for (const room of cfg.secretRooms) {
+      // Entrance Archway on Hero Lane
+      const entGroup = new THREE.Group();
+      entGroup.position.set(room.entranceX, room.entranceY, 0);
+      const pillarL = new THREE.Mesh(new THREE.BoxGeometry(0.32, 2.2, 0.48), archMat);
+      pillarL.position.set(-0.78, 1.1, -0.4);
+      const pillarR = new THREE.Mesh(new THREE.BoxGeometry(0.32, 2.2, 0.48), archMat);
+      pillarR.position.set(0.78, 1.1, -0.4);
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.36, 0.55), archMat);
+      lintel.position.set(0, 2.25, -0.4);
+      const swirl = new THREE.Mesh(new THREE.PlaneGeometry(1.24, 1.95), portalMat);
+      swirl.position.set(0, 1.05, -0.35);
+      entGroup.add(pillarL, pillarR, lintel, swirl);
+      group.add(entGroup);
+
+      // Enclosed Secret Room Chamber at roomCenterX, roomCenterY
+      const rw = Math.max(8, room.width || 12);
+      const rh = Math.max(4.5, room.height || 6.2);
+      const roomFloor = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.8, 6.2), chamberFloorMat);
+      roomFloor.position.set(room.roomCenterX, room.roomCenterY - 0.4, 0);
+      roomFloor.receiveShadow = true;
+      roomFloor.userData.isGround = true;
+
+      const backWall = new THREE.Mesh(new THREE.BoxGeometry(rw, rh, 0.6), chamberWallMat);
+      backWall.position.set(room.roomCenterX, room.roomCenterY + rh * 0.5 - 0.2, -3.1);
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.6, 6.2), chamberWallMat);
+      roof.position.set(room.roomCenterX, room.roomCenterY + rh - 0.2, 0);
+      const sideL = new THREE.Mesh(new THREE.BoxGeometry(0.6, rh, 6.2), chamberWallMat);
+      sideL.position.set(room.roomCenterX - rw * 0.5 + 0.3, room.roomCenterY + rh * 0.5 - 0.2, 0);
+      const sideR = new THREE.Mesh(new THREE.BoxGeometry(0.6, rh, 6.2), chamberWallMat);
+      sideR.position.set(room.roomCenterX + rw * 0.5 - 0.3, room.roomCenterY + rh * 0.5 - 0.2, 0);
+
+      // Return Warp Gate inside the Secret Room
+      const exitRing = new THREE.Mesh(new THREE.TorusGeometry(0.88, 0.14, 12, 24), archMat);
+      exitRing.position.set(room.roomCenterX - rw * 0.34, room.roomCenterY + 1.15, -0.4);
+      const exitCore = new THREE.Mesh(new THREE.CircleGeometry(0.76, 18), portalMat);
+      exitCore.position.set(room.roomCenterX - rw * 0.34, room.roomCenterY + 1.15, -0.4);
+      group.add(roomFloor, backWall, roof, sideL, sideR, exitRing, exitCore);
+    }
+  }
+
+  // Animated water / lava / mist plane below (or enveloping underwater levels)
+  const spanWidth = Math.max(240, maxSpanX - minSpanX + 100);
+  const midSpanX = (minSpanX + maxSpanX) * 0.5;
+  if (layers.liquidType !== 'none') {
+    const isLava = layers.liquidType === 'lava';
+    const waterMat = new THREE.MeshStandardMaterial({
+      color: layers.liquidColor || (isLava ? '#EF4444' : biome.water),
+      emissive: isLava ? '#DC2626' : '#000000',
+      emissiveIntensity: isLava ? 0.65 : 0,
+      roughness: isLava ? 0.4 : 0.18,
+      metalness: isLava ? 0.1 : 0.15,
+      transparent: !isLava,
+      opacity: isLava ? 0.96 : layers.liquidType === 'mist' ? 0.58 : 0.82,
+    });
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(spanWidth, 130), waterMat);
+    sea.rotation.x = -Math.PI / 2;
+    sea.position.set(midSpanX, layers.liquidLevelY ?? -6.2, -18);
+    group.add(sea);
+  }
 
   // --- MULTI-LAYER 3D DEPTH PARALLAX BACKDROP ---
-  // Layer 1 (Z = +6.4, low foreground rock & shrub silhouettes framing bottom edge)
-  const fgRockMat = new THREE.MeshStandardMaterial({ color: '#39414E', roughness: 0.9 });
-  const fgLeafMat = new THREE.MeshStandardMaterial({ color: biome.detail, roughness: 0.78 });
-  for (let x = -52; x <= 52; x += 14) {
+  const backdrop = layers.midgroundStyle;
+  // Layer 1 (Z = +6.4, Foreground framing silhouettes)
+  const fgRockMat = new THREE.MeshStandardMaterial({ color: layers.foregroundColor || '#39414E', roughness: 0.9 });
+  const fgLeafMat = new THREE.MeshStandardMaterial({
+    color: backdrop === 'jungleTreesAndVines' ? '#15803D' : backdrop === 'coralReefAndKelp' ? '#EC4899' : biome.detail,
+    roughness: 0.78,
+  });
+  for (let x = Math.round(minSpanX); x <= Math.round(maxSpanX); x += 14) {
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1.5, 0), fgRockMat);
-    rock.position.set(x + ((x % 3) * 1.4), -1.8, 6.4);
-    rock.scale.set(1.5, 0.9, 0.9);
+    rock.position.set(x + ((x % 3) * 1.4), -2.2, 6.6);
+    rock.scale.set(1.5, 0.9, 0.85);
     const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.95, 1), fgLeafMat);
-    bush.position.set(x + 4.5, -1.3, 6.2);
+    bush.position.set(x + 4.5, -1.6, 6.4);
+    if (backdrop === 'jungleTreesAndVines') bush.scale.set(1.6, 1.15, 0.8);
     group.add(rock, bush);
   }
 
-  // Layer 2 (Z = -10): Near mid-ground mossy stone spires, arches & pine trees
-  const midRockMat = new THREE.MeshStandardMaterial({ color: '#616E7D', roughness: 0.88, flatShading: true });
-  const pineMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(biome.detail).lerp(new THREE.Color('#4A9A42'), 0.55),
-    map: atlas.pineLeaves,
-    bumpMap: atlas.pineLeavesBump,
-    bumpScale: 0.1,
-    roughness: 0.82,
+  // Layer 2 (Z = -10): Near Mid-ground scenery matched to midgroundStyle
+  const midRockMat = new THREE.MeshStandardMaterial({ color: layers.midgroundColor || '#616E7D', roughness: 0.88, flatShading: true });
+  const midFoliageMat = new THREE.MeshStandardMaterial({
+    color:
+      backdrop === 'jungleTreesAndVines'
+        ? '#16A34A'
+        : backdrop === 'coralReefAndKelp'
+        ? '#F472B6'
+        : backdrop === 'crystalCaverns'
+        ? '#38BDF8'
+        : backdrop === 'volcanicSpires'
+        ? '#44403C'
+        : new THREE.Color(biome.detail).lerp(new THREE.Color('#4A9A42'), 0.55),
+    map: backdrop === 'cliffsAndPines' || backdrop === 'jungleTreesAndVines' ? atlas.pineLeaves : null,
+    roughness: backdrop === 'crystalCaverns' ? 0.3 : 0.82,
   });
   const sidePineGeo = createDetailedPineTierGeometry(1.55, 3.9, 9, 2);
-  for (let i = 0; i < 16; i++) {
-    const px = -70 + i * 9.5;
+  const midCount = Math.max(14, Math.ceil((maxSpanX - minSpanX) / 9));
+  for (let i = 0; i < midCount; i++) {
+    const px = minSpanX + i * 9.5;
     const h = 7 + (i % 4) * 3.5;
     const pillar = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.7, h, 7), midRockMat);
     pillar.position.set(px, h * 0.5 - 5.5, -10.5 - (i % 2) * 2.5);
     group.add(pillar);
 
-    const tree = new THREE.Mesh(sidePineGeo, pineMat);
-    tree.position.set(px + 3.2, 0.5 + (i % 3) * 0.8, -9.8);
-    tree.rotation.y = i * 0.75;
-    group.add(tree);
+    if (backdrop === 'jungleTreesAndVines') {
+      const palmCrown = new THREE.Mesh(new THREE.IcosahedronGeometry(2.6, 1), midFoliageMat);
+      palmCrown.position.set(px, h - 5.2, -10.2);
+      palmCrown.scale.set(1.45, 0.75, 1.1);
+      group.add(palmCrown);
+    } else if (backdrop === 'crystalCaverns') {
+      const shard = new THREE.Mesh(new THREE.ConeGeometry(1.4, 5.5 + (i % 3) * 2, 5), crystalMat);
+      shard.position.set(px + 2.5, 0.5 + (i % 3), -10.0);
+      shard.rotation.z = (i % 2 === 0 ? 1 : -1) * 0.18;
+      group.add(shard);
+    } else if (backdrop === 'coralReefAndKelp') {
+      const fan = new THREE.Mesh(new THREE.DodecahedronGeometry(1.9, 0), midFoliageMat);
+      fan.scale.set(1.3, 1.8, 0.6);
+      fan.position.set(px + 2.8, 0.2 + (i % 3), -10.0);
+      group.add(fan);
+    } else if (backdrop === 'volcanicSpires') {
+      const brazier = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.2, 1.8, 8), girderMat);
+      brazier.position.set(px + 3.0, 0.2, -10.0);
+      group.add(brazier);
+    } else {
+      const tree = new THREE.Mesh(sidePineGeo, midFoliageMat);
+      tree.position.set(px + 3.2, 0.5 + (i % 3) * 0.8, -9.8);
+      tree.rotation.y = i * 0.75;
+      group.add(tree);
+    }
   }
 
-  // Layer 3 (Z = -24): Far mid-ground floating cliffs, tall mesas & shimmering waterfalls
-  const farMesaMat = new THREE.MeshStandardMaterial({ color: '#7D8FA3', roughness: 0.9, flatShading: true });
+  // Layer 3 (Z = -24): Far Mid-ground cliffs/arches & waterfalls/light shafts
+  const farMesaMat = new THREE.MeshStandardMaterial({ color: layers.farColor || '#7D8FA3', roughness: 0.9, flatShading: true });
   const waterfallMat = new THREE.MeshStandardMaterial({
-    color: '#9EE8FF',
-    emissive: '#38BDF8',
+    color: backdrop === 'volcanicSpires' ? '#FB923C' : '#9EE8FF',
+    emissive: backdrop === 'volcanicSpires' ? '#EA580C' : '#38BDF8',
     emissiveIntensity: 0.35,
     transparent: true,
     opacity: 0.78,
   });
-  for (let i = 0; i < 10; i++) {
-    const mx = -78 + i * 17.5;
+  const farCount = Math.max(10, Math.ceil((maxSpanX - minSpanX) / 16));
+  for (let i = 0; i < farCount; i++) {
+    const mx = minSpanX - 8 + i * 17.5;
     const mh = 16 + (i % 3) * 6;
     const mesa = new THREE.Mesh(new THREE.BoxGeometry(10.5, mh, 5.5), farMesaMat);
     mesa.position.set(mx, mh * 0.35 - 4.5, -24.5 - (i % 2) * 3.5);
     group.add(mesa);
 
-    if (i % 3 === 1) {
+    if (i % 3 === 1 && backdrop !== 'floatingTemples') {
       const falls = new THREE.Mesh(new THREE.PlaneGeometry(2.4, mh * 0.75), waterfallMat);
       falls.position.set(mx, mh * 0.25 - 2.5, -21.6);
       group.add(falls);
     }
   }
 
-  // Layer 4 (Z = -48): Distant alpine mountain range & faceted puffy 3D clouds
-  const mountainMat = new THREE.MeshStandardMaterial({ color: '#9EB3C8', roughness: 0.95, flatShading: true });
-  const cloudMat = new THREE.MeshStandardMaterial({ color: '#FFFFFF', roughness: 0.94, flatShading: true });
+  // Layer 4 (Z = -48): Distant alpine peaks / skyline & clouds
+  const mountainMat = new THREE.MeshStandardMaterial({ color: layers.farColor || '#9EB3C8', roughness: 0.95, flatShading: true });
+  const cloudMat = new THREE.MeshStandardMaterial({
+    color: backdrop === 'volcanicSpires' ? '#57534E' : backdrop === 'crystalCaverns' ? '#312E81' : '#FFFFFF',
+    roughness: 0.94,
+    flatShading: true,
+  });
   for (let i = 0; i < 12; i++) {
     const peak = new THREE.Mesh(new THREE.ConeGeometry(14 + (i % 3) * 4, 28 + (i % 4) * 7, 5), mountainMat);
     peak.position.set(-92 + i * 17, 5, -48 - (i % 2) * 8);
     group.add(peak);
 
-    const cloud = createFacetedCloudMesh(cloudMat, i);
-    cloud.position.set(-85 + i * 16, 14 + (i % 3) * 3.5, -36 - (i % 2) * 10);
-    cloud.scale.setScalar(1.15 + (i % 3) * 0.25);
-    group.add(cloud);
+    if (backdrop !== 'coralReefAndKelp') {
+      const cloud = createFacetedCloudMesh(cloudMat, i);
+      cloud.position.set(-85 + i * 16, 14 + (i % 3) * 3.5, -36 - (i % 2) * 10);
+      cloud.scale.setScalar(1.15 + (i % 3) * 0.25);
+      group.add(cloud);
+    }
   }
 
   const customScatterGroups = buildCustomScatterOnly(level, customAssets);

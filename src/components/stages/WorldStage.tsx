@@ -85,6 +85,8 @@ import type {
   EnvironmentType,
   GameplayMode,
   LevelEntity,
+  SideScrollerLayoutStyle,
+  SideScrollerThemeId,
   StorybookThemeId,
   TerrainBrush,
   ViewportTool,
@@ -107,7 +109,10 @@ import {
 import {
   createDefaultWaterBodies,
   createInitialTerrain,
+  createSideScrollerPresetConfig,
   getEnvironmentType,
+  getSideScrollerConfig,
+  getSideScrollerThemeLayers,
   levelBoardToWorld,
   levelWorldToBoard,
   sampleTerrainHeight,
@@ -1076,6 +1081,10 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                                 environmentType: nextEnv,
                                 cameraMode: nextCam,
                                 sky: nextSky,
+                                sideScrollerConfig:
+                                  nextEnv === 'sideScroller' && !lvl.sideScrollerConfig
+                                    ? createSideScrollerPresetConfig('flat2D', 'sunnyCliffs')
+                                    : lvl.sideScrollerConfig,
                               };
                             });
                           }}
@@ -1126,6 +1135,237 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                     </div>
                   </div>
                 )}
+
+                {/* Platformer Style & Multi-Layer Controls */}
+                {envType === 'sideScroller' && (() => {
+                  const sCfg = getSideScrollerConfig(currentLevel);
+                  const updateSideCfg = (
+                    label: string,
+                    updater: (prevCfg: typeof sCfg) => typeof sCfg
+                  ) => {
+                    store.updateLevel(label, (lvl) => ({
+                      ...lvl,
+                      sideScrollerConfig: updater(getSideScrollerConfig(lvl)),
+                    }));
+                  };
+                  return (
+                    <div className="p-2.5 rounded-xl bg-white dark:bg-[#171A23] space-y-2.5 border border-[#20B46A]/25">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-extrabold text-[#20B46A]">
+                          Platformer Layers &amp; Style
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-[#949BB0]">
+                          {sCfg.segments.length} plats · {sCfg.vines.length} climbs · {sCfg.secretRooms.length} rooms
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div className="space-y-0.5">
+                          <FieldLabel text="Layout Style" />
+                          <select
+                            value={sCfg.layoutStyle}
+                            onChange={(e) => {
+                              const nextLayout = e.target.value as SideScrollerLayoutStyle;
+                              const nextPreset = createSideScrollerPresetConfig(nextLayout, sCfg.theme);
+                              updateSideCfg('apply platformer layout', () => nextPreset);
+                            }}
+                            className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold"
+                          >
+                            <option value="flat2D">Flat 2D Run</option>
+                            <option value="verticalClimber">Vertical Tower (DK)</option>
+                            <option value="layeredJungle">Layered Jungle (DKC)</option>
+                            <option value="underwater">Underwater Coral</option>
+                            <option value="skyTemple">Sky Temple</option>
+                            <option value="cavern">Crystal Cavern</option>
+                          </select>
+                        </div>
+                        <div className="space-y-0.5">
+                          <FieldLabel text="World Theme" />
+                          <select
+                            value={sCfg.theme}
+                            onChange={(e) => {
+                              const nextTheme = e.target.value as SideScrollerThemeId;
+                              const nextLayers = getSideScrollerThemeLayers(nextTheme);
+                              updateSideCfg('change platformer theme', (prevCfg) => ({
+                                ...prevCfg,
+                                theme: nextTheme,
+                                swimPhysics: nextTheme === 'underwaterCoral' || prevCfg.layoutStyle === 'underwater',
+                                gravityScale: nextTheme === 'underwaterCoral' ? 0.48 : prevCfg.gravityScale ?? 1,
+                                layers: nextLayers,
+                              }));
+                            }}
+                            className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold"
+                          >
+                            <option value="sunnyCliffs">Sunny Cliffs</option>
+                            <option value="jungleCanopy">Jungle Canopy</option>
+                            <option value="underwaterCoral">Coral Reef</option>
+                            <option value="volcanicForge">Volcanic Forge</option>
+                            <option value="crystalCavern">Crystal Cavern</option>
+                            <option value="skyTemple">Sky Temple</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Layer Colors */}
+                      <div className="space-y-1">
+                        <FieldLabel text="Parallax &amp; Lane Colors" />
+                        <div className="grid grid-cols-5 gap-1">
+                          {(
+                            [
+                              ['Hero', 'heroLaneColor'],
+                              ['Trim', 'heroTrimColor'],
+                              ['Front', 'foregroundColor'],
+                              ['Mid', 'midgroundColor'],
+                              ['Far', 'farColor'],
+                            ] as const
+                          ).map(([label, key]) => (
+                            <label
+                              key={key}
+                              className="flex flex-col items-center gap-0.5 text-[9px] font-bold text-slate-500 dark:text-[#949BB0]"
+                            >
+                              <span>{label}</span>
+                              <input
+                                type="color"
+                                value={sCfg.layers[key]}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  updateSideCfg(`tint ${label} layer`, (prevCfg) => ({
+                                    ...prevCfg,
+                                    layers: { ...prevCfg.layers, [key]: val },
+                                  }));
+                                }}
+                                className="w-full h-5 rounded cursor-pointer border-0 bg-transparent p-0"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Liquid & Physics */}
+                      <div className="grid grid-cols-3 gap-1.5 items-end">
+                        <div className="space-y-0.5">
+                          <FieldLabel text="Hazard Liquid" />
+                          <select
+                            value={sCfg.layers.liquidType}
+                            onChange={(e) => {
+                              const nextLiq = e.target.value as 'water' | 'lava' | 'mist' | 'none';
+                              updateSideCfg('change liquid layer', (prevCfg) => ({
+                                ...prevCfg,
+                                layers: {
+                                  ...prevCfg.layers,
+                                  liquidType: nextLiq,
+                                  liquidColor:
+                                    nextLiq === 'lava'
+                                      ? '#EF4444'
+                                      : nextLiq === 'water'
+                                      ? '#0EA5E9'
+                                      : prevCfg.layers.liquidColor,
+                                },
+                              }));
+                            }}
+                            className="w-full px-1.5 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold"
+                          >
+                            <option value="water">Water</option>
+                            <option value="lava">Lava</option>
+                            <option value="mist">Mist</option>
+                            <option value="none">None</option>
+                          </select>
+                        </div>
+                        <label className="flex flex-col gap-0.5 text-[10px] font-bold text-slate-500 dark:text-[#949BB0]">
+                          <span>Liquid Tint</span>
+                          <input
+                            type="color"
+                            value={sCfg.layers.liquidColor}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              updateSideCfg('tint liquid', (prevCfg) => ({
+                                ...prevCfg,
+                                layers: { ...prevCfg.layers, liquidColor: val },
+                              }));
+                            }}
+                            className="w-full h-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateSideCfg('toggle swim physics', (prevCfg) => ({
+                              ...prevCfg,
+                              swimPhysics: !prevCfg.swimPhysics,
+                              gravityScale: !prevCfg.swimPhysics ? 0.48 : 1.0,
+                            }))
+                          }
+                          className={`px-2 py-1 rounded-lg text-[10px] font-extrabold border ${
+                            sCfg.swimPhysics
+                              ? 'border-[#38BDF8] bg-[#38BDF8]/15 text-[#38BDF8]'
+                              : 'border-slate-200 dark:border-white/10 text-slate-500 dark:text-[#949BB0]'
+                          }`}
+                        >
+                          {sCfg.swimPhysics ? 'Swim ON' : 'Land Grav'}
+                        </button>
+                      </div>
+
+                      {/* Quick Layer Builders */}
+                      <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateSideCfg('add climbable vine or ladder', (prevCfg) => ({
+                              ...prevCfg,
+                              vines: [
+                                ...prevCfg.vines,
+                                {
+                                  id: uid(),
+                                  kind:
+                                    prevCfg.layoutStyle === 'verticalClimber'
+                                      ? 'ladder'
+                                      : prevCfg.swimPhysics
+                                      ? 'bubbleStream'
+                                      : 'vine',
+                                  x: Math.round((prevCfg.vines.length * 9 - 14) * 10) / 10,
+                                  bottomY: 0,
+                                  topY: 7,
+                                },
+                              ],
+                            }))
+                          }
+                          className="px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-300 text-[10px] font-extrabold inline-flex items-center justify-center gap-1"
+                        >
+                          <Plus size={11} />
+                          <span>Add Vine / Ladder</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateSideCfg('add secret bonus room', (prevCfg) => ({
+                              ...prevCfg,
+                              secretRooms: [
+                                ...prevCfg.secretRooms,
+                                {
+                                  id: uid(),
+                                  name: `Bonus Vault ${prevCfg.secretRooms.length + 1}`,
+                                  entranceX: 12 + prevCfg.secretRooms.length * 8,
+                                  entranceY: 0,
+                                  roomCenterX: -12 + prevCfg.secretRooms.length * 16,
+                                  roomCenterY: -16,
+                                  width: 14,
+                                  height: 6.5,
+                                  floorColor: prevCfg.layers.heroLaneColor,
+                                  wallColor: prevCfg.layers.midgroundColor,
+                                  accentColor: prevCfg.layers.heroTrimColor,
+                                },
+                              ],
+                            }))
+                          }
+                          className="px-2 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 text-purple-600 dark:text-purple-300 text-[10px] font-extrabold inline-flex items-center justify-center gap-1"
+                        >
+                          <Plus size={11} />
+                          <span>Add Secret Room</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Camera & Music */}
                 <div className="grid grid-cols-2 gap-1.5">
