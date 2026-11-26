@@ -1,0 +1,1154 @@
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (217ms) near render:EditorShell.Stage.world (1.3ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 217,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Stage.world (1.3ms)",
+  "jsHeapMB": 150,
+  "heapDeltaBaseMB": 5.6,
+  "heapUsagePct": 3.6,
+  "leakSuspected": false
+} 
+16:33:58.867
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (218ms) near render:EditorShell.Stage.world (1.3ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 218,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Stage.world (1.3ms)",
+  "jsHeapMB": 150,
+  "heapDeltaBaseMB": 5.6,
+  "heapUsagePct": 3.6,
+  "leakSuspected": false
+} 
+16:33:59.398
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 208ms shortly after render:EditorShell.Stage.world (1.3ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 207.7,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Stage.world (1.3ms)",
+  "jsHeapMB": 149.9,
+  "heapDeltaBaseMB": 5.4,
+  "heapUsagePct": 3.6,
+  "leakSuspected": false
+} 
+16:33:59.398
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 183.1/205.1 MB (limit 4192 MB, 4.4%, Δbase +38.6 MB, Δprev +33.2 MB) — Rapid heap allocation (+38.6 MB, ~772 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:33:59.294Z",
+  "reason": "long_task:longtask:self (203ms)",
+  "usedMB": 183.1,
+  "totalMB": 205.1,
+  "limitMB": 4192,
+  "usagePct": 4.4,
+  "deltaFromBaselineMB": 38.6,
+  "deltaFromPreviousMB": 33.2,
+  "growthMBPerMin": 772,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+38.6 MB, ~772 MB/min) accompanying stall."
+} 
+16:33:59.398
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (203ms) near render:EditorShell.Stage.world (0.2ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 203,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Stage.world (0.2ms)",
+  "jsHeapMB": 183.1,
+  "heapDeltaBaseMB": 38.6,
+  "heapUsagePct": 4.4,
+  "leakSuspected": true
+} 
+16:33:59.398
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 183.1/205.1 MB (limit 4192 MB, 4.4%, Δbase +38.6 MB, Δprev +0 MB) — Rapid heap allocation (+38.6 MB, ~772 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:33:59.294Z",
+  "reason": "long_frame:main-thread:rAF (206.1ms)",
+  "usedMB": 183.1,
+  "totalMB": 205.1,
+  "limitMB": 4192,
+  "usagePct": 4.4,
+  "deltaFromBaselineMB": 38.6,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 772,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+38.6 MB, ~772 MB/min) accompanying stall."
+} 
+16:33:59.398
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 206ms shortly after render:EditorShell.Stage.world (0.2ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 206.1,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Stage.world (0.2ms)",
+  "jsHeapMB": 183.1,
+  "heapDeltaBaseMB": 38.6,
+  "heapUsagePct": 4.4,
+  "leakSuspected": true
+} 
+16:34:00.423
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 171.5/218.3 MB (limit 4192 MB, 4.1%, Δbase +27 MB, Δprev -11.6 MB) — Rapid heap allocation (+27 MB, ~540 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:00.422Z",
+  "reason": "long_frame:main-thread:rAF (1072.8ms)",
+  "usedMB": 171.5,
+  "totalMB": 218.3,
+  "limitMB": 4192,
+  "usagePct": 4.1,
+  "deltaFromBaselineMB": 27,
+  "deltaFromPreviousMB": -11.6,
+  "growthMBPerMin": 540,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+27 MB, ~540 MB/min) accompanying stall."
+} 
+16:34:00.424
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 1073ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 1072.8,
+  "stage": "world",
+  "jsHeapMB": 171.5,
+  "heapDeltaBaseMB": 27,
+  "heapUsagePct": 4.1,
+  "leakSuspected": true
+} 
+16:34:00.486
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 179.9/239.8 MB (limit 4192 MB, 4.3%, Δbase +35.4 MB, Δprev +8.4 MB) — Rapid heap allocation (+35.4 MB, ~708 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:00.473Z",
+  "reason": "long_task:longtask:self (1119ms)",
+  "usedMB": 179.9,
+  "totalMB": 239.8,
+  "limitMB": 4192,
+  "usagePct": 4.3,
+  "deltaFromBaselineMB": 35.4,
+  "deltaFromPreviousMB": 8.4,
+  "growthMBPerMin": 708,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+35.4 MB, ~708 MB/min) accompanying stall."
+} 
+16:34:00.487
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (1119ms) near render:EditorShell.Stage.world (0.2ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 1119,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Stage.world (0.2ms)",
+  "jsHeapMB": 179.9,
+  "heapDeltaBaseMB": 35.4,
+  "heapUsagePct": 4.3,
+  "leakSuspected": true
+} 
+16:34:00.778
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 202.4/243 MB (limit 4192 MB, 4.8%, Δbase +57.9 MB, Δprev +22.5 MB) — Rapid heap allocation (+57.9 MB, ~1158 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:00.778Z",
+  "reason": "long_task:longtask:self (304ms)",
+  "usedMB": 202.4,
+  "totalMB": 243,
+  "limitMB": 4192,
+  "usagePct": 4.8,
+  "deltaFromBaselineMB": 57.9,
+  "deltaFromPreviousMB": 22.5,
+  "growthMBPerMin": 1158,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+57.9 MB, ~1158 MB/min) accompanying stall."
+} 
+16:34:00.779
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (304ms) near render:EditorShell.Stage.world (0.2ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 304,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Stage.world (0.2ms)",
+  "jsHeapMB": 202.4,
+  "heapDeltaBaseMB": 57.9,
+  "heapUsagePct": 4.8,
+  "leakSuspected": true
+} 
+16:34:00.779
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 202.4/243 MB (limit 4192 MB, 4.8%, Δbase +57.9 MB, Δprev +0 MB) — Rapid heap allocation (+57.9 MB, ~1158 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:00.778Z",
+  "reason": "long_frame:main-thread:rAF (303ms)",
+  "usedMB": 202.4,
+  "totalMB": 243,
+  "limitMB": 4192,
+  "usagePct": 4.8,
+  "deltaFromBaselineMB": 57.9,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 1158,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+57.9 MB, ~1158 MB/min) accompanying stall."
+} 
+16:34:00.779
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 303ms shortly after render:EditorShell.Stage.world (0.2ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 303,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Stage.world (0.2ms)",
+  "jsHeapMB": 202.4,
+  "heapDeltaBaseMB": 57.9,
+  "heapUsagePct": 4.8,
+  "leakSuspected": true
+} 
+16:34:01.055
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 196.3/249.5 MB (limit 4192 MB, 4.7%, Δbase +51.8 MB, Δprev -6.1 MB) — Rapid heap allocation (+51.8 MB, ~1036 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:01.055Z",
+  "reason": "long_task:longtask:self (276ms)",
+  "usedMB": 196.3,
+  "totalMB": 249.5,
+  "limitMB": 4192,
+  "usagePct": 4.7,
+  "deltaFromBaselineMB": 51.8,
+  "deltaFromPreviousMB": -6.1,
+  "growthMBPerMin": 1036,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+51.8 MB, ~1036 MB/min) accompanying stall."
+} 
+16:34:01.111
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (276ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 276,
+  "stage": "world",
+  "jsHeapMB": 196.3,
+  "heapDeltaBaseMB": 51.8,
+  "heapUsagePct": 4.7,
+  "leakSuspected": true
+} 
+16:34:01.111
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 196.3/249.5 MB (limit 4192 MB, 4.7%, Δbase +51.8 MB, Δprev +0 MB) — Rapid heap allocation (+51.8 MB, ~1036 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:01.055Z",
+  "reason": "long_frame:main-thread:rAF (278.9ms)",
+  "usedMB": 196.3,
+  "totalMB": 249.5,
+  "limitMB": 4192,
+  "usagePct": 4.7,
+  "deltaFromBaselineMB": 51.8,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 1036,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+51.8 MB, ~1036 MB/min) accompanying stall."
+} 
+16:34:01.111
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 279ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 278.9,
+  "stage": "world",
+  "jsHeapMB": 196.3,
+  "heapDeltaBaseMB": 51.8,
+  "heapUsagePct": 4.7,
+  "leakSuspected": true
+} 
+16:34:07.725
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 458.3/621.2 MB (limit 4192 MB, 10.9%, Δbase +313.8 MB, Δprev +262 MB) — Rapid heap allocation (+313.8 MB, ~2058.8 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:07.724Z",
+  "reason": "long_task:longtask:self (53ms)",
+  "usedMB": 458.3,
+  "totalMB": 621.2,
+  "limitMB": 4192,
+  "usagePct": 10.9,
+  "deltaFromBaselineMB": 313.8,
+  "deltaFromPreviousMB": 262,
+  "growthMBPerMin": 2058.8,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+313.8 MB, ~2058.8 MB/min) accompanying stall."
+} 
+16:34:07.778
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 458.3/621.2 MB (limit 4192 MB, 10.9%, Δbase +313.8 MB, Δprev +0 MB) — Rapid heap allocation (+313.8 MB, ~2058.8 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:07.724Z",
+  "reason": "long_frame:main-thread:rAF (54.6ms)",
+  "usedMB": 458.3,
+  "totalMB": 621.2,
+  "limitMB": 4192,
+  "usagePct": 10.9,
+  "deltaFromBaselineMB": 313.8,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 2058.8,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+313.8 MB, ~2058.8 MB/min) accompanying stall."
+} 
+16:34:07.987
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 441.8/620.8 MB (limit 4192 MB, 10.5%, Δbase +297.4 MB, Δprev -16.5 MB) — Rapid heap allocation (+297.4 MB, ~1899.4 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:07.974Z",
+  "reason": "long_frame:main-thread:rAF (248.4ms)",
+  "usedMB": 441.8,
+  "totalMB": 620.8,
+  "limitMB": 4192,
+  "usagePct": 10.5,
+  "deltaFromBaselineMB": 297.4,
+  "deltaFromPreviousMB": -16.5,
+  "growthMBPerMin": 1899.4,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+297.4 MB, ~1899.4 MB/min) accompanying stall."
+} 
+16:34:07.988
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 248ms shortly after render:EditorShell.Stage.world (0.2ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 248.4,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Stage.world (0.2ms)",
+  "jsHeapMB": 441.8,
+  "heapDeltaBaseMB": 297.4,
+  "heapUsagePct": 10.5,
+  "leakSuspected": true
+} 
+16:34:08.172
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 455.1/621.1 MB (limit 4192 MB, 10.9%, Δbase +310.6 MB, Δprev +13.3 MB) — Rapid heap allocation (+310.6 MB, ~1942.7 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:08.172Z",
+  "reason": "long_frame:main-thread:rAF (200.1ms)",
+  "usedMB": 455.1,
+  "totalMB": 621.1,
+  "limitMB": 4192,
+  "usagePct": 10.9,
+  "deltaFromBaselineMB": 310.6,
+  "deltaFromPreviousMB": 13.3,
+  "growthMBPerMin": 1942.7,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+310.6 MB, ~1942.7 MB/min) accompanying stall."
+} 
+16:34:08.228
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 200ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 200.1,
+  "stage": "world",
+  "jsHeapMB": 455.1,
+  "heapDeltaBaseMB": 310.6,
+  "heapUsagePct": 10.9,
+  "leakSuspected": true
+} 
+16:34:08.411
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 447.8/621.6 MB (limit 4192 MB, 10.7%, Δbase +303.3 MB, Δprev -7.3 MB) — Rapid heap allocation (+303.3 MB, ~1850.9 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:08.411Z",
+  "reason": "long_frame:main-thread:rAF (242.4ms)",
+  "usedMB": 447.8,
+  "totalMB": 621.6,
+  "limitMB": 4192,
+  "usagePct": 10.7,
+  "deltaFromBaselineMB": 303.3,
+  "deltaFromPreviousMB": -7.3,
+  "growthMBPerMin": 1850.9,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+303.3 MB, ~1850.9 MB/min) accompanying stall."
+} 
+16:34:08.512
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 242ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 242.4,
+  "stage": "world",
+  "jsHeapMB": 447.8,
+  "heapDeltaBaseMB": 303.3,
+  "heapUsagePct": 10.7,
+  "leakSuspected": true
+} 
+16:34:08.516
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 464.5/622.1 MB (limit 4192 MB, 11.1%, Δbase +320.1 MB, Δprev +16.8 MB) — Rapid heap allocation (+320.1 MB, ~1932.9 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:08.516Z",
+  "reason": "long_task:longtask:self (57ms)",
+  "usedMB": 464.5,
+  "totalMB": 622.1,
+  "limitMB": 4192,
+  "usagePct": 11.1,
+  "deltaFromBaselineMB": 320.1,
+  "deltaFromPreviousMB": 16.8,
+  "growthMBPerMin": 1932.9,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+320.1 MB, ~1932.9 MB/min) accompanying stall."
+} 
+16:34:08.687
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 464.5/622.1 MB (limit 4192 MB, 11.1%, Δbase +320.1 MB, Δprev +0 MB) — Rapid heap allocation (+320.1 MB, ~1902.7 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:08.673Z",
+  "reason": "long_frame:main-thread:rAF (218ms)",
+  "usedMB": 464.5,
+  "totalMB": 622.1,
+  "limitMB": 4192,
+  "usagePct": 11.1,
+  "deltaFromBaselineMB": 320.1,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 1902.7,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+320.1 MB, ~1902.7 MB/min) accompanying stall."
+} 
+16:34:08.688
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 218ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 218,
+  "stage": "world",
+  "jsHeapMB": 464.5,
+  "heapDeltaBaseMB": 320.1,
+  "heapUsagePct": 11.1,
+  "leakSuspected": true
+} 
+16:34:12.579
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 494.7/633.4 MB (limit 4192 MB, 11.8%, Δbase +350.2 MB, Δprev +30.2 MB) — Rapid heap allocation (+350.2 MB, ~1506.6 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:12.526Z",
+  "reason": "long_task:longtask:self (168ms)",
+  "usedMB": 494.7,
+  "totalMB": 633.4,
+  "limitMB": 4192,
+  "usagePct": 11.8,
+  "deltaFromBaselineMB": 350.2,
+  "deltaFromPreviousMB": 30.2,
+  "growthMBPerMin": 1506.6,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+350.2 MB, ~1506.6 MB/min) accompanying stall."
+} 
+16:34:12.580
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (168ms) near render:EditorShell.PlayMode (1.1ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 168,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (1.1ms)",
+  "jsHeapMB": 494.7,
+  "heapDeltaBaseMB": 350.2,
+  "heapUsagePct": 11.8,
+  "leakSuspected": true
+} 
+16:34:12.580
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 494.7/633.4 MB (limit 4192 MB, 11.8%, Δbase +350.2 MB, Δprev +0 MB) — Rapid heap allocation (+350.2 MB, ~1506.5 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:12.526Z",
+  "reason": "long_frame:main-thread:rAF (163.7ms)",
+  "usedMB": 494.7,
+  "totalMB": 633.4,
+  "limitMB": 4192,
+  "usagePct": 11.8,
+  "deltaFromBaselineMB": 350.2,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 1506.5,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+350.2 MB, ~1506.5 MB/min) accompanying stall."
+} 
+16:34:12.580
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 164ms shortly after render:EditorShell.PlayMode (1.1ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 163.7,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (1.1ms)",
+  "jsHeapMB": 494.7,
+  "heapDeltaBaseMB": 350.2,
+  "heapUsagePct": 11.8,
+  "leakSuspected": true
+} 
+16:34:13.282
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 407/581.8 MB (limit 4192 MB, 9.7%, Δbase +262.5 MB, Δprev -87.7 MB) — Rapid heap allocation (+262.5 MB, ~1071.5 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:13.278Z",
+  "reason": "long_frame:main-thread:rAF (757.5ms)",
+  "usedMB": 407,
+  "totalMB": 581.8,
+  "limitMB": 4192,
+  "usagePct": 9.7,
+  "deltaFromBaselineMB": 262.5,
+  "deltaFromPreviousMB": -87.7,
+  "growthMBPerMin": 1071.5,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+262.5 MB, ~1071.5 MB/min) accompanying stall."
+} 
+16:34:13.283
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 758ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 757.5,
+  "stage": "world",
+  "jsHeapMB": 407,
+  "heapDeltaBaseMB": 262.5,
+  "heapUsagePct": 9.7,
+  "leakSuspected": true
+} 
+16:34:13.641
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 414.6/591 MB (limit 4192 MB, 9.9%, Δbase +270.2 MB, Δprev +7.6 MB) — Rapid heap allocation (+270.2 MB, ~1076.4 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:13.641Z",
+  "reason": "long_frame:main-thread:rAF (199.8ms)",
+  "usedMB": 414.6,
+  "totalMB": 591,
+  "limitMB": 4192,
+  "usagePct": 9.9,
+  "deltaFromBaselineMB": 270.2,
+  "deltaFromPreviousMB": 7.6,
+  "growthMBPerMin": 1076.4,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+270.2 MB, ~1076.4 MB/min) accompanying stall."
+} 
+16:34:13.694
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 200ms shortly after render:EditorShell.Overlays (0.4ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 199.8,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.Overlays (0.4ms)",
+  "jsHeapMB": 414.6,
+  "heapDeltaBaseMB": 270.2,
+  "heapUsagePct": 9.9,
+  "leakSuspected": true
+} 
+16:34:17.176
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 769.3/809.7 MB (limit 4192 MB, 18.4%, Δbase +624.8 MB, Δprev +354.7 MB) — Rapid heap allocation (+624.8 MB, ~2015.9 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:17.175Z",
+  "reason": "long_frame:main-thread:rAF (54.5ms)",
+  "usedMB": 769.3,
+  "totalMB": 809.7,
+  "limitMB": 4192,
+  "usagePct": 18.4,
+  "deltaFromBaselineMB": 624.8,
+  "deltaFromPreviousMB": 354.7,
+  "growthMBPerMin": 2015.9,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+624.8 MB, ~2015.9 MB/min) accompanying stall."
+} 
+16:34:17.306
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 769.3/809.7 MB (limit 4192 MB, 18.4%, Δbase +624.8 MB, Δprev +0 MB) — Rapid heap allocation (+624.8 MB, ~2013.6 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:17.196Z",
+  "reason": "long_task:longtask:self (50ms)",
+  "usedMB": 769.3,
+  "totalMB": 809.7,
+  "limitMB": 4192,
+  "usagePct": 18.4,
+  "deltaFromBaselineMB": 624.8,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 2013.6,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+624.8 MB, ~2013.6 MB/min) accompanying stall."
+} 
+16:34:17.579
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 747/810.8 MB (limit 4192 MB, 17.8%, Δbase +602.5 MB, Δprev -22.3 MB) — Rapid heap allocation (+602.5 MB, ~1904.1 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:17.564Z",
+  "reason": "long_frame:main-thread:rAF (387.9ms)",
+  "usedMB": 747,
+  "totalMB": 810.8,
+  "limitMB": 4192,
+  "usagePct": 17.8,
+  "deltaFromBaselineMB": 602.5,
+  "deltaFromPreviousMB": -22.3,
+  "growthMBPerMin": 1904.1,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+602.5 MB, ~1904.1 MB/min) accompanying stall."
+} 
+16:34:17.580
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 388ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 387.9,
+  "stage": "world",
+  "jsHeapMB": 747,
+  "heapDeltaBaseMB": 602.5,
+  "heapUsagePct": 17.8,
+  "leakSuspected": true
+} 
+16:34:17.625
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 766.8/811.5 MB (limit 4192 MB, 18.3%, Δbase +622.4 MB, Δprev +19.9 MB) — Rapid heap allocation (+622.4 MB, ~1960.8 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:17.625Z",
+  "reason": "long_task:longtask:self (58ms)",
+  "usedMB": 766.8,
+  "totalMB": 811.5,
+  "limitMB": 4192,
+  "usagePct": 18.3,
+  "deltaFromBaselineMB": 622.4,
+  "deltaFromPreviousMB": 19.9,
+  "growthMBPerMin": 1960.8,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+622.4 MB, ~1960.8 MB/min) accompanying stall."
+} 
+16:34:17.784
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 751.3/817.3 MB (limit 4192 MB, 17.9%, Δbase +606.9 MB, Δprev -15.5 MB) — Rapid heap allocation (+606.9 MB, ~1897.6 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:17.769Z",
+  "reason": "long_frame:main-thread:rAF (206.1ms)",
+  "usedMB": 751.3,
+  "totalMB": 817.3,
+  "limitMB": 4192,
+  "usagePct": 17.9,
+  "deltaFromBaselineMB": 606.9,
+  "deltaFromPreviousMB": -15.5,
+  "growthMBPerMin": 1897.6,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+606.9 MB, ~1897.6 MB/min) accompanying stall."
+} 
+16:34:17.784
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 206ms shortly after render:EditorShell.PlayMode (1ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 206.1,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (1ms)",
+  "jsHeapMB": 751.3,
+  "heapDeltaBaseMB": 606.9,
+  "heapUsagePct": 17.9,
+  "leakSuspected": true
+} 
+16:34:18.180
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 770/817.7 MB (limit 4192 MB, 18.4%, Δbase +625.6 MB, Δprev +18.7 MB) — Rapid heap allocation (+625.6 MB, ~1922.2 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:18.106Z",
+  "reason": "long_frame:main-thread:rAF (333.3ms)",
+  "usedMB": 770,
+  "totalMB": 817.7,
+  "limitMB": 4192,
+  "usagePct": 18.4,
+  "deltaFromBaselineMB": 625.6,
+  "deltaFromPreviousMB": 18.7,
+  "growthMBPerMin": 1922.2,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+625.6 MB, ~1922.2 MB/min) accompanying stall."
+} 
+16:34:18.182
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 333ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 333.3,
+  "stage": "world",
+  "jsHeapMB": 770,
+  "heapDeltaBaseMB": 625.6,
+  "heapUsagePct": 18.4,
+  "leakSuspected": true
+} 
+16:34:18.422
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 770.6/817.7 MB (limit 4192 MB, 18.4%, Δbase +626.1 MB, Δprev +0.6 MB) — Rapid heap allocation (+626.1 MB, ~1893.2 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:18.422Z",
+  "reason": "long_frame:main-thread:rAF (315.2ms)",
+  "usedMB": 770.6,
+  "totalMB": 817.7,
+  "limitMB": 4192,
+  "usagePct": 18.4,
+  "deltaFromBaselineMB": 626.1,
+  "deltaFromPreviousMB": 0.6,
+  "growthMBPerMin": 1893.2,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+626.1 MB, ~1893.2 MB/min) accompanying stall."
+} 
+16:34:18.477
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 315ms shortly after render:EditorShell.PlayMode (1ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 315.2,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (1ms)",
+  "jsHeapMB": 770.6,
+  "heapDeltaBaseMB": 626.1,
+  "heapUsagePct": 18.4,
+  "leakSuspected": true
+} 
+16:34:19.668
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 796.8/849.1 MB (limit 4192 MB, 19%, Δbase +652.4 MB, Δprev +26.3 MB) — Heap grew +652.4 MB over 3 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures).
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:19.668Z",
+  "reason": "long_frame:main-thread:rAF (157.2ms)",
+  "usedMB": 796.8,
+  "totalMB": 849.1,
+  "limitMB": 4192,
+  "usagePct": 19,
+  "deltaFromBaselineMB": 652.4,
+  "deltaFromPreviousMB": 26.3,
+  "growthMBPerMin": 1856.1,
+  "consecutiveGrowthCount": 3,
+  "leakSuspected": true,
+  "hint": "Heap grew +652.4 MB over 3 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures)."
+} 
+16:34:19.722
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 157ms shortly after render:EditorShell.PlayMode (0.9ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 157.2,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (0.9ms)",
+  "jsHeapMB": 796.8,
+  "heapDeltaBaseMB": 652.4,
+  "heapUsagePct": 19,
+  "leakSuspected": true
+} 
+16:34:19.952
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 821.8/883.6 MB (limit 4192 MB, 19.6%, Δbase +677.3 MB, Δprev +24.9 MB) — Heap grew +677.3 MB over 4 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures).
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:19.952Z",
+  "reason": "long_frame:main-thread:rAF (284.9ms)",
+  "usedMB": 821.8,
+  "totalMB": 883.6,
+  "limitMB": 4192,
+  "usagePct": 19.6,
+  "deltaFromBaselineMB": 677.3,
+  "deltaFromPreviousMB": 24.9,
+  "growthMBPerMin": 1901.4,
+  "consecutiveGrowthCount": 4,
+  "leakSuspected": true,
+  "hint": "Heap grew +677.3 MB over 4 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures)."
+} 
+16:34:20.004
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 285ms shortly after render:EditorShell.PlayMode (0.9ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 284.9,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (0.9ms)",
+  "jsHeapMB": 821.8,
+  "heapDeltaBaseMB": 677.3,
+  "heapUsagePct": 19.6,
+  "leakSuspected": true
+} 
+16:34:20.005
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 821.8/883.6 MB (limit 4192 MB, 19.6%, Δbase +677.3 MB, Δprev +0 MB) — Heap grew +677.3 MB over 4 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures).
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:19.968Z",
+  "reason": "long_task:longtask:self (155ms)",
+  "usedMB": 821.8,
+  "totalMB": 883.6,
+  "limitMB": 4192,
+  "usagePct": 19.6,
+  "deltaFromBaselineMB": 677.3,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 1899.9,
+  "consecutiveGrowthCount": 4,
+  "leakSuspected": true,
+  "hint": "Heap grew +677.3 MB over 4 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures)."
+} 
+16:34:20.005
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (155ms) near render:EditorShell.PlayMode (0.9ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 155,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (0.9ms)",
+  "jsHeapMB": 821.8,
+  "heapDeltaBaseMB": 677.3,
+  "heapUsagePct": 19.6,
+  "leakSuspected": true
+} 
+16:34:20.005
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 821.8/883.6 MB (limit 4192 MB, 19.6%, Δbase +677.3 MB, Δprev +0 MB) — Heap grew +677.3 MB over 4 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures).
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:19.968Z",
+  "reason": "long_task:longtask:self (283ms)",
+  "usedMB": 821.8,
+  "totalMB": 883.6,
+  "limitMB": 4192,
+  "usagePct": 19.6,
+  "deltaFromBaselineMB": 677.3,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 1899.9,
+  "consecutiveGrowthCount": 4,
+  "leakSuspected": true,
+  "hint": "Heap grew +677.3 MB over 4 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures)."
+} 
+16:34:20.005
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (283ms) near render:EditorShell.PlayMode (0.9ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 283,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (0.9ms)",
+  "jsHeapMB": 821.8,
+  "heapDeltaBaseMB": 677.3,
+  "heapUsagePct": 19.6,
+  "leakSuspected": true
+} 
+16:34:21.484
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 853.3/901.3 MB (limit 4192 MB, 20.4%, Δbase +708.9 MB, Δprev +31.6 MB) — Heap grew +708.9 MB over 5 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures).
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:21.483Z",
+  "reason": "long_frame:main-thread:rAF (569.7ms)",
+  "usedMB": 853.3,
+  "totalMB": 901.3,
+  "limitMB": 4192,
+  "usagePct": 20.4,
+  "deltaFromBaselineMB": 708.9,
+  "deltaFromPreviousMB": 31.6,
+  "growthMBPerMin": 1857,
+  "consecutiveGrowthCount": 5,
+  "leakSuspected": true,
+  "hint": "Heap grew +708.9 MB over 5 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures)."
+} 
+16:34:21.540
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 570ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 569.7,
+  "stage": "world",
+  "jsHeapMB": 853.3,
+  "heapDeltaBaseMB": 708.9,
+  "heapUsagePct": 20.4,
+  "leakSuspected": true
+} 
+16:34:21.592
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 853.3/901.3 MB (limit 4192 MB, 20.4%, Δbase +708.9 MB, Δprev +0 MB) — Heap grew +708.9 MB over 5 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures).
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:21.496Z",
+  "reason": "long_task:longtask:self (565ms)",
+  "usedMB": 853.3,
+  "totalMB": 901.3,
+  "limitMB": 4192,
+  "usagePct": 20.4,
+  "deltaFromBaselineMB": 708.9,
+  "deltaFromPreviousMB": 0,
+  "growthMBPerMin": 1856,
+  "consecutiveGrowthCount": 5,
+  "leakSuspected": true,
+  "hint": "Heap grew +708.9 MB over 5 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures)."
+} 
+16:34:21.592
+App
+Error
+ [ResourceMonitor][CRITICAL][long_task] Browser long task (565ms) near render:EditorShell.PlayMode (1ms)
+  {
+  "source": "longtask:self",
+  "durationMs": 565,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (1ms)",
+  "jsHeapMB": 853.3,
+  "heapDeltaBaseMB": 708.9,
+  "heapUsagePct": 20.4,
+  "leakSuspected": true
+} 
+16:34:22.896
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 658.9/900.6 MB (limit 4192 MB, 15.7%, Δbase +514.5 MB, Δprev -194.4 MB) — Rapid heap allocation (+514.5 MB, ~1269.5 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:22.896Z",
+  "reason": "long_task:longtask:self (51ms)",
+  "usedMB": 658.9,
+  "totalMB": 900.6,
+  "limitMB": 4192,
+  "usagePct": 15.7,
+  "deltaFromBaselineMB": 514.5,
+  "deltaFromPreviousMB": -194.4,
+  "growthMBPerMin": 1269.5,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+514.5 MB, ~1269.5 MB/min) accompanying stall."
+} 
+16:34:23.014
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 678.9/900.6 MB (limit 4192 MB, 16.2%, Δbase +534.4 MB, Δprev +20 MB) — Rapid heap allocation (+534.4 MB, ~1314.2 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:22.977Z",
+  "reason": "long_frame:main-thread:rAF (84.8ms)",
+  "usedMB": 678.9,
+  "totalMB": 900.6,
+  "limitMB": 4192,
+  "usagePct": 16.2,
+  "deltaFromBaselineMB": 534.4,
+  "deltaFromPreviousMB": 20,
+  "growthMBPerMin": 1314.2,
+  "consecutiveGrowthCount": 1,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+534.4 MB, ~1314.2 MB/min) accompanying stall."
+} 
+16:34:23.333
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 685.6/901.3 MB (limit 4192 MB, 16.4%, Δbase +541.2 MB, Δprev +6.7 MB) — Rapid heap allocation (+541.2 MB, ~1311.8 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:23.333Z",
+  "reason": "long_frame:main-thread:rAF (212.2ms)",
+  "usedMB": 685.6,
+  "totalMB": 901.3,
+  "limitMB": 4192,
+  "usagePct": 16.4,
+  "deltaFromBaselineMB": 541.2,
+  "deltaFromPreviousMB": 6.7,
+  "growthMBPerMin": 1311.8,
+  "consecutiveGrowthCount": 2,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+541.2 MB, ~1311.8 MB/min) accompanying stall."
+} 
+16:34:23.334
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 212ms shortly after render:EditorShell.PlayMode (1.4ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 212.2,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (1.4ms)",
+  "jsHeapMB": 685.6,
+  "heapDeltaBaseMB": 541.2,
+  "heapUsagePct": 16.4,
+  "leakSuspected": true
+} 
+16:34:23.508
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 706.5/901.3 MB (limit 4192 MB, 16.9%, Δbase +562 MB, Δprev +20.9 MB) — Heap grew +562 MB over 3 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures).
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:23.508Z",
+  "reason": "long_task:longtask:self (67ms)",
+  "usedMB": 706.5,
+  "totalMB": 901.3,
+  "limitMB": 4192,
+  "usagePct": 16.9,
+  "deltaFromBaselineMB": 562,
+  "deltaFromPreviousMB": 20.9,
+  "growthMBPerMin": 1352.7,
+  "consecutiveGrowthCount": 3,
+  "leakSuspected": true,
+  "hint": "Heap grew +562 MB over 3 consecutive warnings; possible memory leak (check undisposed geometries/textures or retained closures)."
+} 
+16:34:23.743
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 698/901.4 MB (limit 4192 MB, 16.7%, Δbase +553.5 MB, Δprev -8.5 MB) — Rapid heap allocation (+553.5 MB, ~1319.8 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:23.743Z",
+  "reason": "long_frame:main-thread:rAF (187.9ms)",
+  "usedMB": 698,
+  "totalMB": 901.4,
+  "limitMB": 4192,
+  "usagePct": 16.7,
+  "deltaFromBaselineMB": 553.5,
+  "deltaFromPreviousMB": -8.5,
+  "growthMBPerMin": 1319.8,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+553.5 MB, ~1319.8 MB/min) accompanying stall."
+} 
+16:34:23.744
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 188ms shortly after render:EditorShell.PlayMode (1.1ms)
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 187.9,
+  "stage": "world",
+  "attributedTo": "render:EditorShell.PlayMode (1.1ms)",
+  "jsHeapMB": 698,
+  "heapDeltaBaseMB": 553.5,
+  "heapUsagePct": 16.7,
+  "leakSuspected": true
+} 
+16:34:48.220
+App
+Error
+ [ResourceMonitor][Memory][LEAK_SUSPECTED] Heap 672.5/867.4 MB (limit 4192 MB, 16%, Δbase +528 MB, Δprev -25.5 MB) — Rapid heap allocation (+528 MB, ~638.2 MB/min) accompanying stall.
+  {
+  "supported": true,
+  "timestamp": "2026-11-22T21:34:48.217Z",
+  "reason": "long_frame:main-thread:rAF (381.8ms)",
+  "usedMB": 672.5,
+  "totalMB": 867.4,
+  "limitMB": 4192,
+  "usagePct": 16,
+  "deltaFromBaselineMB": 528,
+  "deltaFromPreviousMB": -25.5,
+  "growthMBPerMin": 638.2,
+  "consecutiveGrowthCount": 0,
+  "leakSuspected": true,
+  "hint": "Rapid heap allocation (+528 MB, ~638.2 MB/min) accompanying stall."
+} 
+16:34:48.273
+App
+Error
+ [ResourceMonitor][CRITICAL][long_frame] UI frame blocked for 382ms
+  {
+  "source": "main-thread:rAF",
+  "durationMs": 381.8,
+  "stage": "world",
+  "jsHeapMB": 672.5,

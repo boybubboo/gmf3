@@ -1,0 +1,542 @@
+import type {
+  FxEmitterCategory,
+  FxEmitterConfig,
+  FxEmitterPresetId,
+} from '../types/maker';
+
+export interface FxPresetMeta {
+  id: FxEmitterPresetId;
+  name: string;
+  category: FxEmitterCategory;
+  categoryLabel: string;
+  summary: string;
+  accentHex: string;
+  defaults: FxEmitterConfig;
+}
+
+const BASE_DEFAULTS: FxEmitterConfig = {
+  enabled: true,
+  preset: 'fire',
+  elevationY: 0.35,
+  maxParticles: 90,
+
+  spawnRate: 24,
+  lifetime: 1.4,
+  startSize: 0.55,
+  endSize: 0.15,
+  startColor: '#FFE066',
+  endColor: '#FF4500',
+  emissiveIntensity: 1.6,
+  speed: 1.8,
+  spreadAngle: 26,
+  gravity: 1.4,
+  turbulence: 0.85,
+  fadeIn: 0.12,
+  fadeOut: 0.45,
+
+  customMeshAssetId: undefined,
+  fallSpeed: 1.4,
+  windDrift: 0.85,
+  swayAmplitude: 0.75,
+  swayFrequency: 1.8,
+  tumbleSpeed: 2.4,
+  scaleVariation: 0.35,
+
+  burstCount: 36,
+  burstInterval: 2.2,
+  splashSize: 0.38,
+
+  boltLength: 5.5,
+  targetOffset: [0, 5.5, 0],
+  branchAmount: 0.6,
+  jitterAmount: 0.75,
+  boltThickness: 0.1,
+  flickerRate: 5.5,
+
+  density: 75,
+  windAngle: 25,
+  areaRadius: 6.5,
+  areaHeight: 7.5,
+
+  critterCount: 16,
+  roamRadius: 3.4,
+  moveSpeed: 2.0,
+  erraticness: 0.55,
+  flutterSpeed: 14,
+  wingFlapAmplitude: 52,
+  critterSize: 0.24,
+  glowEnabled: false,
+  flightPattern: 'flock',
+  flightMode: 'random',
+  flightHeading: 45,
+  landingEnabled: false,
+  landingFrequency: 0.35,
+};
+
+function makePreset(
+  id: FxEmitterPresetId,
+  name: string,
+  category: FxEmitterCategory,
+  categoryLabel: string,
+  summary: string,
+  accentHex: string,
+  overrides: Partial<FxEmitterConfig>
+): FxPresetMeta {
+  return {
+    id,
+    name,
+    category,
+    categoryLabel,
+    summary,
+    accentHex,
+    defaults: {
+      ...BASE_DEFAULTS,
+      ...overrides,
+      preset: id,
+    },
+  };
+}
+
+export const FX_CATEGORY_LABELS: Record<FxEmitterCategory, string> = {
+  classic: 'Classic Particles',
+  customMesh: 'Custom-Object Particles',
+  burstArc: 'Burst & Arc FX',
+  weather: 'Weather & Atmosphere',
+  critter: 'Living Critter Swarms',
+};
+
+export const FX_EMITTER_PRESETS: FxPresetMeta[] = [
+  // A. Classic Particles
+  makePreset(
+    'fire',
+    'Fire',
+    'classic',
+    'Classic Particles',
+    'Rising glowing embers and bright flame tongues with upward buoyancy.',
+    '#FF6B1A',
+    {
+      elevationY: 0.25,
+      maxParticles: 95,
+      spawnRate: 34,
+      lifetime: 1.15,
+      startSize: 0.62,
+      endSize: 0.12,
+      startColor: '#FFF08A',
+      endColor: '#E62E00',
+      emissiveIntensity: 2.1,
+      speed: 1.6,
+      spreadAngle: 24,
+      gravity: 1.9,
+      turbulence: 0.9,
+      fadeIn: 0.08,
+      fadeOut: 0.52,
+    }
+  ),
+  makePreset(
+    'smoke',
+    'Smoke',
+    'classic',
+    'Classic Particles',
+    'Soft billowy smoke plumes that expand gently as they drift upward.',
+    '#94A3B8',
+    {
+      elevationY: 0.3,
+      maxParticles: 75,
+      spawnRate: 12,
+      lifetime: 3.4,
+      startSize: 0.45,
+      endSize: 2.1,
+      startColor: '#CBD5E1',
+      endColor: '#475569',
+      emissiveIntensity: 0.0,
+      speed: 0.9,
+      spreadAngle: 32,
+      gravity: 0.55,
+      turbulence: 0.65,
+      fadeIn: 0.18,
+      fadeOut: 0.55,
+    }
+  ),
+  makePreset(
+    'sparks',
+    'Sparks',
+    'classic',
+    'Classic Particles',
+    'Fast velocity-stretched metallic sparks arcing outward under gravity.',
+    '#FBBF24',
+    {
+      elevationY: 0.45,
+      maxParticles: 110,
+      spawnRate: 42,
+      lifetime: 0.9,
+      startSize: 0.22,
+      endSize: 0.06,
+      startColor: '#FFF7CC',
+      endColor: '#FF5E1A',
+      emissiveIntensity: 2.6,
+      speed: 5.4,
+      spreadAngle: 68,
+      gravity: -9.8,
+      turbulence: 0.4,
+      fadeIn: 0.04,
+      fadeOut: 0.45,
+    }
+  ),
+  makePreset(
+    'magic',
+    'Magic Glow / Sparkles',
+    'classic',
+    'Classic Particles',
+    'Luminous swirling star sparkles with shimmering violet-to-cyan color shift.',
+    '#A855F7',
+    {
+      elevationY: 0.65,
+      maxParticles: 100,
+      spawnRate: 28,
+      lifetime: 2.1,
+      startSize: 0.36,
+      endSize: 0.08,
+      startColor: '#F0ABFC',
+      endColor: '#38BDF8',
+      emissiveIntensity: 2.4,
+      speed: 1.1,
+      spreadAngle: 120,
+      gravity: 0.45,
+      turbulence: 1.75,
+      fadeIn: 0.16,
+      fadeOut: 0.48,
+    }
+  ),
+  makePreset(
+    'dust',
+    'Dust / Dirt',
+    'classic',
+    'Classic Particles',
+    'Dry earthy motes and billowy dust drifting lazily near the ground.',
+    '#D4A373',
+    {
+      elevationY: 0.2,
+      maxParticles: 70,
+      spawnRate: 14,
+      lifetime: 2.8,
+      startSize: 0.38,
+      endSize: 1.15,
+      startColor: '#E3C39D',
+      endColor: '#8B6F4E',
+      emissiveIntensity: 0.0,
+      speed: 0.65,
+      spreadAngle: 85,
+      gravity: -0.15,
+      turbulence: 0.5,
+      fadeIn: 0.22,
+      fadeOut: 0.55,
+    }
+  ),
+
+  // B. Custom-Object Particles
+  makePreset(
+    'fallingLeaves',
+    'Falling Leaves (Custom Mesh)',
+    'customMesh',
+    'Custom-Object Particles',
+    'Drifting, fluttering, tumbling 3D leaves or any custom GLB object from your project.',
+    '#EA580C',
+    {
+      elevationY: 5.5,
+      maxParticles: 65,
+      spawnRate: 8,
+      lifetime: 6.2,
+      startSize: 0.45,
+      endSize: 0.4,
+      startColor: '#E97724',
+      endColor: '#B84A18',
+      emissiveIntensity: 0.0,
+      areaRadius: 4.5,
+      fallSpeed: 1.25,
+      windDrift: 0.95,
+      swayAmplitude: 0.85,
+      swayFrequency: 1.9,
+      tumbleSpeed: 2.6,
+      scaleVariation: 0.38,
+    }
+  ),
+
+  // C. Burst & Arc FX
+  makePreset(
+    'waterSplash',
+    'Water Splash',
+    'burstArc',
+    'Burst & Arc FX',
+    'Explosive upward and outward water droplet bursts with gravity arcs.',
+    '#38BDF8',
+    {
+      elevationY: 0.2,
+      maxParticles: 110,
+      lifetime: 1.1,
+      startColor: '#E0F7FF',
+      endColor: '#38BDF8',
+      emissiveIntensity: 0.35,
+      speed: 4.8,
+      spreadAngle: 52,
+      gravity: -11.5,
+      burstCount: 38,
+      burstInterval: 2.4,
+      splashSize: 0.34,
+      fadeIn: 0.05,
+      fadeOut: 0.45,
+    }
+  ),
+  makePreset(
+    'lightning',
+    'Lightning Arc',
+    'burstArc',
+    'Burst & Arc FX',
+    'Crackling jagged electric bolt with branching forks and bright core glow.',
+    '#60A5FA',
+    {
+      elevationY: 0.4,
+      maxParticles: 48,
+      startColor: '#7DD3FC',
+      endColor: '#FFFFFF',
+      emissiveIntensity: 2.8,
+      boltLength: 6.0,
+      targetOffset: [0, 6.0, 0],
+      branchAmount: 0.65,
+      jitterAmount: 0.72,
+      boltThickness: 0.11,
+      flickerRate: 5.5,
+      burstInterval: 0,
+    }
+  ),
+
+  // D. Weather / Atmosphere
+  makePreset(
+    'rain',
+    'Rain Volume',
+    'weather',
+    'Weather & Atmosphere',
+    'Localized downward rain streaks across a configurable area with wind slant.',
+    '#60A5FA',
+    {
+      elevationY: 0.0,
+      maxParticles: 180,
+      density: 115,
+      fallSpeed: 15.0,
+      windDrift: 1.8,
+      windAngle: 25,
+      areaRadius: 7.5,
+      areaHeight: 9.0,
+      startSize: 0.16,
+      endSize: 0.16,
+      startColor: '#BAE6FD',
+      endColor: '#60A5FA',
+      emissiveIntensity: 0.25,
+    }
+  ),
+  makePreset(
+    'snow',
+    'Snowfall Volume',
+    'weather',
+    'Weather & Atmosphere',
+    'Gentle drifting snow flakes swirling softly through an area volume.',
+    '#E2E8F0',
+    {
+      elevationY: 0.0,
+      maxParticles: 160,
+      density: 95,
+      fallSpeed: 1.9,
+      windDrift: 0.9,
+      windAngle: 40,
+      areaRadius: 8.0,
+      areaHeight: 8.5,
+      startSize: 0.24,
+      endSize: 0.2,
+      startColor: '#FFFFFF',
+      endColor: '#DBEAFE',
+      emissiveIntensity: 0.2,
+      turbulence: 0.9,
+    }
+  ),
+  makePreset(
+    'fog',
+    'Atmospheric Fog / Mist',
+    'weather',
+    'Weather & Atmosphere',
+    'Low-cost volumetric-style drifting mist cards hugging the ground or region.',
+    '#CBD5E1',
+    {
+      elevationY: 0.8,
+      maxParticles: 28,
+      density: 16,
+      fallSpeed: 0.25,
+      windDrift: 0.55,
+      windAngle: 35,
+      areaRadius: 7.5,
+      areaHeight: 2.6,
+      startSize: 4.8,
+      endSize: 6.2,
+      startColor: '#DDE7F2',
+      endColor: '#94A3B8',
+      emissiveIntensity: 0.05,
+      fadeIn: 0.3,
+      fadeOut: 0.35,
+    }
+  ),
+
+  // E. Living / Critter Swarms
+  makePreset(
+    'bees',
+    'Bees Swarm',
+    'critter',
+    'Living Critter Swarms',
+    'Busy buzzing golden-striped bees orbiting and darting around flowers or hives.',
+    '#FACC15',
+    {
+      elevationY: 1.4,
+      maxParticles: 48,
+      critterCount: 16,
+      roamRadius: 3.0,
+      moveSpeed: 2.6,
+      erraticness: 0.72,
+      flutterSpeed: 28,
+      critterSize: 0.2,
+      startColor: '#FACC15',
+      endColor: '#1E293B',
+      glowEnabled: false,
+      emissiveIntensity: 0.2,
+    }
+  ),
+  makePreset(
+    'flies',
+    'Flies Swarm',
+    'critter',
+    'Living Critter Swarms',
+    'Tiny erratic darting flies hovering tightly over swamps, logs, or caves.',
+    '#64748B',
+    {
+      elevationY: 1.1,
+      maxParticles: 48,
+      critterCount: 20,
+      roamRadius: 2.1,
+      moveSpeed: 3.1,
+      erraticness: 0.92,
+      flutterSpeed: 34,
+      critterSize: 0.13,
+      startColor: '#334155',
+      endColor: '#94A3B8',
+      glowEnabled: false,
+      emissiveIntensity: 0.0,
+    }
+  ),
+  makePreset(
+    'butterflies',
+    'Butterflies',
+    'critter',
+    'Living Critter Swarms',
+    'Graceful fluttering meadow butterflies weaving lazily with wide symmetrical wingbeats.',
+    '#F472B6',
+    {
+      elevationY: 1.6,
+      maxParticles: 40,
+      critterCount: 10,
+      roamRadius: 4.6,
+      moveSpeed: 1.65,
+      erraticness: 0.45,
+      flutterSpeed: 7.5,
+      wingFlapAmplitude: 72,
+      critterSize: 0.36,
+      startColor: '#F472B6',
+      endColor: '#FBBF24',
+      glowEnabled: false,
+      emissiveIntensity: 0.15,
+    }
+  ),
+  makePreset(
+    'moths',
+    'Moths',
+    'critter',
+    'Living Critter Swarms',
+    'Nocturnal pale moths circling warmly around lanterns, torches, or moonlight.',
+    '#E2E8F0',
+    {
+      elevationY: 1.8,
+      maxParticles: 40,
+      critterCount: 12,
+      roamRadius: 2.8,
+      moveSpeed: 1.9,
+      erraticness: 0.58,
+      flutterSpeed: 13,
+      wingFlapAmplitude: 60,
+      critterSize: 0.28,
+      startColor: '#E2D9C8',
+      endColor: '#94A3B8',
+      glowEnabled: false,
+      emissiveIntensity: 0.3,
+    }
+  ),
+  makePreset(
+    'fireflies',
+    'Fireflies',
+    'critter',
+    'Living Critter Swarms',
+    'Softly pulsing bioluminescent fireflies drifting lazily in twilight clearings.',
+    '#A3E635',
+    {
+      elevationY: 1.5,
+      maxParticles: 60,
+      critterCount: 22,
+      roamRadius: 5.2,
+      moveSpeed: 1.15,
+      erraticness: 0.35,
+      flutterSpeed: 11,
+      wingFlapAmplitude: 42,
+      critterSize: 0.18,
+      startColor: '#D9F99D',
+      endColor: '#4ADE80',
+      glowEnabled: true,
+      emissiveIntensity: 2.2,
+    }
+  ),
+  makePreset(
+    'birds',
+    'Birds / Flock',
+    'critter',
+    'Living Critter Swarms',
+    'Flying solo birds, small flocks, or V-formations with flap-and-glide rhythm and optional ground landing.',
+    '#38BDF8',
+    {
+      elevationY: 5.2,
+      maxParticles: 40,
+      critterCount: 7,
+      roamRadius: 12.0,
+      moveSpeed: 5.2,
+      erraticness: 0.3,
+      flutterSpeed: 7.5,
+      wingFlapAmplitude: 56,
+      critterSize: 0.52,
+      startColor: '#F8FAFC',
+      endColor: '#475569',
+      glowEnabled: false,
+      emissiveIntensity: 0.0,
+      flightPattern: 'flock',
+      flightMode: 'random',
+      flightHeading: 40,
+      landingEnabled: true,
+      landingFrequency: 0.35,
+    }
+  ),
+];
+
+export function getFxPresetMeta(presetId: FxEmitterPresetId): FxPresetMeta {
+  return FX_EMITTER_PRESETS.find((p) => p.id === presetId) ?? FX_EMITTER_PRESETS[0];
+}
+
+export function createDefaultFxEmitterConfig(
+  presetId: FxEmitterPresetId = 'fire'
+): FxEmitterConfig {
+  const meta = getFxPresetMeta(presetId);
+  return {
+    ...meta.defaults,
+    targetOffset: [...meta.defaults.targetOffset] as [number, number, number],
+  };
+}

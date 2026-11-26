@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Maker — Build a 3D adventure. No code needed.</title>
+    <meta name="description" content="Build a 3D adventure. No code needed. Design floating island worlds, cast characters, create When-If-Then rules, customize your HUD, and play in 3D." />
+    <meta property="og:title" content="Maker — Build a 3D adventure" />
+    <meta property="og:description" content="Build a 3D adventure. No code needed. Design floating island worlds, cast characters, create When-If-Then rules, customize your HUD, and play in 3D." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bangers&family=Fredoka:wght@500;600;700&family=JetBrains+Mono:wght@500;600&family=Lora:ital,wght@0,500;0,700;1,500&family=Outfit:wght@600;700;800&family=Patrick+Hand&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('maker.theme.v1');
+          var root = document.documentElement;
+          if (saved === 'light') root.classList.remove('dark');
+          else root.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="bg-[#F4F5F8] dark:bg-[#0F1117] text-[#141720] dark:text-[#F3F5FA] antialiased selection:bg-[#7C5CFF]/25 selection:text-[#7C5CFF]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
