@@ -79,12 +79,10 @@ function findBoneByPatterns(
 
 function resolveRoleBone(
   heroCustom: CustomModelInstance,
-  role: RigBoneRole | 'rightHand' | 'leftHand'
+  role: RigBoneRole
 ): THREE.Object3D | null {
-  if (role !== 'rightHand' && role !== 'leftHand') {
-    const mapped = heroCustom.proceduralRig?.getRoleBoneNode(role);
-    if (mapped) return mapped;
-  }
+  const mapped = heroCustom.proceduralRig?.getRoleBoneNode(role);
+  if (mapped) return mapped;
 
   const root = heroCustom.modelRoot;
   if (role === 'rightHand') {

@@ -13,8 +13,57 @@ export type AiStudioContextId =
   | 'cast'
   | 'interface';
 
+export interface AiReferenceImage {
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  data: string;
+  fileName?: string;
+}
+
+export type CharacterGuideArchetype =
+  | 'auto'
+  | 'humanoid'
+  | 'animal'
+  | 'bird'
+  | 'fantasy'
+  | 'bug';
+
+export type CharacterGuideExtremity =
+  | 'auto'
+  | 'hands'
+  | 'paw'
+  | 'claw'
+  | 'hoof'
+  | 'nub';
+
+export type CharacterGuideSurface =
+  | 'auto'
+  | 'smooth'
+  | 'armor'
+  | 'furShort'
+  | 'furLong'
+  | 'scales';
+
+export type CharacterGuideExtra =
+  | 'helmetOrHat'
+  | 'pauldronsOrArmor'
+  | 'capeOrCloak'
+  | 'beardOrMustache'
+  | 'eyewear'
+  | 'wings'
+  | 'horns'
+  | 'tail'
+  | 'spikes';
+
+export interface CharacterPromptGuide {
+  archetype: CharacterGuideArchetype;
+  extremities: CharacterGuideExtremity;
+  surface: CharacterGuideSurface;
+  extras: CharacterGuideExtra[];
+}
+
 export interface AiApplyOptions {
   modifyExisting?: boolean;
+  characterGuide?: CharacterPromptGuide;
 }
 
 export interface StudioAiBridge {

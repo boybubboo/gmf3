@@ -95,9 +95,11 @@ import {
   getFriendlyBoneLabel,
   getMirroredBoneCounterpart,
   mirrorPoseBones,
+  TIMELINE_SPEED_OPTIONS,
   type MirrorPoseMode,
 } from '../shared/MotionEditorPanel';
 import { MotionAssignModal } from '../shared/MotionAssignModal';
+import { MixamoImportModal } from '../shared/MixamoImportModal';
 import {
   RigPreviewStage,
   type GizmoAxisFilter,
@@ -299,6 +301,7 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
   );
   const [compareOriginal, setCompareOriginal] = useState(false);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [mixamoModalOpen, setMixamoModalOpen] = useState(false);
 
   // Viewport display state
   const [cameraPreset, setCameraPreset] = useState<StageCameraPreset>('threeQuarter');
@@ -327,6 +330,7 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
   const [savedPresetId, setSavedPresetId] = useState<string | null>(null);
   const [playhead, setPlayhead] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [timelineSpeed, setTimelineSpeed] = useState<number>(1);
   const [workingBones, setWorkingBones] = useState<Record<string, BonePoseAngles>>({});
   const [workingHipsY, setWorkingHipsY] = useState<number>(0);
   const [isDirtyPose, setIsDirtyPose] = useState<boolean>(false);
@@ -622,6 +626,7 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
         preset: builtInOriginalPreset,
         timeNorm: isPlaying ? playStartNormRef.current : playhead,
         playing: isPlaying,
+        playbackSpeed: timelineSpeed,
       };
     }
     if (isPlaying && draft.keyframes.length >= 2) {
@@ -630,6 +635,7 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
         preset: draft,
         timeNorm: playStartNormRef.current,
         playing: true,
+        playbackSpeed: timelineSpeed,
       };
     }
     return {
@@ -643,6 +649,7 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     compareOriginal,
     builtInOriginalPreset,
     isPlaying,
+    timelineSpeed,
     draft,
     isPlaying ? 0 : playhead,
     workingBones,
@@ -1040,6 +1047,21 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     setIsDirtyPose(false);
   };
 
+  const handleLoadMixamoPreset = (preset: CustomMotionPreset, summary: string) => {
+    playStartNormRef.current = 0;
+    setStudioMode('pose');
+    setCompareOriginal(false);
+    setDraft(preset);
+    setSavedPresetId(null);
+    setPlayhead(0);
+    const startSample = sampleMotionPresetToPose(preset, 0);
+    setWorkingBones(startSample.bones);
+    setWorkingHipsY(startSample.hipsOffsetY);
+    setIsDirtyPose(true);
+    setIsPlaying(preset.keyframes.length >= 2);
+    flashToast(summary);
+  };
+
   useRegisterStudioAiBridge({
     id: 'stage-motion',
     context: 'motion',
@@ -1185,6 +1207,7 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
         ...stageRig,
         ...patch,
         boneMap: { ...stageRig.boneMap },
+        invertedRoles: stageRig.invertedRoles ? { ...stageRig.invertedRoles } : undefined,
         slotTuning: stageRig.slotTuning ? { ...stageRig.slotTuning } : undefined,
       });
       setGaitDirty(true);
@@ -1204,6 +1227,7 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
       mode: stageRig.mode === 'clips' ? 'procedural' : stageRig.mode,
       armRelaxAutoVersion: 2,
       boneMap: { ...stageRig.boneMap },
+      invertedRoles: stageRig.invertedRoles ? { ...stageRig.invertedRoles } : undefined,
       slotTuning: nextSlotTuning,
     };
     const nextDefaults = { ...(selectedAsset.defaultSlotPresets ?? {}) };
@@ -1732,6 +1756,17 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
 
           {studioMode !== 'actions' && (
             <>
+              {hasRig && (
+                <button
+                  type="button"
+                  onClick={() => setMixamoModalOpen(true)}
+                  title="Import a Mixamo .fbx or .glb motion clip (or bake an embedded GLB clip) onto the timeline"
+                  className="px-2.5 py-1.5 rounded-lg bg-[#7C5CFF]/12 hover:bg-[#7C5CFF]/22 text-[#7C5CFF] dark:text-[#C4B5FD] border border-[#7C5CFF]/25 text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Film size={12} />
+                  <span>Mixamo FBX</span>
+                </button>
+              )}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -3349,6 +3384,22 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                 <span>s</span>
               </label>
 
+              <label className="inline-flex items-center gap-1 font-semibold text-slate-600 dark:text-[#A5AEC4] whitespace-nowrap">
+                <span>Speed</span>
+                <select
+                  value={timelineSpeed}
+                  onChange={(e) => setTimelineSpeed(Number(e.target.value))}
+                  aria-label="Timeline playback speed"
+                  className="px-1.5 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] border border-slate-200 dark:border-white/[0.08] font-mono text-xs font-bold tabular-nums cursor-pointer"
+                >
+                  {TIMELINE_SPEED_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value} className="bg-white dark:bg-[#171A23]">
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <button
                 type="button"
                 onClick={() => setDraft((prev) => ({ ...prev, loop: !prev.loop }))}
@@ -3681,6 +3732,20 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
             flashToast(`Restored built-in default for ${slot}`);
           }}
           onClose={() => setAssignModalOpen(false)}
+        />
+      )}
+      {mixamoModalOpen && selectedActor && (
+        <MixamoImportModal
+          actorLabel={selectedActor.label}
+          targetCategory={selectedActor.category}
+          targetArchetype={activeArchetype}
+          targetRig={stageRig}
+          targetBoneNames={boneNames}
+          targetHipsHeightRef={runtimeInfo?.hipsHeightRef ?? 0.82}
+          selectedAsset={selectedAsset}
+          cachedInfo={cachedInfo}
+          onImportPreset={handleLoadMixamoPreset}
+          onClose={() => setMixamoModalOpen(false)}
         />
       )}
     </div>

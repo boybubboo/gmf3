@@ -61,7 +61,20 @@ export interface MotionEditorProps {
   onSaveAsNew: (name: string) => void;
   onDeletePreset: (presetId: string) => void;
   onSetDefaultForSlot: (slot: CustomClipSlot, presetId: string | null) => void;
+  playbackSpeed?: number;
+  onChangePlaybackSpeed?: (speed: number) => void;
 }
+
+export const TIMELINE_SPEED_OPTIONS: { value: number; label: string }[] = [
+  { value: 0.25, label: '25%' },
+  { value: 0.5, label: '50%' },
+  { value: 0.75, label: '75%' },
+  { value: 1, label: '100%' },
+  { value: 1.25, label: '125%' },
+  { value: 1.5, label: '150%' },
+  { value: 1.75, label: '175%' },
+  { value: 2, label: '200%' },
+];
 
 export const EASING_OPTIONS: { value: MotionEasing; label: string; short: string }[] = [
   { value: 'linear', label: 'Linear', short: 'Linear' },
@@ -234,33 +247,43 @@ export function buildQuickJointList(
   push(boneMap.hips, 'Hips', 'core');
 
   // Arms + Hands
+  push(boneMap.leftShoulder, 'L Shoulder', 'arms');
   push(boneMap.leftUpperArm, 'L Upper Arm', 'arms');
   push(boneMap.leftLowerArm, 'L Forearm', 'arms');
-  const leftHand = boneNames.find(
-    (b) => !seen.has(b) && /(left|(^|_)l_)/i.test(b) && /(hand|wrist)/i.test(b) && !/finger|thumb|index|middle|ring|pinky/i.test(b)
-  );
+  const leftHand =
+    boneMap.leftHand ??
+    boneNames.find(
+      (b) => !seen.has(b) && /(left|(^|_)l_)/i.test(b) && /(hand|wrist)/i.test(b) && !/finger|thumb|index|middle|ring|pinky/i.test(b)
+    );
   push(leftHand, 'L Hand', 'arms');
 
+  push(boneMap.rightShoulder, 'R Shoulder', 'arms');
   push(boneMap.rightUpperArm, 'R Upper Arm', 'arms');
   push(boneMap.rightLowerArm, 'R Forearm', 'arms');
-  const rightHand = boneNames.find(
-    (b) => !seen.has(b) && /(right|(^|_)r_)/i.test(b) && /(hand|wrist)/i.test(b) && !/finger|thumb|index|middle|ring|pinky/i.test(b)
-  );
+  const rightHand =
+    boneMap.rightHand ??
+    boneNames.find(
+      (b) => !seen.has(b) && /(right|(^|_)r_)/i.test(b) && /(hand|wrist)/i.test(b) && !/finger|thumb|index|middle|ring|pinky/i.test(b)
+    );
   push(rightHand, 'R Hand', 'arms');
 
   // Legs + Feet
   push(boneMap.leftUpperLeg, 'L Thigh', 'legs');
   push(boneMap.leftLowerLeg, 'L Shin', 'legs');
-  const leftFoot = boneNames.find(
-    (b) => !seen.has(b) && /(left|(^|_)l_)/i.test(b) && /(foot|ankle)/i.test(b) && !/toe/i.test(b)
-  );
+  const leftFoot =
+    boneMap.leftFoot ??
+    boneNames.find(
+      (b) => !seen.has(b) && /(left|(^|_)l_)/i.test(b) && /(foot|ankle)/i.test(b) && !/toe/i.test(b)
+    );
   push(leftFoot, 'L Foot', 'legs');
 
   push(boneMap.rightUpperLeg, 'R Thigh', 'legs');
   push(boneMap.rightLowerLeg, 'R Shin', 'legs');
-  const rightFoot = boneNames.find(
-    (b) => !seen.has(b) && /(right|(^|_)r_)/i.test(b) && /(foot|ankle)/i.test(b) && !/toe/i.test(b)
-  );
+  const rightFoot =
+    boneMap.rightFoot ??
+    boneNames.find(
+      (b) => !seen.has(b) && /(right|(^|_)r_)/i.test(b) && /(foot|ankle)/i.test(b) && !/toe/i.test(b)
+    );
   push(rightFoot, 'R Foot', 'legs');
 
   // Hybrid critter/flyer Wings & Tail
@@ -282,10 +305,13 @@ export function buildSymmetryMaps(
   const pairMap = new Map<string, string>();
   const sideMap = new Map<string, 'left' | 'right'>();
   const rolePairs: [RigBoneRole, RigBoneRole][] = [
+    ['leftShoulder', 'rightShoulder'],
     ['leftUpperArm', 'rightUpperArm'],
     ['leftLowerArm', 'rightLowerArm'],
+    ['leftHand', 'rightHand'],
     ['leftUpperLeg', 'rightUpperLeg'],
     ['leftLowerLeg', 'rightLowerLeg'],
+    ['leftFoot', 'rightFoot'],
   ];
   for (const [lRole, rRole] of rolePairs) {
     const l = boneMap[lRole];
@@ -499,6 +525,8 @@ export const MotionEditorPanel: React.FC<MotionEditorProps> = ({
   onSaveAsNew,
   onDeletePreset,
   onSetDefaultForSlot,
+  playbackSpeed = 1,
+  onChangePlaybackSpeed,
 }) => {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [clipboardPose, setClipboardPose] = useState<{
@@ -737,10 +765,28 @@ export const MotionEditorPanel: React.FC<MotionEditorProps> = ({
                   const v = Math.max(0.3, Math.min(6, Number(e.target.value) || 1.2));
                   onUpdateDraft({ duration: Math.round(v * 10) / 10 });
                 }}
-                className="w-14 px-1.5 py-1 rounded-md bg-white dark:bg-[#1F2430] border border-slate-200 dark:border-white/[0.08] text-xs font-mono tabular-nums text-center"
+              className="w-14 px-1.5 py-1 rounded-md bg-white dark:bg-[#1F2430] border border-slate-200 dark:border-white/[0.08] text-xs font-mono tabular-nums text-center"
               />
               <span>s</span>
             </label>
+
+            {onChangePlaybackSpeed && (
+              <label className="inline-flex items-center gap-1 font-semibold text-slate-600 dark:text-[#A5AEC4] whitespace-nowrap">
+                <span>Speed</span>
+                <select
+                  value={playbackSpeed}
+                  onChange={(e) => onChangePlaybackSpeed(Number(e.target.value))}
+                  aria-label="Timeline playback speed"
+                  className="px-1.5 py-1 rounded-md bg-white dark:bg-[#1F2430] border border-slate-200 dark:border-white/[0.08] text-xs font-mono font-bold tabular-nums cursor-pointer"
+                >
+                  {TIMELINE_SPEED_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <button
               type="button"

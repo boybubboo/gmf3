@@ -2593,6 +2593,7 @@ export interface CharacterMakerDoc {
   version: 1;
   presetId?: CharacterPresetId;
   materialFinish: CharacterMaterialFinish;
+  sculptData?: MonsterSculptData;
   /** Global smooth minimum blending radius k (0.015..0.18m) */
   blendSmoothness: number;
   /** Body proportions & posture */

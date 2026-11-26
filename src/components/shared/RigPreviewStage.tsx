@@ -272,6 +272,7 @@ export interface RigPreviewStageProps {
   testOverride: RigTestOverride;
   highlightBoneName: string | null;
   poseMode: boolean;
+  allowJointPick?: boolean;
   motionPlaying: boolean;
   workingBones: Record<string, BonePoseAngles>;
   ghostStartPose: { bones: Record<string, BonePoseAngles>; hipsOffsetY: number } | null;
@@ -319,6 +320,7 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
   testOverride,
   highlightBoneName,
   poseMode,
+  allowJointPick = false,
   motionPlaying,
   workingBones,
   ghostStartPose,
@@ -351,6 +353,7 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
     showSkeleton,
     xrayMesh,
     poseMode,
+    allowJointPick,
     motionPlaying,
     workingBones,
     ghostStartPose,
@@ -380,6 +383,7 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
     showSkeleton,
     xrayMesh,
     poseMode,
+    allowJointPick,
     motionPlaying,
     workingBones,
     ghostStartPose,
@@ -860,7 +864,8 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
       downGizmoAxis = wasGizmoDown ? refs.transformControls.axis : null;
       gizmoDragMoved = false;
       const cur = stateRef.current;
-      if (cur.poseMode && !cur.motionPlaying && cur.showJointDots && refs.jointHandlesGroup.visible) {
+      const canPickJoint = cur.poseMode || cur.allowJointPick;
+      if (canPickJoint && !cur.motionPlaying && cur.showJointDots && refs.jointHandlesGroup.visible) {
         setNdcFromEvent(ev);
         _raycaster.setFromCamera(_ndc, camera);
         downJointBone = pickJointBoneAtRay(refs, _raycaster);
@@ -871,6 +876,7 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
 
     const onPointerMove = (ev: PointerEvent) => {
       const cur = stateRef.current;
+      const canPickJoint = cur.poseMode || cur.allowJointPick;
       if (refs.gizmoDragging || wasGizmoDown) {
         const onOtherJoint = Boolean(downJointBone && downJointBone !== cur.highlightBoneName);
         const dragDeadzone = onOtherJoint
@@ -885,7 +891,7 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
         }
       }
       const domEl = refs.renderer.domElement;
-      if (!cur.poseMode || cur.motionPlaying || refs.gizmoDragging || ev.pointerType === 'touch') {
+      if (!canPickJoint || cur.motionPlaying || refs.gizmoDragging || ev.pointerType === 'touch') {
         if (hoveredBone !== null) hoveredBone = null;
         domEl.style.cursor = refs.gizmoDragging ? 'grabbing' : 'grab';
         return;
@@ -923,7 +929,8 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
       downJointBone = null;
       gizmoDragMoved = false;
 
-      if (!cur.poseMode || cur.motionPlaying || !inst?.proceduralRig) return;
+      const canPickJoint = cur.poseMode || cur.allowJointPick;
+      if (!canPickJoint || cur.motionPlaying || !inst?.proceduralRig) return;
       if (ev.pointerType !== 'touch' && downButton !== 0 && ev.button !== 0) return;
 
       const maxTapMove = ev.pointerType === 'touch' ? 16 : 6;
@@ -1125,7 +1132,7 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
             cur.onTestStatusChange?.(testLabel);
           }
 
-          const showHandles = cur.poseMode && !cur.motionPlaying && cur.showJointDots;
+          const showHandles = (cur.poseMode || cur.allowJointPick) && !cur.motionPlaying && cur.showJointDots;
           refs.jointHandlesGroup.visible = showHandles;
           if (showHandles && inst.proceduralRig) {
             refs.jointHandleMeshes.forEach((mesh, bName) => {

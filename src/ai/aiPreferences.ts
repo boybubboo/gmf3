@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { AiReferenceImage } from './studioBridge';
 
 export type AiProviderKind = 'gemini' | 'local' | 'openaiCompat';
 
@@ -197,35 +198,49 @@ export async function runContextualAiGeneration(params: {
   prefs: AiPreferences;
   systemPrompt: string;
   userPrompt: string;
+  referenceImage?: AiReferenceImage | null;
 }): Promise<{ data: Record<string, unknown>; rawText: string; modelUsed: string }> {
-  const { prefs, systemPrompt, userPrompt } = params;
+  const { prefs, systemPrompt, userPrompt, referenceImage } = params;
 
   if (prefs.provider === 'local') {
     const safeBase = validateLocalAiBaseUrl(prefs.localBaseUrl);
     const model = prefs.localModel.trim() || 'qwen2.5:14b';
 
-    const requestBody = (withResponseFormat: boolean) =>
-      JSON.stringify({
+    const requestBody = (withResponseFormat: boolean, withImage: boolean) => {
+      const userContent =
+        withImage && referenceImage
+          ? [
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${referenceImage.mimeType};base64,${referenceImage.data}`,
+                },
+              },
+              { type: 'text', text: userPrompt },
+            ]
+          : userPrompt;
+      return JSON.stringify({
         model,
         temperature: prefs.temperature,
         ...(withResponseFormat ? { response_format: { type: 'json_object' } } : {}),
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
+          { role: 'user', content: userContent },
         ],
       });
+    };
 
     let res = await fetch(`${safeBase}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: requestBody(true),
+      body: requestBody(true, Boolean(referenceImage)),
     });
 
     if (res.status === 400 || res.status === 422) {
       res = await fetch(`${safeBase}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: requestBody(false),
+        body: requestBody(false, false),
       });
     }
 
@@ -263,6 +278,14 @@ export async function runContextualAiGeneration(params: {
       systemPrompt,
       userPrompt,
       temperature: prefs.temperature,
+      ...(referenceImage
+        ? {
+            referenceImage: {
+              mimeType: referenceImage.mimeType,
+              data: referenceImage.data,
+            },
+          }
+        : {}),
     }),
   });
 

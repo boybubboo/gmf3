@@ -50,14 +50,20 @@ export const RIG_BONE_ROLES: RigRoleMeta[] = [
   { role: 'chest', label: 'Chest / Upper Spine', group: 'core' },
   { role: 'spine', label: 'Spine / Torso', group: 'core' },
   { role: 'hips', label: 'Hips / Pelvis', group: 'core' },
+  { role: 'leftShoulder', label: 'Left Clavicle / Shoulder', group: 'arms' },
   { role: 'leftUpperArm', label: 'Left Upper Arm', group: 'arms' },
   { role: 'leftLowerArm', label: 'Left Forearm', group: 'arms' },
+  { role: 'leftHand', label: 'Left Hand / Wrist', group: 'arms' },
+  { role: 'rightShoulder', label: 'Right Clavicle / Shoulder', group: 'arms' },
   { role: 'rightUpperArm', label: 'Right Upper Arm', group: 'arms' },
   { role: 'rightLowerArm', label: 'Right Forearm', group: 'arms' },
+  { role: 'rightHand', label: 'Right Hand / Wrist', group: 'arms' },
   { role: 'leftUpperLeg', label: 'Left Thigh', group: 'legs' },
   { role: 'leftLowerLeg', label: 'Left Shin / Knee', group: 'legs' },
+  { role: 'leftFoot', label: 'Left Foot / Ankle', group: 'legs' },
   { role: 'rightUpperLeg', label: 'Right Thigh', group: 'legs' },
   { role: 'rightLowerLeg', label: 'Right Shin / Knee', group: 'legs' },
+  { role: 'rightFoot', label: 'Right Foot / Ankle', group: 'legs' },
 ];
 
 export interface SkeletonInspection {
@@ -67,6 +73,7 @@ export interface SkeletonInspection {
   boneNames: string[];
   autoBoneMap: Partial<Record<RigBoneRole, string>>;
   suggestedArmRelaxAngle: number;
+  suggestedFacingOffsetDeg: number;
 }
 
 export interface ClipDiagnostics {
@@ -82,7 +89,7 @@ export type RigTestOverride =
   | { kind: 'role'; role: RigBoneRole }
   | { kind: 'manualBone'; boneName: string; rxDeg: number; ryDeg: number; rzDeg: number }
   | { kind: 'poseSnapshot'; bones: Record<string, BonePoseAngles>; hipsOffsetY?: number }
-  | { kind: 'presetPreview'; preset: CustomMotionPreset; timeNorm: number; playing: boolean }
+  | { kind: 'presetPreview'; preset: CustomMotionPreset; timeNorm: number; playing: boolean; playbackSpeed?: number }
   | { kind: 'glide'; sway?: number; steerBank?: number }
   | { kind: 'block'; speedNorm?: number };
 
@@ -406,32 +413,47 @@ export function collectRiggableNodes(root: THREE.Object3D): {
 }
 
 function normalizeBoneName(raw: string): string {
-  return raw
-    .toLowerCase()
+  // Split camelCase / PascalCase BEFORE lowercasing so LeftArm -> left_arm, UpperArm_L -> upper_arm_l
+  // while leaving words like Pelvis/Clavicle/Lower intact.
+  const spaced = raw
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .toLowerCase();
+
+  return spaced
     .replace(/^mixamorig\d*[:_.-]?/, '')
     .replace(/^armature[:_.-]?/, '')
-    .replace(/^(def|org|mch|j_bip|bip\d+|valvebiped|cc_base|character\d*)[:_.-]?/, '')
+    .replace(/^(tripo(?:_rig)?|def|org|mch|j_bip|bip\d+|valve_?biped|cc_base|character\d*)[:_.-]?/, '')
     .replace(/[:.\-\s]+/g, '_')
+    .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
 }
 
 function getSide(norm: string): 'left' | 'right' | null {
-  if (/(^|_)left($|_)|(^|_)l($|_)|^l_|_l$|left/.test(norm)) {
-    // Disambiguate words containing 'l' like pelvis/clavicle/lower/leg
-    if (/(^|_)left|left($|_)|(^|_)l_|_l($|_)/.test(norm)) return 'left';
+  const tokens = norm.split('_').filter(Boolean);
+  if (tokens.includes('left') || tokens.includes('l')) return 'left';
+  if (tokens.includes('right') || tokens.includes('r')) return 'right';
+  const joined = tokens.join('_');
+  if (/^(left|l)(arm|up_?arm|upper_?arm|fore_?arm|lower_?arm|hand|wrist|leg|up_?leg|upper_?leg|lower_?leg|thigh|shin|calf|foot|toe|shoulder|clavicle)/.test(joined)) {
+    return 'left';
   }
-  if (/(^|_)right|right($|_)|(^|_)r_|_r($|_)/.test(norm)) return 'right';
+  if (/^(right|r)(arm|up_?arm|upper_?arm|fore_?arm|lower_?arm|hand|wrist|leg|up_?leg|upper_?leg|lower_?leg|thigh|shin|calf|foot|toe|shoulder|clavicle)/.test(joined)) {
+    return 'right';
+  }
   return null;
 }
 
 function matchBoneMapByName(nodes: THREE.Object3D[]): Partial<Record<RigBoneRole, string>> {
   const map: Partial<Record<RigBoneRole, string>> = {};
-  const entries = nodes.map((node) => ({
-    node,
-    name: node.name,
-    norm: normalizeBoneName(node.name),
-    side: getSide(normalizeBoneName(node.name)),
-  }));
+  const entries = nodes.map((node) => {
+    const norm = normalizeBoneName(node.name);
+    return {
+      node,
+      name: node.name,
+      norm,
+      side: getSide(norm),
+    };
+  });
 
   const pick = (pred: (e: (typeof entries)[number]) => number): string | undefined => {
     let bestScore = 0;
@@ -447,33 +469,35 @@ function matchBoneMapByName(nodes: THREE.Object3D[]): Partial<Record<RigBoneRole
   };
 
   map.hips = pick((e) => {
+    if (/twist|end|leaf|nub|ik/.test(e.norm)) return 0;
     if (/^(hips|pelvis|hip|root_hip|cog|mixamorig_hips|monster_?body_?pivot|monster_?hips)$/.test(e.norm)) return 10;
     if (/(hips|pelvis|body_?pivot)/.test(e.norm) && !e.side) return 8;
     return 0;
   });
 
   map.head = pick((e) => {
-    if (/head_?end|headtop|hair|hat|eye|jaw|ear|brow|teeth|tongue|anchor/.test(e.norm)) return 0;
+    if (/head_?end|headtop|hair|hat|eye|jaw|ear|brow|teeth|tongue|anchor|nub/.test(e.norm)) return 0;
     if (/^(head|skull|cranium|monster_?head_?0)$/.test(e.norm)) return 10;
     if (/head/.test(e.norm) && !e.side) return 7;
     return 0;
   });
 
   map.neck = pick((e) => {
+    if (/end|nub|twist/.test(e.norm)) return 0;
     if (/^(neck|neck_?0?1|monster_?neck_?0_?0)$/.test(e.norm)) return 10;
     if (/neck/.test(e.norm) && !e.side) return 7;
     return 0;
   });
 
   map.chest = pick((e) => {
-    if (/anchor/.test(e.norm)) return 0;
+    if (/anchor|twist|end|nub/.test(e.norm)) return 0;
     if (/^(chest|upper_?chest|spine_?0?2|spine_?0?3|thorax|monster_?chest)$/.test(e.norm)) return 10;
-    if (/(chest|upper_?chest|spine2)/.test(e.norm) && !e.side) return 8;
+    if (/(chest|upper_?chest|spine_?2)/.test(e.norm) && !e.side) return 8;
     return 0;
   });
 
   map.spine = pick((e) => {
-    if (e.name === map.chest) return 0;
+    if (e.name === map.chest || /twist|end|nub/.test(e.norm)) return 0;
     if (/^(spine|spine_?0?1|waist|torso|abdomen|monster_?torso)$/.test(e.norm)) return 10;
     if (/(spine|waist|torso)/.test(e.norm) && !e.side) return 7;
     return 0;
@@ -481,14 +505,27 @@ function matchBoneMapByName(nodes: THREE.Object3D[]): Partial<Record<RigBoneRole
 
   const matchLimb = (
     side: 'left' | 'right',
-    kind: 'upperArm' | 'lowerArm' | 'upperLeg' | 'lowerLeg'
+    kind:
+      | 'shoulder'
+      | 'upperArm'
+      | 'lowerArm'
+      | 'hand'
+      | 'upperLeg'
+      | 'lowerLeg'
+      | 'foot'
   ): string | undefined => {
     return pick((e) => {
       if (e.side !== side) return 0;
       const n = e.norm;
+      if (/twist|roll|ik|pole|target|end|nub/.test(n)) return 0;
+      if (kind === 'shoulder') {
+        if (/upper_?arm|forearm|elbow|hand|wrist|finger|thumb/.test(n)) return 0;
+        if (/(clavicle|collar)/.test(n)) return 10;
+        if (/(^|_)shoulder($|_|\d)/.test(n)) return 9;
+        return 0;
+      }
       if (kind === 'upperArm') {
-        if (/forearm|lower|elbow|hand|wrist|finger|thumb|clavicle|collar|twist/.test(n)) return 0;
-        if (/shoulder/.test(n)) return 2; // low fallback only if no upper arm exists
+        if (/fore_?arm|lower_?arm|elbow|hand|wrist|finger|thumb|clavicle|collar/.test(n)) return 0;
         if (/(upper_?arm|up_?arm|u_?arm|humerus)/.test(n)) return 10;
         if (/(^|_)arm($|_|\d)|arm_/.test(n)) return 8;
         if (/wing_?(l|r)_?inner/.test(n)) return 6;
@@ -496,39 +533,57 @@ function matchBoneMapByName(nodes: THREE.Object3D[]): Partial<Record<RigBoneRole
         return 0;
       }
       if (kind === 'lowerArm') {
-        if (/hand|wrist|finger|thumb|twist/.test(n)) return 0;
-        if (/(fore_?arm|lower_?arm|low_?arm|l_?arm|elbow|radius|ulna)/.test(n)) return 10;
+        if (/hand|wrist|finger|thumb/.test(n)) return 0;
+        if (/(fore_?arm|lower_?arm|low_?arm|elbow|radius|ulna)/.test(n)) return 10;
         if (/wing_?(l|r)_?outer/.test(n)) return 6;
         if (/leg_?0_?(l|r)_?knee/.test(n)) return 4;
         return 0;
       }
+      if (kind === 'hand') {
+        if (/finger|thumb|index|middle|ring|pinky/.test(n)) return 0;
+        if (/(^|_)(hand|wrist|palm)($|_|\d)/.test(n)) return 10;
+        if (/(hand|wrist)/.test(n)) return 7;
+        return 0;
+      }
       if (kind === 'upperLeg') {
-        if (/lower|shin|calf|knee|foot|ankle|toe|twist/.test(n)) return 0;
-        if (/(up_?leg|upper_?leg|thigh|femur|hip_leg)/.test(n)) return 10;
+        if (/lower|shin|calf|knee|foot|ankle|toe/.test(n)) return 0;
+        if (/(up_?leg|upper_?leg|thigh|femur|hip_?leg)/.test(n)) return 10;
         if (/(^|_)leg($|_|\d)/.test(n)) return 5;
         if (/leg_?[123]_?(l|r)_?hip/.test(n)) return 6;
         return 0;
       }
       if (kind === 'lowerLeg') {
-        if (/foot|ankle|toe|heel|thigh|up_?leg|upper_?leg|twist/.test(n)) return 0;
+        if (/foot|ankle|toe|heel|thigh|up_?leg|upper_?leg/.test(n)) return 0;
         if (/(lower_?leg|low_?leg|shin|calf|knee|tibia)/.test(n)) return 10;
         // Mixamo uses LeftUpLeg + LeftLeg for thigh + shin
         if (/(^|_)leg($|_|\d)/.test(n)) return 8;
         if (/leg_?[123]_?(l|r)_?knee/.test(n)) return 6;
         return 0;
       }
+      if (kind === 'foot') {
+        if (/toe|ball/.test(n)) return 3;
+        if (/(^|_)(foot|ankle|paw)($|_|\d)/.test(n)) return 10;
+        if (/(foot|ankle)/.test(n)) return 8;
+        return 0;
+      }
       return 0;
     });
   };
 
+  map.leftShoulder = matchLimb('left', 'shoulder');
   map.leftUpperArm = matchLimb('left', 'upperArm');
   map.leftLowerArm = matchLimb('left', 'lowerArm');
+  map.leftHand = matchLimb('left', 'hand');
+  map.rightShoulder = matchLimb('right', 'shoulder');
   map.rightUpperArm = matchLimb('right', 'upperArm');
   map.rightLowerArm = matchLimb('right', 'lowerArm');
+  map.rightHand = matchLimb('right', 'hand');
   map.leftUpperLeg = matchLimb('left', 'upperLeg');
   map.leftLowerLeg = matchLimb('left', 'lowerLeg');
+  map.leftFoot = matchLimb('left', 'foot');
   map.rightUpperLeg = matchLimb('right', 'upperLeg');
   map.rightLowerLeg = matchLimb('right', 'lowerLeg');
+  map.rightFoot = matchLimb('right', 'foot');
 
   // Avoid assigning the exact same bone to both upper & lower leg when only "LeftLeg" exists
   if (map.leftUpperLeg && map.leftUpperLeg === map.leftLowerLeg) {
@@ -542,46 +597,398 @@ function matchBoneMapByName(nodes: THREE.Object3D[]): Partial<Record<RigBoneRole
 }
 
 /**
- * Spatial geometry fallback for rigs with non-standard or generic bone names (e.g. Bone.001, Joint_3).
- * Uses bind-pose world positions relative to the character's bounding box.
+ * Estimates whether a humanoid GLB (such as Tripo 3D exports) was authored facing -Z, +X, or -X
+ * relative to Maker's +Z forward axis, returning a clean 90° increment (0 | 90 | -90 | 180).
+ */
+export function detectModelFacingOffsetDeg(
+  root: THREE.Object3D,
+  nodes: THREE.Object3D[],
+  map: Partial<Record<RigBoneRole, string>>
+): number {
+  if (nodes.length < 3) return 0;
+  root.updateMatrixWorld(true);
+  const byName = new Map<string, THREE.Object3D>();
+  nodes.forEach((n) => byName.set(n.name, n));
+
+  const getPos = (role: RigBoneRole): THREE.Vector3 | null => {
+    const name = map[role];
+    if (!name) return null;
+    const node = byName.get(name);
+    if (!node) return null;
+    return node.getWorldPosition(new THREE.Vector3());
+  };
+
+  // Signal 1: (CharacterLeft - CharacterRight) × Up(+Y) = CharacterForward
+  const leftPt = getPos('leftUpperArm') ?? getPos('leftLowerArm') ?? getPos('leftUpperLeg');
+  const rightPt = getPos('rightUpperArm') ?? getPos('rightLowerArm') ?? getPos('rightUpperLeg');
+  const fwdVec = new THREE.Vector3();
+  let hasLeftRightCross = false;
+  if (leftPt && rightPt) {
+    const lr = leftPt.clone().sub(rightPt);
+    lr.y = 0;
+    if (lr.lengthSq() > 0.002) {
+      // In Three.js right-handed coords (+Y up), Left(+X) × Up(+Y) = Forward(+Z)
+      fwdVec.crossVectors(lr, CHAR_Y);
+      fwdVec.y = 0;
+      if (fwdVec.lengthSq() > 0.002) {
+        fwdVec.normalize();
+        hasLeftRightCross = true;
+      }
+    }
+  }
+
+  // Signal 2: Foot/toe extension forward from ankle/shin, OR lowest mesh vertices vs lowerLeg bone XZ
+  const footFwd = new THREE.Vector3();
+  let hasFootSignal = false;
+  const ankleL = getPos('leftLowerLeg') ?? getPos('leftFoot');
+  const ankleR = getPos('rightLowerLeg') ?? getPos('rightFoot');
+  const toeNodes = nodes.filter((n) => /toe|ball|foot/i.test(n.name) && n.name !== map.leftLowerLeg && n.name !== map.rightLowerLeg);
+  if (toeNodes.length > 0 && (ankleL || ankleR)) {
+    const avgAnkle = new THREE.Vector3();
+    let ac = 0;
+    if (ankleL) { avgAnkle.add(ankleL); ac++; }
+    if (ankleR) { avgAnkle.add(ankleR); ac++; }
+    avgAnkle.divideScalar(ac);
+
+    const avgToe = new THREE.Vector3();
+    toeNodes.forEach((t) => avgToe.add(t.getWorldPosition(new THREE.Vector3())));
+    avgToe.divideScalar(toeNodes.length);
+
+    footFwd.subVectors(avgToe, avgAnkle);
+    footFwd.y = 0;
+    if (footFwd.lengthSq() > 0.0004) {
+      footFwd.normalize();
+      hasFootSignal = true;
+    }
+  }
+
+  // Fallback mesh-sole check (only if no named foot/LR cross yet): feet stick out toward character's forward facing
+  if (!hasFootSignal) {
+    const box = new THREE.Box3().setFromObject(root);
+    if (!box.isEmpty()) {
+      const h = Math.max(0.05, box.max.y - box.min.y);
+      const footCutoffY = box.min.y + h * 0.12;
+      const soleSum = new THREE.Vector3();
+      let soleCount = 0;
+      const vTmp = new THREE.Vector3();
+      root.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.geometry) return;
+        const pos = mesh.geometry.getAttribute('position');
+        if (!pos) return;
+        const step = Math.max(1, Math.floor(pos.count / 900));
+        for (let i = 0; i < pos.count; i += step) {
+          vTmp.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+          if (vTmp.y <= footCutoffY) {
+            soleSum.add(vTmp);
+            soleCount++;
+          }
+        }
+      });
+      if (soleCount >= 8) {
+        soleSum.divideScalar(soleCount);
+        const refCenter = getPos('hips') ?? box.getCenter(new THREE.Vector3());
+        footFwd.set(soleSum.x - refCenter.x, 0, soleSum.z - refCenter.z);
+        if (footFwd.lengthSq() > h * h * 0.001) {
+          footFwd.normalize();
+          hasFootSignal = true;
+        }
+      }
+    }
+  }
+
+  let bestFwd: THREE.Vector3 | null = null;
+  if (hasLeftRightCross) {
+    bestFwd = fwdVec;
+  } else if (hasFootSignal) {
+    bestFwd = footFwd;
+  }
+  if (!bestFwd) return 0;
+
+  // Angle of model's current forward vector around +Y relative to +Z
+  // Rotation needed on scaledRoot.rotation.y to align bestFwd -> +Z: -atan2(bestFwd.x, bestFwd.z)
+  const rawDeg = THREE.MathUtils.radToDeg(Math.atan2(-bestFwd.x, bestFwd.z));
+  const snapped = Math.round(rawDeg / 90) * 90;
+  if (snapped === -180) return 180;
+  if (snapped === 0 || snapped === 90 || snapped === -90 || snapped === 180) {
+    return snapped;
+  }
+  return 0;
+}
+
+const HELPER_BONE_RE = /twist|roll|ik|pole|target|end|nub|leaf|eye|jaw|ear|hair|hat|thumb|index|middle|ring|pinky|toe/i;
+
+function computeObjectOrBoneBox(root: THREE.Object3D, nodes: THREE.Object3D[]): THREE.Box3 {
+  const box = new THREE.Box3().setFromObject(root);
+  if (!box.isEmpty()) return box;
+  const wp = new THREE.Vector3();
+  for (const n of nodes) {
+    n.getWorldPosition(wp);
+    box.expandByPoint(wp);
+  }
+  return box;
+}
+
+/**
+ * Topology + Spatial recognition for rigs with non-standard or generic bone names (Tripo generic joints, Bone.001, Joint_3).
+ * Traces the parent/child skeleton tree from pelvis outward to legs, spine/chest/head, and clavicle/arms/hands.
  */
 function fillMissingBonesSpatially(
   root: THREE.Object3D,
   nodes: THREE.Object3D[],
-  map: Partial<Record<RigBoneRole, string>>
+  map: Partial<Record<RigBoneRole, string>>,
+  facingOffsetDeg = 0
 ): void {
   if (nodes.length < 3) return;
 
   root.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(root);
+  const box = computeObjectOrBoneBox(root, nodes);
   if (box.isEmpty()) return;
+
+  const facingQuat = new THREE.Quaternion().setFromAxisAngle(
+    CHAR_Y,
+    THREE.MathUtils.degToRad(facingOffsetDeg)
+  );
+
+  const boxCenter = new THREE.Vector3();
+  box.getCenter(boxCenter);
+  const rotBox = new THREE.Box3();
+  const cornerTmp = new THREE.Vector3();
+  for (const cx of [box.min.x, box.max.x]) {
+    for (const cy of [box.min.y, box.max.y]) {
+      for (const cz of [box.min.z, box.max.z]) {
+        cornerTmp.set(cx - boxCenter.x, cy - box.min.y, cz - boxCenter.z).applyQuaternion(facingQuat);
+        rotBox.expandByPoint(cornerTmp);
+      }
+    }
+  }
 
   const size = new THREE.Vector3();
   const center = new THREE.Vector3();
-  box.getSize(size);
-  box.getCenter(center);
+  rotBox.getSize(size);
+  rotBox.getCenter(center);
   const height = Math.max(0.01, size.y);
   const halfWidth = Math.max(0.01, size.x * 0.5);
 
+  const nodeSet = new Set(nodes);
   const used = new Set(Object.values(map).filter(Boolean) as string[]);
-  const infos = nodes.map((node) => {
-    const pos = new THREE.Vector3();
-    node.getWorldPosition(pos);
-    const childBones = node.children.filter((c) => nodes.includes(c));
-    return {
+
+  interface SpatialBoneInfo {
+    node: THREE.Object3D;
+    name: string;
+    pos: THREE.Vector3;
+    normY: number;
+    normX: number;
+    childBones: THREE.Object3D[];
+  }
+
+  const infoMap = new Map<string, SpatialBoneInfo>();
+
+  const infos: SpatialBoneInfo[] = nodes.map((node) => {
+    const rawPos = new THREE.Vector3();
+    node.getWorldPosition(rawPos);
+    const pos = rawPos
+      .sub(new THREE.Vector3(boxCenter.x, box.min.y, boxCenter.z))
+      .applyQuaternion(facingQuat);
+    const childBones = node.children.filter((c) => nodeSet.has(c));
+    const entry: SpatialBoneInfo = {
       node,
       name: node.name,
       pos,
-      normY: (pos.y - box.min.y) / height,
+      normY: (pos.y - rotBox.min.y) / height,
       normX: (pos.x - center.x) / halfWidth,
       childBones,
     };
+    infoMap.set(node.name, entry);
+    return entry;
   });
 
-  // Head fallback: highest bone near center X
+  const isMajorBone = (name: string) => !HELPER_BONE_RE.test(name);
+  const countDescendants = (node: THREE.Object3D): number => {
+    let count = 0;
+    const stack = [...node.children];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (nodeSet.has(cur)) count++;
+      cur.children.forEach((c) => stack.push(c));
+    }
+    return count;
+  };
+
+  // --- Phase A: Skeleton Graph Topology Traversal ---
+  // 1. Hips / Pelvis: central bone with downward leg branch(es) or >=3 child branches
+  if (!map.hips) {
+    const pelvisCand = infos
+      .filter((b) => !used.has(b.name) && isMajorBone(b.name) && Math.abs(b.pos.x - center.x) < height * 0.14 && b.normY > 0.25 && b.normY < 0.68)
+      .sort((a, b) => {
+        const aDown = a.childBones.filter((c) => {
+          const ci = infoMap.get(c.name);
+          return ci && ci.pos.y < a.pos.y - height * 0.03;
+        }).length;
+        const bDown = b.childBones.filter((c) => {
+          const ci = infoMap.get(c.name);
+          return ci && ci.pos.y < b.pos.y - height * 0.03;
+        }).length;
+        if (aDown !== bDown) return bDown - aDown;
+        if (a.childBones.length !== b.childBones.length) return b.childBones.length - a.childBones.length;
+        return Math.abs(a.normY - 0.5) - Math.abs(b.normY - 0.5);
+      })[0];
+    if (pelvisCand) {
+      map.hips = pelvisCand.name;
+      used.add(pelvisCand.name);
+    }
+  }
+
+  // 2. Walk Spine -> Chest -> Arm Fork -> Neck -> Head from Hips
+  const hipsInfo = map.hips ? infoMap.get(map.hips) : undefined;
+  if (hipsInfo) {
+    const spinePath: SpatialBoneInfo[] = [];
+    let cur: SpatialBoneInfo | undefined = hipsInfo;
+    let armFork: SpatialBoneInfo | null = null;
+    for (let step = 0; step < 8 && cur; step++) {
+      const curNode: SpatialBoneInfo = cur;
+      const upChildren: SpatialBoneInfo[] = curNode.childBones
+        .map((c) => infoMap.get(c.name))
+        .filter((ci): ci is SpatialBoneInfo => Boolean(ci && ci.pos.y >= curNode.pos.y - height * 0.015));
+      if (upChildren.length === 0) break;
+
+      // Check if current node already forks into lateral left/right arm branches (supports narrow clavicles too)
+      const lateralThreshold = Math.max(0.015, height * 0.018);
+      const lateralChildren = upChildren.filter((c) => Math.abs(c.pos.x - curNode.pos.x) > lateralThreshold);
+      const hasLeftBranch = lateralChildren.some((c) => c.pos.x > curNode.pos.x + lateralThreshold);
+      const hasRightBranch = lateralChildren.some((c) => c.pos.x < curNode.pos.x - lateralThreshold);
+      if (hasLeftBranch && hasRightBranch && curNode !== hipsInfo) {
+        armFork = curNode;
+        break;
+      }
+
+      // Advance up central trunk child with largest subtree (strictly near sagittal midline, no lateral clavicles)
+      const centralNext: SpatialBoneInfo | undefined = upChildren
+        .filter(
+          (c) =>
+            Math.abs(c.pos.x - center.x) < height * 0.045 &&
+            c.pos.y > curNode.pos.y + height * 0.015 &&
+            isMajorBone(c.name)
+        )
+        .sort((a, b) => countDescendants(b.node) - countDescendants(a.node))[0];
+      if (!centralNext) break;
+      spinePath.push(centralNext);
+      cur = centralNext;
+    }
+
+    if (spinePath.length >= 2) {
+      if (!map.spine && !used.has(spinePath[0].name)) {
+        map.spine = spinePath[0].name;
+        used.add(map.spine);
+      }
+      const chestCand = spinePath[spinePath.length - 1];
+      if (!map.chest && !used.has(chestCand.name)) {
+        map.chest = chestCand.name;
+        used.add(map.chest);
+      }
+    } else if (spinePath.length === 1 && !map.spine && !used.has(spinePath[0].name)) {
+      map.spine = spinePath[0].name;
+      used.add(map.spine);
+    }
+
+    if (armFork) {
+      const forkNode = armFork;
+      const upFromFork: SpatialBoneInfo[] = forkNode.childBones
+        .map((c) => infoMap.get(c.name))
+        .filter((ci): ci is SpatialBoneInfo => Boolean(ci));
+
+      // Central neck -> head chain above arm fork (strictly closest to sagittal midline)
+      const neckStart = upFromFork
+        .filter((c) => Math.abs(c.pos.x - center.x) < height * 0.05 && c.pos.y > forkNode.pos.y && isMajorBone(c.name))
+        .sort((a, b) => Math.abs(a.pos.x - center.x) - Math.abs(b.pos.x - center.x) || a.pos.y - b.pos.y)[0];
+      if (neckStart) {
+        const headChain: SpatialBoneInfo[] = [neckStart];
+        let hc: SpatialBoneInfo | undefined = neckStart;
+        for (let k = 0; k < 4 && hc; k++) {
+          const curHc: SpatialBoneInfo = hc;
+          const next: SpatialBoneInfo | undefined = curHc.childBones
+            .map((c) => infoMap.get(c.name))
+            .filter((ci): ci is SpatialBoneInfo => Boolean(ci && isMajorBone(ci.name) && ci.pos.y >= curHc.pos.y))
+            .sort((a, b) => b.pos.y - a.pos.y)[0];
+          if (!next) break;
+          headChain.push(next);
+          hc = next;
+        }
+        if (headChain.length >= 2) {
+          if (!map.neck && !used.has(headChain[0].name)) {
+            map.neck = headChain[0].name;
+            used.add(map.neck);
+          }
+          const headNode = headChain[headChain.length - 1];
+          if (!map.head && !used.has(headNode.name)) {
+            map.head = headNode.name;
+            used.add(map.head);
+          }
+        } else if (headChain.length === 1 && !map.head && !used.has(headChain[0].name)) {
+          map.head = headChain[0].name;
+          used.add(map.head);
+        }
+      }
+
+      // Left & Right arm chains from fork
+      const traceArmSide = (isLeft: boolean) => {
+        const armThreshold = Math.max(0.015, height * 0.018);
+        const branchStart = upFromFork
+          .filter((c) => c.name !== neckStart?.name && (isLeft ? c.pos.x > forkNode.pos.x + armThreshold : c.pos.x < forkNode.pos.x - armThreshold))
+          .sort((a, b) => countDescendants(b.node) - countDescendants(a.node))[0];
+        if (!branchStart) return;
+        const chain: SpatialBoneInfo[] = [branchStart];
+        let ac: SpatialBoneInfo | undefined = branchStart;
+        for (let k = 0; k < 5 && ac; k++) {
+          const curAc: SpatialBoneInfo = ac;
+          const next: SpatialBoneInfo | undefined = curAc.childBones
+            .map((c) => infoMap.get(c.name))
+            .filter((ci): ci is SpatialBoneInfo => Boolean(ci && !/finger|thumb|index|middle|ring|pinky|twist|roll|end|nub/i.test(ci.name)))
+            .sort((a, b) => countDescendants(b.node) - countDescendants(a.node))[0];
+          if (!next) break;
+          chain.push(next);
+          ac = next;
+        }
+        // Distinguish [clavicle, upperArm, lowerArm, hand] vs [upperArm, lowerArm, hand]
+        let idxOffset = 0;
+        if (
+          chain.length >= 3 &&
+          Math.abs(chain[0].pos.x - center.x) < height * 0.11 &&
+          Math.abs(chain[1].pos.x - chain[0].pos.x) > height * 0.06
+        ) {
+          const shRole: RigBoneRole = isLeft ? 'leftShoulder' : 'rightShoulder';
+          if (!map[shRole] && !used.has(chain[0].name)) {
+            map[shRole] = chain[0].name;
+            used.add(chain[0].name);
+          }
+          idxOffset = 1;
+        }
+        const uaRole: RigBoneRole = isLeft ? 'leftUpperArm' : 'rightUpperArm';
+        const laRole: RigBoneRole = isLeft ? 'leftLowerArm' : 'rightLowerArm';
+        const hRole: RigBoneRole = isLeft ? 'leftHand' : 'rightHand';
+        if (chain[idxOffset] && !map[uaRole] && !used.has(chain[idxOffset].name)) {
+          map[uaRole] = chain[idxOffset].name;
+          used.add(chain[idxOffset].name);
+        }
+        if (chain[idxOffset + 1] && !map[laRole] && !used.has(chain[idxOffset + 1].name)) {
+          map[laRole] = chain[idxOffset + 1].name;
+          used.add(chain[idxOffset + 1].name);
+        }
+        if (chain[idxOffset + 2] && !map[hRole] && !used.has(chain[idxOffset + 2].name)) {
+          map[hRole] = chain[idxOffset + 2].name;
+          used.add(chain[idxOffset + 2].name);
+        }
+      };
+      traceArmSide(true);
+      traceArmSide(false);
+    }
+  }
+
+  // --- Phase B: Spatial Bounding-Box Fallbacks (handles disconnected rigs & missed slots) ---
+  // Head fallback: highest major bone near center X
   if (!map.head) {
     const cand = infos
-      .filter((b) => !used.has(b.name) && b.normY > 0.72 && Math.abs(b.normX) < 0.22)
+      .filter((b) => !used.has(b.name) && isMajorBone(b.name) && b.normY > 0.72 && Math.abs(b.normX) < 0.25)
       .sort((a, b) => b.normY - a.normY)[0];
     if (cand) {
       map.head = cand.name;
@@ -589,10 +996,10 @@ function fillMissingBonesSpatially(
     }
   }
 
-  // Hips fallback: central bone near mid-height with multiple descendants
+  // Hips fallback
   if (!map.hips) {
     const cand = infos
-      .filter((b) => !used.has(b.name) && b.normY > 0.34 && b.normY < 0.62 && Math.abs(b.normX) < 0.16)
+      .filter((b) => !used.has(b.name) && b.normY > 0.34 && b.normY < 0.62 && Math.abs(b.normX) < 0.18)
       .sort((a, b) => b.childBones.length - a.childBones.length)[0];
     if (cand) {
       map.hips = cand.name;
@@ -600,88 +1007,101 @@ function fillMissingBonesSpatially(
     }
   }
 
-  // Spine fallback: central bone between hips and head
+  // Spine fallback
   if (!map.spine) {
     const cand = infos
-      .filter((b) => !used.has(b.name) && b.normY > 0.52 && b.normY < 0.76 && Math.abs(b.normX) < 0.16)
-      .sort((a, b) => Math.abs(a.normY - 0.62) - Math.abs(b.normY - 0.62))[0];
+      .filter((b) => !used.has(b.name) && b.normY > 0.48 && b.normY < 0.78 && Math.abs(b.normX) < 0.18)
+      .sort((a, b) => Math.abs(a.normY - 0.6) - Math.abs(b.normY - 0.6))[0];
     if (cand) {
       map.spine = cand.name;
       used.add(cand.name);
     }
   }
 
-  // Arms fallback: symmetric lateral bones in upper torso (normY 0.58..0.86)
+  // Arms fallback: symmetric lateral bones in upper torso
   if (!map.leftUpperArm || !map.rightUpperArm) {
     const upperCandidates = infos.filter(
-      (b) => !used.has(b.name) && b.normY > 0.58 && b.normY < 0.88 && Math.abs(b.normX) > 0.14 && b.childBones.length > 0
+      (b) => !used.has(b.name) && isMajorBone(b.name) && b.normY > 0.56 && b.normY < 0.88 && Math.abs(b.normX) > 0.12 && b.childBones.length > 0
     );
     const posX = upperCandidates
       .filter((b) => b.normX > 0)
-      .sort((a, b) => Math.abs(a.normX - 0.35) - Math.abs(b.normX - 0.35))[0];
+      .sort((a, b) => Math.abs(a.normX - 0.32) - Math.abs(b.normX - 0.32))[0];
     const negX = upperCandidates
       .filter((b) => b.normX < 0)
-      .sort((a, b) => Math.abs(a.normX + 0.35) - Math.abs(b.normX + 0.35))[0];
+      .sort((a, b) => Math.abs(a.normX + 0.32) - Math.abs(b.normX + 0.32))[0];
     if (!map.leftUpperArm && posX) {
       map.leftUpperArm = posX.name;
       used.add(posX.name);
-      if (!map.leftLowerArm && posX.childBones[0] && !used.has(posX.childBones[0].name)) {
-        map.leftLowerArm = posX.childBones[0].name;
-        used.add(map.leftLowerArm);
+      const lowerChild = posX.childBones.find((c) => !used.has(c.name));
+      if (!map.leftLowerArm && lowerChild) {
+        map.leftLowerArm = lowerChild.name;
+        used.add(lowerChild.name);
+        const handChild = lowerChild.children.find((c) => nodeSet.has(c) && !used.has(c.name) && isMajorBone(c.name));
+        if (!map.leftHand && handChild) {
+          map.leftHand = handChild.name;
+          used.add(handChild.name);
+        }
       }
     }
     if (!map.rightUpperArm && negX) {
       map.rightUpperArm = negX.name;
       used.add(negX.name);
-      if (!map.rightLowerArm && negX.childBones[0] && !used.has(negX.childBones[0].name)) {
-        map.rightLowerArm = negX.childBones[0].name;
-        used.add(map.rightLowerArm);
+      const lowerChild = negX.childBones.find((c) => !used.has(c.name));
+      if (!map.rightLowerArm && lowerChild) {
+        map.rightLowerArm = lowerChild.name;
+        used.add(lowerChild.name);
+        const handChild = lowerChild.children.find((c) => nodeSet.has(c) && !used.has(c.name) && isMajorBone(c.name));
+        if (!map.rightHand && handChild) {
+          map.rightHand = handChild.name;
+          used.add(handChild.name);
+        }
       }
     }
   }
 
-  // Legs fallback: symmetric bones near hip level (normY 0.30..0.58) whose child descends downward
-  if (!map.leftUpperLeg || !map.rightUpperLeg) {
+  // Legs fallback: symmetric bones descending downward near pelvis
+  if (!map.leftUpperLeg || !map.rightUpperLeg || !map.leftFoot || !map.rightFoot) {
     const legCandidates = infos.filter((b) => {
-      if (used.has(b.name) || b.normY < 0.28 || b.normY > 0.58 || Math.abs(b.normX) < 0.05) return false;
+      if (used.has(b.name) || b.normY < 0.24 || b.normY > 0.62 || Math.abs(b.normX) < 0.04) return false;
       return b.childBones.some((cb) => {
-        const cp = new THREE.Vector3();
-        cb.getWorldPosition(cp);
-        return cp.y < b.pos.y - height * 0.06;
+        const ci = infoMap.get(cb.name);
+        return ci && ci.pos.y < b.pos.y - height * 0.05;
       });
     });
-    const posLeg = legCandidates
-      .filter((b) => b.normX > 0)
-      .sort((a, b) => b.normY - a.normY)[0];
-    const negLeg = legCandidates
-      .filter((b) => b.normX < 0)
-      .sort((a, b) => b.normY - a.normY)[0];
-    if (!map.leftUpperLeg && posLeg) {
-      map.leftUpperLeg = posLeg.name;
-      used.add(posLeg.name);
-      const child = posLeg.childBones[0];
-      if (!map.leftLowerLeg && child && !used.has(child.name)) {
-        map.leftLowerLeg = child.name;
-        used.add(child.name);
+    const pickLegChain = (cand: (typeof infos)[number] | undefined, isLeft: boolean) => {
+      if (!cand) return;
+      const ul: RigBoneRole = isLeft ? 'leftUpperLeg' : 'rightUpperLeg';
+      const ll: RigBoneRole = isLeft ? 'leftLowerLeg' : 'rightLowerLeg';
+      const ft: RigBoneRole = isLeft ? 'leftFoot' : 'rightFoot';
+      if (!map[ul]) {
+        map[ul] = cand.name;
+        used.add(cand.name);
       }
+      const shin = cand.childBones.find((c) => !used.has(c.name) && isMajorBone(c.name)) ?? cand.childBones[0];
+      if (!map[ll] && shin && !used.has(shin.name)) {
+        map[ll] = shin.name;
+        used.add(shin.name);
+        const foot = shin.children.find((c) => nodeSet.has(c) && !used.has(c.name) && !/twist|roll|end|nub/i.test(c.name));
+        if (!map[ft] && foot) {
+          map[ft] = foot.name;
+          used.add(foot.name);
+        }
+      }
+    };
+    if (!map.leftUpperLeg) {
+      pickLegChain(legCandidates.filter((b) => b.normX > 0).sort((a, b) => b.normY - a.normY)[0], true);
     }
-    if (!map.rightUpperLeg && negLeg) {
-      map.rightUpperLeg = negLeg.name;
-      used.add(negLeg.name);
-      const child = negLeg.childBones[0];
-      if (!map.rightLowerLeg && child && !used.has(child.name)) {
-        map.rightLowerLeg = child.name;
-        used.add(child.name);
-      }
+    if (!map.rightUpperLeg) {
+      pickLegChain(legCandidates.filter((b) => b.normX < 0).sort((a, b) => b.normY - a.normY)[0], false);
     }
   }
 }
 
-function estimateArmRelaxAngle(
+export function measureArmAngleFromDownDeg(
   root: THREE.Object3D,
   nodes: THREE.Object3D[],
   map: Partial<Record<RigBoneRole, string>>
-): number {
+): number | null {
   const byName = new Map<string, THREE.Object3D>();
   nodes.forEach((n) => byName.set(n.name, n));
 
@@ -715,8 +1135,17 @@ function estimateArmRelaxAngle(
     angleCount++;
   }
 
-  if (angleCount === 0) return 0;
-  const avgAngleFromDown = angleSum / angleCount;
+  if (angleCount === 0) return null;
+  return angleSum / angleCount;
+}
+
+export function estimateArmRelaxAngle(
+  root: THREE.Object3D,
+  nodes: THREE.Object3D[],
+  map: Partial<Record<RigBoneRole, string>>
+): number {
+  const avgAngleFromDown = measureArmAngleFromDownDeg(root, nodes, map);
+  if (avgAngleFromDown === null) return 0;
   // Already hanging cleanly near body sides
   if (avgAngleFromDown <= 13) return 0;
   // Leave ~8 deg natural side clearance so arms rest by sides without clipping hips
@@ -726,8 +1155,51 @@ function estimateArmRelaxAngle(
 export function inspectModelSkeleton(root: THREE.Object3D): SkeletonInspection {
   const { nodes, isSkinned, skinnedMeshCount } = collectRiggableNodes(root);
   const boneNames = nodes.map((n) => n.name);
-  const autoBoneMap = matchBoneMapByName(nodes);
-  fillMissingBonesSpatially(root, nodes, autoBoneMap);
+  const nameBoneMap = matchBoneMapByName(nodes);
+  let autoBoneMap: Partial<Record<RigBoneRole, string>> = { ...nameBoneMap };
+  let suggestedFacingOffsetDeg = detectModelFacingOffsetDeg(root, nodes, autoBoneMap);
+  fillMissingBonesSpatially(root, nodes, autoBoneMap, suggestedFacingOffsetDeg);
+
+  // If named L/R bones were absent on the initial pass (generic Bone_001 rigs), re-check foot forward
+  // vector using topology-discovered ankle->foot bones; if facing flips, re-run spatial L/R assignment.
+  const hasNamedLR = Boolean(
+    nameBoneMap.leftUpperArm || nameBoneMap.rightUpperArm || nameBoneMap.leftUpperLeg || nameBoneMap.rightUpperLeg
+  );
+  if (!hasNamedLR && suggestedFacingOffsetDeg === 0) {
+    const byName = new Map<string, THREE.Object3D>();
+    nodes.forEach((n) => byName.set(n.name, n));
+    const ankleL = autoBoneMap.leftLowerLeg ? byName.get(autoBoneMap.leftLowerLeg) : undefined;
+    const footL = autoBoneMap.leftFoot ? byName.get(autoBoneMap.leftFoot) : undefined;
+    const ankleR = autoBoneMap.rightLowerLeg ? byName.get(autoBoneMap.rightLowerLeg) : undefined;
+    const footR = autoBoneMap.rightFoot ? byName.get(autoBoneMap.rightFoot) : undefined;
+    const pairs: [THREE.Object3D, THREE.Object3D][] = [];
+    if (ankleL && footL) pairs.push([ankleL, footL]);
+    if (ankleR && footR) pairs.push([ankleR, footR]);
+    if (pairs.length > 0) {
+      root.updateMatrixWorld(true);
+      const fFwd = new THREE.Vector3();
+      const pa = new THREE.Vector3();
+      const pf = new THREE.Vector3();
+      for (const [a, f] of pairs) {
+        a.getWorldPosition(pa);
+        f.getWorldPosition(pf);
+        fFwd.x += pf.x - pa.x;
+        fFwd.z += pf.z - pa.z;
+      }
+      if (fFwd.lengthSq() > 0.0004) {
+        fFwd.normalize();
+        const rawDeg = THREE.MathUtils.radToDeg(Math.atan2(-fFwd.x, fFwd.z));
+        const snapped = Math.round(rawDeg / 90) * 90;
+        const normalized = snapped === -180 ? 180 : snapped;
+        if (normalized !== 0 && (normalized === 90 || normalized === -90 || normalized === 180)) {
+          suggestedFacingOffsetDeg = normalized;
+          autoBoneMap = { ...nameBoneMap };
+          fillMissingBonesSpatially(root, nodes, autoBoneMap, suggestedFacingOffsetDeg);
+        }
+      }
+    }
+  }
+
   const suggestedArmRelaxAngle = estimateArmRelaxAngle(root, nodes, autoBoneMap);
 
   return {
@@ -737,6 +1209,7 @@ export function inspectModelSkeleton(root: THREE.Object3D): SkeletonInspection {
     boneNames,
     autoBoneMap,
     suggestedArmRelaxAngle,
+    suggestedFacingOffsetDeg,
   };
 }
 
@@ -756,7 +1229,7 @@ export function createDefaultRigSettings(
     mirrorLimbSwing: false,
     motionStrength: 1.0,
     headMotion: 1.0,
-    facingOffsetDeg: 0,
+    facingOffsetDeg: inspection.suggestedFacingOffsetDeg ?? 0,
   };
 }
 
@@ -836,7 +1309,11 @@ export class ProceduralRigController {
     defaultSlotPresets?: Partial<Record<CustomClipSlot, string>>
   ) {
     this.charRoot = charRoot;
-    this.settings = { ...settings, boneMap: { ...settings.boneMap } };
+    this.settings = {
+      ...settings,
+      boneMap: { ...settings.boneMap },
+      invertedRoles: settings.invertedRoles ? { ...settings.invertedRoles } : undefined,
+    };
     this.customAnimations = customAnimations ? [...customAnimations] : [];
     this.defaultSlotPresets = defaultSlotPresets ? { ...defaultSlotPresets } : {};
     this.captureRestPose(modelClone);
@@ -984,7 +1461,11 @@ export class ProceduralRigController {
   }
 
   public updateSettings(next: CustomRigSettings) {
-    this.settings = { ...next, boneMap: { ...next.boneMap } };
+    this.settings = {
+      ...next,
+      boneMap: { ...next.boneMap },
+      invertedRoles: next.invertedRoles ? { ...next.invertedRoles } : undefined,
+    };
     this.captureFootAnchors();
   }
 
@@ -995,13 +1476,17 @@ export class ProceduralRigController {
     _matRootInv.copy(this.charRoot.matrixWorld).invert();
 
     const candidateNames = new Set<string>();
+    const footL = this.settings.boneMap.leftFoot;
+    const footR = this.settings.boneMap.rightFoot;
     const lowerLegL = this.settings.boneMap.leftLowerLeg;
     const lowerLegR = this.settings.boneMap.rightLowerLeg;
     const upperLegL = this.settings.boneMap.leftUpperLeg;
     const upperLegR = this.settings.boneMap.rightUpperLeg;
-    if (lowerLegL) candidateNames.add(lowerLegL);
+    if (footL) candidateNames.add(footL);
+    else if (lowerLegL) candidateNames.add(lowerLegL);
     else if (upperLegL) candidateNames.add(upperLegL);
-    if (lowerLegR) candidateNames.add(lowerLegR);
+    if (footR) candidateNames.add(footR);
+    else if (lowerLegR) candidateNames.add(lowerLegR);
     else if (upperLegR) candidateNames.add(upperLegR);
 
     if (candidateNames.size === 0) {
@@ -1259,14 +1744,22 @@ export class ProceduralRigController {
       monsterneck_0_0: 'neck',
       head: 'head',
       monsterhead_0: 'head',
+      leftshoulder: 'leftShoulder',
+      leftclavicle: 'leftShoulder',
       leftupperarm: 'leftUpperArm',
       leftlowerarm: 'leftLowerArm',
+      lefthand: 'leftHand',
+      rightshoulder: 'rightShoulder',
+      rightclavicle: 'rightShoulder',
       rightupperarm: 'rightUpperArm',
       rightlowerarm: 'rightLowerArm',
+      righthand: 'rightHand',
       leftupperleg: 'leftUpperLeg',
       leftlowerleg: 'leftLowerLeg',
+      leftfoot: 'leftFoot',
       rightupperleg: 'rightUpperLeg',
       rightlowerleg: 'rightLowerLeg',
+      rightfoot: 'rightFoot',
     };
     const role = roleAlias[lower];
     if (role) {
@@ -1581,13 +2074,14 @@ export class ProceduralRigController {
     if (!cap) return;
 
     const swingAxis = this.settings.limbSwingAxis;
-    const mirrorSwing = this.settings.mirrorLimbSwing && isRightSide ? -1 : 1;
+    const roleInvert = this.settings.invertedRoles?.[role] ? -1 : 1;
+    const mirrorSwing = (this.settings.mirrorLimbSwing && isRightSide ? -1 : 1) * roleInvert;
 
     if (swingAxis === 'auto') {
       // Build character-space delta quaternion: pitch around +X, yaw around +Y, roll around +Z
       _qDeltaChar.identity();
       if (Math.abs(rollZ) > 0.0001) {
-        _qStep.setFromAxisAngle(CHAR_Z, rollZ);
+        _qStep.setFromAxisAngle(CHAR_Z, rollZ * roleInvert);
         _qDeltaChar.premultiply(_qStep);
       }
       if (Math.abs(pitchX) > 0.0001) {
@@ -1657,13 +2151,14 @@ export class ProceduralRigController {
     }
     _qParentLiveInv.copy(_qParentLive).invert();
 
+    const roleInvert = this.settings.invertedRoles?.[role] ? -1 : 1;
     _qDeltaChar.identity();
     if (Math.abs(rollZ) > 0.0001) {
-      _qStep.setFromAxisAngle(CHAR_Z, rollZ);
+      _qStep.setFromAxisAngle(CHAR_Z, rollZ * roleInvert);
       _qDeltaChar.premultiply(_qStep);
     }
     if (Math.abs(pitchX) > 0.0001) {
-      _qStep.setFromAxisAngle(CHAR_X, pitchX);
+      _qStep.setFromAxisAngle(CHAR_X, pitchX * roleInvert);
       _qDeltaChar.premultiply(_qStep);
     }
     if (Math.abs(yawY) > 0.0001) {
@@ -1808,10 +2303,11 @@ export class ProceduralRigController {
 
     // 0b. Motion Editor Keyframe Preset Preview (play or scrub timeline)
     if (this.testOverride && this.testOverride.kind === 'presetPreview') {
-      const { preset, playing } = this.testOverride;
+      const { preset, playing, playbackSpeed = 1 } = this.testOverride;
       const dur = Math.max(0.15, preset.duration);
       if (playing) {
-        const deltaNorm = (clampedDt * Math.max(0.15, speed)) / dur;
+        const safePlaybackSpeed = THREE.MathUtils.clamp(playbackSpeed, 0.25, 2.0);
+        const deltaNorm = (clampedDt * Math.max(0.15, speed * safePlaybackSpeed)) / dur;
         if (preset.loop) {
           this.previewHoldElapsed = 0;
           this.previewTimeNorm = (this.previewTimeNorm + deltaNorm) % 1;
@@ -1886,6 +2382,9 @@ export class ProceduralRigController {
 
       if (role === 'head' || role === 'neck') {
         this.applyCharSpacePose(role, Math.sin(this.elapsed * 3.6) * 0.28, w * 0.52, Math.cos(this.elapsed * 2.5) * 0.14);
+      } else if (role === 'leftShoulder' || role === 'rightShoulder') {
+        const isR = role === 'rightShoulder';
+        this.applyCharSpacePose(role, -w * 0.14, 0, (isR ? -1 : 1) * (0.14 + w * 0.22), isR);
       } else if (role === 'leftUpperArm' || role === 'rightUpperArm') {
         const isR = role === 'rightUpperArm';
         const relax = isR ? rightRelax : leftRelax;
@@ -1893,12 +2392,18 @@ export class ProceduralRigController {
       } else if (role === 'leftLowerArm' || role === 'rightLowerArm') {
         const isR = role === 'rightLowerArm';
         this.applyCharSpacePose(role, -Math.max(0, w) * 1.15 - 0.15, 0, 0, isR);
+      } else if (role === 'leftHand' || role === 'rightHand') {
+        const isR = role === 'rightHand';
+        this.applyCharSpacePose(role, w * 0.45, 0, w * 0.22, isR);
       } else if (role === 'leftUpperLeg' || role === 'rightUpperLeg') {
         const isR = role === 'rightUpperLeg';
         this.applyCharSpacePose(role, -w * 0.72, 0, 0, isR);
       } else if (role === 'leftLowerLeg' || role === 'rightLowerLeg') {
         const isR = role === 'rightLowerLeg';
         this.applyCharSpacePose(role, Math.max(0, w) * 1.05, 0, 0, isR);
+      } else if (role === 'leftFoot' || role === 'rightFoot') {
+        const isR = role === 'rightFoot';
+        this.applyCharSpacePose(role, w * 0.55, 0, 0, isR);
       } else {
         this.applyCharSpacePose(role, w * 0.22, Math.cos(this.elapsed * 3.2) * 0.28, w * 0.12);
       }

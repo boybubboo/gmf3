@@ -86,6 +86,31 @@ function extractFirstJsonObject(raw: string): string {
   return candidate;
 }
 
+const ALLOWED_IMAGE_MIMES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
+
+interface ValidReferenceImage {
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  data: string;
+}
+
+function parseReferenceImage(raw: unknown): ValidReferenceImage | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as { mimeType?: unknown; data?: unknown };
+  const mimeType = typeof obj.mimeType === 'string' ? obj.mimeType.trim().toLowerCase() : '';
+  if (!ALLOWED_IMAGE_MIMES.has(mimeType)) return null;
+  if (typeof obj.data !== 'string' || !obj.data.trim()) return null;
+  const stripped = obj.data.replace(/^data:image\/[a-z0-9+.-]+;base64,/i, '').trim();
+  if (!stripped || stripped.length > 6_000_000) return null;
+  return {
+    mimeType: mimeType as ValidReferenceImage['mimeType'],
+    data: stripped,
+  };
+}
+
 interface AiGenerateBody {
   provider?: unknown;
   model?: unknown;
@@ -93,11 +118,12 @@ interface AiGenerateBody {
   userPrompt?: unknown;
   temperature?: unknown;
   customBaseUrl?: unknown;
+  referenceImage?: unknown;
 }
 
 async function startServer(): Promise<void> {
   const app = express();
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '8mb' }));
 
   app.get('/api/ai/status', (_req: Request, res: Response) => {
     const defaultOpenAiBaseUrl =
@@ -125,6 +151,7 @@ async function startServer(): Promise<void> {
         ? body.temperature
         : 0.45;
     const temperature = Math.max(0, Math.min(1.2, temperatureRaw));
+    const referenceImage = parseReferenceImage(body.referenceImage);
 
     if (!userPrompt.trim()) {
       res.status(400).json({ error: 'Prompt text is required.' });
@@ -151,12 +178,26 @@ async function startServer(): Promise<void> {
           apiKey,
           httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
         });
+        const contents = referenceImage
+          ? {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: referenceImage.mimeType,
+                    data: referenceImage.data,
+                  },
+                },
+                { text: userPrompt },
+              ],
+            }
+          : userPrompt;
+        const isGemini4 = model.startsWith('gemini-4-');
         const response = await ai.models.generateContent({
           model,
-          contents: userPrompt,
+          contents,
           config: {
             systemInstruction: systemPrompt || undefined,
-            temperature,
+            ...(isGemini4 ? {} : { temperature }),
             responseMimeType: 'application/json',
           },
         });
@@ -216,6 +257,18 @@ async function startServer(): Promise<void> {
         : process.env.OPENAI_COMPAT_MODEL?.trim() || 'gpt-4o-mini';
 
     try {
+      const userMessageContent = referenceImage
+        ? [
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:${referenceImage.mimeType};base64,${referenceImage.data}`,
+              },
+            },
+            { type: 'text', text: userPrompt },
+          ]
+        : userPrompt;
+
       const upstreamRes = await fetch(`${safeBaseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -228,7 +281,7 @@ async function startServer(): Promise<void> {
           response_format: { type: 'json_object' },
           messages: [
             ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-            { role: 'user', content: userPrompt },
+            { role: 'user', content: userMessageContent },
           ],
         }),
       });

@@ -153,6 +153,8 @@ export const AssetVaultModal: React.FC<{
   const [savedPresetId, setSavedPresetId] = useState<string | null>(null);
   const [motionPlayhead, setMotionPlayhead] = useState<number>(0);
   const [motionPlaying, setMotionPlaying] = useState<boolean>(false);
+  const [motionSpeed, setMotionSpeed] = useState<number>(1);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [workingBones, setWorkingBones] = useState<Record<string, BonePoseAngles>>({});
   const [workingHipsY, setWorkingHipsY] = useState<number>(0);
   const [isDirtyPose, setIsDirtyPose] = useState<boolean>(false);
@@ -292,6 +294,7 @@ export const AssetVaultModal: React.FC<{
           preset: motionDraft,
           timeNorm: playStartNormRef.current,
           playing: true,
+          playbackSpeed: motionSpeed,
         };
       }
       return {
@@ -304,6 +307,7 @@ export const AssetVaultModal: React.FC<{
   }, [
     isMotionMode,
     motionPlaying,
+    motionSpeed,
     motionDraft,
     motionPlaying ? 0 : motionPlayhead,
     workingBones,
@@ -329,11 +333,27 @@ export const AssetVaultModal: React.FC<{
     return null;
   }, [isMotionMode, selectedPoseBone, testOverride, effectiveRig]);
 
-  // Motion Editor Handlers
-  const handleSelectPoseBone = useCallback((boneName: string) => {
-    setMotionPlaying(false);
-    setSelectedPoseBone(boneName);
-  }, []);
+  // Motion Editor & 3D Rig Pick Handlers
+  const handleSelectPoseBone = useCallback(
+    (boneName: string) => {
+      if (inspectorTab === 'rig') {
+        setManualBoneName(boneName);
+        setManualAngles({ rx: 0, ry: 0, rz: 0 });
+        setShowSkeleton(true);
+        setTestOverride({
+          kind: 'manualBone',
+          boneName,
+          rxDeg: 0,
+          ryDeg: 0,
+          rzDeg: 0,
+        });
+        return;
+      }
+      setMotionPlaying(false);
+      setSelectedPoseBone(boneName);
+    },
+    [inspectorTab]
+  );
 
   const handleChangePoseBoneAngles = useCallback((boneName: string, angles: BonePoseAngles) => {
     setMotionPlaying(false);
@@ -649,6 +669,14 @@ export const AssetVaultModal: React.FC<{
       ...effectiveRig,
       ...patch,
       boneMap: patch.boneMap ? { ...patch.boneMap } : { ...effectiveRig.boneMap },
+      invertedRoles:
+        'invertedRoles' in patch
+          ? patch.invertedRoles
+            ? { ...patch.invertedRoles }
+            : undefined
+          : effectiveRig.invertedRoles
+          ? { ...effectiveRig.invertedRoles }
+          : undefined,
     };
     void store.updateCustomAssetMeta({
       ...selectedAsset,
@@ -663,6 +691,17 @@ export const AssetVaultModal: React.FC<{
     if (boneName) nextMap[role] = boneName;
     else delete nextMap[role];
     updateRig({ boneMap: nextMap });
+  };
+
+  const toggleInvertRole = (role: RigBoneRole) => {
+    if (!effectiveRig) return;
+    const nextInv = { ...(effectiveRig.invertedRoles ?? {}) };
+    if (nextInv[role]) {
+      delete nextInv[role];
+    } else {
+      nextInv[role] = true;
+    }
+    updateRig({ invertedRoles: Object.keys(nextInv).length > 0 ? nextInv : undefined });
   };
 
   const backfilledThumbIdsRef = useRef<Set<string>>(new Set());
@@ -723,6 +762,15 @@ export const AssetVaultModal: React.FC<{
     } finally {
       setUploading(false);
     }
+  };
+
+  const handleDeleteAsset = (assetId: string) => {
+    setConfirmDeleteId(null);
+    if (selectedId === assetId) {
+      const remaining = filteredAssets.filter((a) => a.id !== assetId);
+      setSelectedId(remaining[0]?.id ?? null);
+    }
+    void store.removeCustomAsset(assetId);
   };
 
   const flashAssigned = (msg: string) => {
@@ -879,34 +927,89 @@ export const AssetVaultModal: React.FC<{
               <div className="grid grid-cols-2 gap-2.5">
                 {filteredAssets.map((asset) => {
                   const active = selectedAsset?.id === asset.id;
+                  const isConfirming = confirmDeleteId === asset.id;
                   return (
-                    <button
+                    <div
                       key={asset.id}
-                      type="button"
-                      onClick={() => setSelectedId(asset.id)}
-                      className={`group rounded-2xl bg-white dark:bg-[#171A23] border p-2 text-left transition-all ${
+                      onMouseLeave={() => {
+                        if (isConfirming) setConfirmDeleteId(null);
+                      }}
+                      className={`relative group rounded-2xl bg-white dark:bg-[#171A23] border p-2 text-left transition-all ${
                         active
                           ? 'border-[#7C5CFF] ring-2 ring-[#7C5CFF]/25'
                           : 'border-slate-200/80 dark:border-white/[0.08] hover:border-[#7C5CFF]/50'
                       }`}
                     >
-                      <div className="aspect-square rounded-xl border border-slate-200/70 dark:border-white/[0.07] bg-gradient-to-b from-slate-100 to-slate-200/80 dark:from-[#242A3B] dark:to-[#131621] overflow-hidden flex items-center justify-center mb-2">
-                        {asset.thumbnailDataUrl ? (
-                          <img
-                            src={asset.thumbnailDataUrl}
-                            alt={asset.name}
-                            referrerPolicy="no-referrer"
-                            className="w-full h-full object-contain p-1"
-                          />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmDeleteId(null);
+                          setSelectedId(asset.id);
+                        }}
+                        className="w-full text-left"
+                      >
+                        <div className="aspect-square rounded-xl border border-slate-200/70 dark:border-white/[0.07] bg-gradient-to-b from-slate-100 to-slate-200/80 dark:from-[#242A3B] dark:to-[#131621] overflow-hidden flex items-center justify-center mb-2">
+                          {asset.thumbnailDataUrl ? (
+                            <img
+                              src={asset.thumbnailDataUrl}
+                              alt={asset.name}
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-contain p-1"
+                            />
+                          ) : (
+                            <Box size={24} className="text-slate-400 dark:text-[#6B7285]" />
+                          )}
+                        </div>
+                        <div className="text-xs font-extrabold truncate">{asset.name}</div>
+                        <div className="text-[11px] text-slate-500 dark:text-[#949BB0] mt-0.5 truncate tabular-nums">
+                          {asset.hasSkeleton ? 'Rigged' : 'Static'} · {asset.animationClips.length} clips
+                        </div>
+                      </button>
+
+                      {/* Card-level Delete control */}
+                      <div className="absolute top-3 right-3 z-10">
+                        {isConfirming ? (
+                          <div className="flex items-center gap-1 rounded-lg bg-white/95 dark:bg-[#12151E]/95 p-0.5 shadow-lg border border-[#F2545B]/40">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteAsset(asset.id);
+                              }}
+                              className="px-1.5 py-0.5 rounded-md bg-[#F2545B] hover:bg-[#DC2626] text-white text-[10px] font-extrabold whitespace-nowrap"
+                            >
+                              Delete
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDeleteId(null);
+                              }}
+                              aria-label="Cancel delete"
+                              className="p-0.5 rounded-md text-slate-500 hover:text-slate-900 dark:text-[#949BB0] dark:hover:text-white"
+                            >
+                              <X size={11} />
+                            </button>
+                          </div>
                         ) : (
-                          <Box size={24} className="text-slate-400 dark:text-[#6B7285]" />
+                          <button
+                            type="button"
+                            title={`Delete "${asset.name}" from Vault`}
+                            aria-label={`Delete ${asset.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDeleteId(asset.id);
+                            }}
+                            className={`p-1.5 rounded-lg bg-white/90 dark:bg-[#12151E]/90 border border-slate-200/80 dark:border-white/[0.1] text-slate-500 hover:text-[#F2545B] hover:border-[#F2545B]/50 shadow-sm transition-opacity ${
+                              active ? 'opacity-100' : 'opacity-80 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100'
+                            }`}
+                          >
+                            <Trash2 size={12} />
+                          </button>
                         )}
                       </div>
-                      <div className="text-xs font-extrabold truncate">{asset.name}</div>
-                      <div className="text-[11px] text-slate-500 dark:text-[#949BB0] mt-0.5 truncate tabular-nums">
-                        {asset.hasSkeleton ? 'Rigged' : 'Static'} · {asset.animationClips.length} clips
-                      </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -983,18 +1086,34 @@ export const AssetVaultModal: React.FC<{
                       </button>
                     )}
 
-                    <button
-                      type="button"
-                      title="Delete from Vault"
-                      onClick={() => {
-                        void store.removeCustomAsset(selectedAsset.id);
-                        if (selectedId === selectedAsset.id) setSelectedId(null);
-                      }}
-                      className="px-2.5 py-2 rounded-xl text-slate-500 hover:text-[#F2545B] hover:bg-[#F2545B]/10 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"
-                    >
-                      <Trash2 size={14} />
-                      <span>Delete</span>
-                    </button>
+                    {confirmDeleteId === selectedAsset.id ? (
+                      <div className="inline-flex items-center gap-1 rounded-xl bg-[#F2545B]/12 border border-[#F2545B]/35 p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAsset(selectedAsset.id)}
+                          className="px-2.5 py-1.5 rounded-lg bg-[#F2545B] hover:bg-[#DC2626] text-white text-xs font-bold whitespace-nowrap transition-colors"
+                        >
+                          Confirm Delete
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-[#A5AEC4] hover:text-slate-900 dark:hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        title="Delete imported model from 3D Asset Vault"
+                        onClick={() => setConfirmDeleteId(selectedAsset.id)}
+                        className="px-2.5 py-2 rounded-xl border border-[#F2545B]/25 bg-[#F2545B]/8 text-[#F2545B] hover:bg-[#F2545B]/18 text-xs font-bold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                      >
+                        <Trash2 size={14} />
+                        <span>Delete Model</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1012,6 +1131,7 @@ export const AssetVaultModal: React.FC<{
                   testOverride={effectiveTestOverride}
                   highlightBoneName={highlightBoneName}
                   poseMode={isMotionMode}
+                  allowJointPick={inspectorTab === 'rig' && boneNames.length > 0}
                   motionPlaying={motionPlaying}
                   workingBones={workingBones}
                   ghostStartPose={ghostStartPose}
@@ -1353,6 +1473,8 @@ export const AssetVaultModal: React.FC<{
                       onSaveAsNew={handleSavePresetAsNew}
                       onDeletePreset={handleDeletePreset}
                       onSetDefaultForSlot={handleSetDefaultForSlot}
+                      playbackSpeed={motionSpeed}
+                      onChangePlaybackSpeed={setMotionSpeed}
                     />
                   </div>
                 )}
@@ -1399,9 +1521,25 @@ export const AssetVaultModal: React.FC<{
                             <Compass size={13} className="text-[#7C5CFF]" />
                             Forward Facing
                           </span>
-                          <span className="tabular-nums text-slate-500 dark:text-[#949BB0]">
-                            {effectiveRig.facingOffsetDeg}°
-                          </span>
+                          <div className="flex items-center gap-2">
+                            {cachedInfo && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateRig({
+                                    facingOffsetDeg: cachedInfo.skeletonInfo.suggestedFacingOffsetDeg ?? 0,
+                                  })
+                                }
+                                title="Auto-align character forward direction from shoulder/foot orientation"
+                                className="px-1.5 py-0.5 rounded bg-[#7C5CFF]/15 text-[#7C5CFF] hover:bg-[#7C5CFF]/25 text-[10px] font-bold"
+                              >
+                                Auto ({cachedInfo.skeletonInfo.suggestedFacingOffsetDeg ?? 0}°)
+                              </button>
+                            )}
+                            <span className="tabular-nums text-slate-500 dark:text-[#949BB0]">
+                              {effectiveRig.facingOffsetDeg}°
+                            </span>
+                          </div>
                         </div>
                         <div className="grid grid-cols-4 gap-1">
                           {FACING_PRESETS.map((deg) => (
@@ -1829,7 +1967,7 @@ export const AssetVaultModal: React.FC<{
                           <div>
                             <FieldLabel text="Humanoid Bone Mapping" />
                             <p className="text-[11px] text-slate-500 dark:text-[#949BB0] mt-0.5">
-                              Click Test on any limb to wiggle that bone and highlight its joint in 3D.
+                              Click any bone dot in 3D to inspect it, Test to wiggle, or ± to invert a limb axis.
                             </p>
                           </div>
                           <div className="flex items-center gap-1.5">
@@ -1840,6 +1978,8 @@ export const AssetVaultModal: React.FC<{
                                 updateRig({
                                   boneMap: { ...cachedInfo.skeletonInfo.autoBoneMap },
                                   armRelaxAngle: cachedInfo.skeletonInfo.suggestedArmRelaxAngle,
+                                  facingOffsetDeg: cachedInfo.skeletonInfo.suggestedFacingOffsetDeg ?? 0,
+                                  invertedRoles: undefined,
                                 });
                               }}
                               className="px-2.5 py-1.5 rounded-lg bg-[#7C5CFF]/15 text-[#7C5CFF] hover:bg-[#7C5CFF]/25 text-xs font-bold inline-flex items-center gap-1.5"
@@ -1852,7 +1992,10 @@ export const AssetVaultModal: React.FC<{
                               onClick={() => {
                                 setTestOverride(null);
                                 if (cachedInfo) {
-                                  updateRig({ ...cachedInfo.defaultRigSettings });
+                                  updateRig({
+                                    ...cachedInfo.defaultRigSettings,
+                                    invertedRoles: undefined,
+                                  });
                                 }
                               }}
                               className="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-[#1F2430] hover:bg-slate-200 dark:hover:bg-[#2A3142] text-xs font-semibold inline-flex items-center gap-1"
@@ -1862,6 +2005,30 @@ export const AssetVaultModal: React.FC<{
                             </button>
                           </div>
                         </div>
+
+                        {/* Quick-Map Bar for 3D-Clicked Bone */}
+                        {manualBoneName && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#06B6D4]/10 border border-[#06B6D4]/30 text-xs">
+                            <span className="font-semibold text-slate-700 dark:text-[#D5DCF0] truncate">
+                              Selected Bone: <code className="font-bold text-[#0E7490] dark:text-[#22D3EE]">{manualBoneName}</code>
+                            </span>
+                            <select
+                              value=""
+                              onChange={(e) => {
+                                const role = e.target.value as RigBoneRole;
+                                if (role) updateBoneRole(role, manualBoneName);
+                              }}
+                              className="px-2 py-1 rounded-lg bg-white dark:bg-[#1F2430] text-xs font-bold border border-slate-200/80 dark:border-white/[0.1]"
+                            >
+                              <option value="">Map to Role…</option>
+                              {RIG_BONE_ROLES.map((r) => (
+                                <option key={r.role} value={r.role}>
+                                  {r.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
 
                         {/* Grouped Role Rows */}
                         {(
@@ -1881,6 +2048,7 @@ export const AssetVaultModal: React.FC<{
                                   const assigned = effectiveRig.boneMap[role] ?? '';
                                   const isTesting =
                                     testOverride?.kind === 'role' && testOverride.role === role;
+                                  const isInverted = Boolean(effectiveRig.invertedRoles?.[role]);
                                   return (
                                     <div
                                       key={role}
@@ -1908,6 +2076,19 @@ export const AssetVaultModal: React.FC<{
                                       <button
                                         type="button"
                                         disabled={!assigned}
+                                        onClick={() => toggleInvertRole(role)}
+                                        title="Invert bend direction for this limb"
+                                        className={`px-1.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition-colors disabled:opacity-35 ${
+                                          isInverted
+                                            ? 'bg-[#EF4444]/20 text-[#DC2626] dark:text-[#F87171]'
+                                            : 'bg-slate-200/60 dark:bg-[#232837] text-slate-500 dark:text-[#8E96AB] hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                      >
+                                        ±
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={!assigned}
                                         onClick={() => {
                                           setPaused(false);
                                           setShowSkeleton(true);
@@ -1917,7 +2098,7 @@ export const AssetVaultModal: React.FC<{
                                               : { kind: 'role', role }
                                           );
                                         }}
-                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition-colors disabled:opacity-35 ${
+                                        className={`px-2 py-1 rounded-lg text-[11px] font-bold shrink-0 transition-colors disabled:opacity-35 ${
                                           isTesting
                                             ? 'bg-[#F59E0B] text-slate-950'
                                             : 'bg-slate-200/80 dark:bg-[#272D3D] text-slate-700 dark:text-[#D5DCF0] hover:bg-[#7C5CFF] hover:text-white'

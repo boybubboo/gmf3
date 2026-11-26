@@ -12,7 +12,16 @@ import type { MakerStore } from '../store/useMakerStore';
 import {
   CHARACTER_PRESETS,
   createCharacterPresetDoc,
+  createDefaultAddonConfig,
+  createDefaultSpikesConfig,
+  createMuzzlePreset,
 } from '../three/characterMakerBuilder';
+import {
+  createBeardPresetConfig,
+  createMustachePresetConfig,
+  createSideburnsPresetConfig,
+  resolveFacialHairConfig,
+} from '../three/facialHairBuilder';
 import {
   OBJECT_PRIMITIVE_CATALOG,
   centerAndGroundObjectDoc,
@@ -46,16 +55,28 @@ import type {
   CanopyCrownSilhouette,
   CanopyLeafShape,
   CaveGrotto,
+  CharacterBeardStyle,
+  CharacterBeakStyle,
+  CharacterBodyGearStyle,
   CharacterEarStyle,
   CharacterEyebrowExpression,
+  CharacterEyewearStyle,
   CharacterFootStyle,
   CharacterHairStyle,
   CharacterHandStyle,
+  CharacterHeadGearStyle,
   CharacterHornStyle,
   CharacterLimbProfile,
   CharacterMakerDoc,
+  CharacterMaterialFinish,
   CharacterMouthStyle,
+  CharacterMustacheStyle,
+  CharacterMuzzlePresetId,
+  CharacterNoseStyle,
   CharacterPresetId,
+  CharacterSideburnsStyle,
+  CharacterSpikesStyle,
+  CharacterSpikesZone,
   CharacterSurfaceCoatMode,
   CharacterTailStyle,
   CharacterWingStyle,
@@ -105,7 +126,7 @@ import type {
   WidgetAnchor,
   WidgetKind,
 } from '../types/maker';
-import type { AiApplyOptions } from './studioBridge';
+import type { AiApplyOptions, CharacterPromptGuide } from './studioBridge';
 import {
   IslandTerrain,
   applyMountainCaveToTerrain,
@@ -182,6 +203,9 @@ const NAMED_HEX_MAP: Record<string, string> = {
   bronze: '#92400E',
   copper: '#B45309',
   silver: '#94A3B8',
+  steel: '#64748B',
+  iron: '#475569',
+  pewter: '#6B7280',
   rust: '#9A3412',
   maroon: '#831843',
   lavender: '#C4B5FD',
@@ -809,22 +833,95 @@ export interface SanitizedCharacterResult {
   doc: CharacterMakerDoc;
 }
 
+function normalizeMeterWidth(
+  rawVal: unknown,
+  baseMeter: number,
+  minMeter: number,
+  maxMeter: number
+): number {
+  const n = typeof rawVal === 'number' && Number.isFinite(rawVal) ? rawVal : Number(rawVal);
+  if (!Number.isFinite(n) || n <= 0) {
+    return Math.max(minMeter, Math.min(maxMeter, baseMeter));
+  }
+  // If AI mistakenly output a scale multiplier (> 0.45) instead of half-width meters, convert relative to baseMeter
+  const meters = n > 0.45 ? baseMeter * Math.max(0.65, Math.min(1.55, n)) : n;
+  return Number(Math.max(minMeter, Math.min(maxMeter, meters)).toFixed(3));
+}
+
+function inferDefaultCharacterPreset(
+  raw: Record<string, unknown>,
+  guide?: CharacterPromptGuide
+): CharacterPresetId {
+  if (guide?.archetype === 'humanoid') return 'standardHumanoid';
+  if (guide?.archetype === 'bird') return 'storyOwl';
+  if (guide?.archetype === 'bug') return 'pocketCritter';
+  if (guide?.archetype === 'fantasy') return 'hornedMonster';
+  if (guide?.archetype === 'animal') return 'storyBear';
+
+  const text = `${String(raw.name ?? '')} ${String(raw.summary ?? '')}`.toLowerCase();
+  if (/\b(knight|paladin|warrior|soldier|wizard|mage|archer|king|queen|prince|princess|pirate|human|girl|boy|man|woman|villager|hero|adventurer)\b/.test(text)) {
+    return 'standardHumanoid';
+  }
+  if (/\b(elf|ranger|fairy)\b/.test(text)) return 'forestElf';
+  if (/\b(owl|bird|eagle|falcon|hawk|duck|chicken)\b/.test(text)) return 'storyOwl';
+  if (/\b(bear|panda)\b/.test(text)) return 'storyBear';
+  if (/\b(fox|wolf)\b/.test(text)) return 'storyFox';
+  if (/\b(rabbit|bunny|hare)\b/.test(text)) return 'storyRabbit';
+  if (/\b(horse|pony|unicorn)\b/.test(text)) return 'storyHorse';
+  if (/\b(dragon|lizard|gecko|dino|reptile)\b/.test(text)) return 'storyGecko';
+  if (/\b(demon|monster|ogre|gargoyle|goblin|troll)\b/.test(text)) return 'hornedMonster';
+  return 'standardHumanoid';
+}
+
 export function sanitizeCharacterMakerResult(
   raw: Record<string, unknown>,
-  baseDoc?: CharacterMakerDoc
+  baseDoc?: CharacterMakerDoc,
+  characterGuide?: CharacterPromptGuide
 ): SanitizedCharacterResult {
   const isModify = Boolean(baseDoc);
-  const presetId = oneOf<CharacterPresetId>(
+  const inferredFallback = baseDoc?.presetId ?? inferDefaultCharacterPreset(raw, characterGuide);
+  let presetId = oneOf<CharacterPresetId>(
     raw.presetId,
     VALID_CHAR_PRESETS,
-    baseDoc?.presetId ?? 'standardHumanoid'
+    inferredFallback
   );
+  if (!baseDoc && characterGuide?.archetype === 'humanoid') {
+    if (!['standardHumanoid', 'adventurer', 'forestElf'].includes(presetId)) {
+      presetId = 'standardHumanoid';
+    }
+  } else if (!baseDoc && characterGuide?.archetype === 'bird') {
+    if (presetId !== 'storyOwl' && presetId !== 'storyTweety') {
+      presetId = 'storyOwl';
+    }
+  }
+
   const base = baseDoc ? baseDoc : createCharacterPresetDoc(presetId);
-  const hasExplicitCoat = typeof raw.coatColor === 'string';
+  const isHumanoidPreset =
+    presetId === 'standardHumanoid' ||
+    presetId === 'adventurer' ||
+    presetId === 'forestElf';
+
+  const hasExplicitCoat =
+    typeof raw.coatColor === 'string' || typeof raw.torsoColor === 'string';
+  const hasExplicitHead =
+    typeof raw.headColor === 'string' || typeof raw.skinColor === 'string';
+  const hasExplicitLimbs = typeof raw.limbsColor === 'string';
+
   const coatColor = hexColor(
-    raw.coatColor,
-    base.torso.color || base.head.color || '#8D5B3C'
+    raw.coatColor ?? raw.torsoColor,
+    base.torso.color || base.head.color || '#64748B'
   );
+  const headColor = hasExplicitHead
+    ? hexColor(raw.headColor ?? raw.skinColor, base.head.color)
+    : !isModify && hasExplicitCoat && !isHumanoidPreset
+      ? coatColor
+      : undefined;
+  const limbsColor = hasExplicitLimbs
+    ? hexColor(raw.limbsColor, base.upperLeg.color)
+    : !isModify && hasExplicitCoat && !isHumanoidPreset
+      ? coatColor
+      : undefined;
+
   const partScales =
     raw.partScales && typeof raw.partScales === 'object'
       ? (raw.partScales as Record<string, unknown>)
@@ -840,8 +937,8 @@ export function sanitizeCharacterMakerResult(
     if (rawScale === undefined && overrideColor) {
       return { ...part, color: overrideColor };
     }
-    const s = vec3(rawScale, [1, 1, 1], 0.5, 1.85);
-    const avgXZ = Math.max(0.45, (s[0] + s[2]) * 0.5);
+    const s = vec3(rawScale, [1, 1, 1], 0.72, 1.48);
+    const avgXZ = Math.max(0.7, (s[0] + s[2]) * 0.5);
     return {
       ...part,
       startRadius: Number((part.startRadius * avgXZ).toFixed(3)),
@@ -849,57 +946,311 @@ export function sanitizeCharacterMakerResult(
       endRadius: Number((part.endRadius * avgXZ).toFixed(3)),
       length: Number((part.length * s[1]).toFixed(3)),
       squashX: Number(
-        Math.max(0.45, Math.min(1.85, (part.squashX ?? 1) * (s[0] / avgXZ))).toFixed(3)
+        Math.max(0.55, Math.min(1.65, (part.squashX ?? 1) * (s[0] / avgXZ))).toFixed(3)
       ),
       squashZ: Number(
-        Math.max(0.45, Math.min(1.85, (part.squashZ ?? 1) * (s[2] / avgXZ))).toFixed(3)
+        Math.max(0.55, Math.min(1.65, (part.squashZ ?? 1) * (s[2] / avgXZ))).toFixed(3)
       ),
       color: overrideColor ?? part.color,
     };
   };
 
-  const partCoatColor = !isModify || hasExplicitCoat ? coatColor : undefined;
+  const torsoColor = !isModify || hasExplicitCoat ? coatColor : undefined;
+  const upperArmColor = limbsColor ?? torsoColor;
+  const lowerArmColor = limbsColor ?? (hasExplicitCoat && !isHumanoidPreset ? coatColor : undefined);
+  const hipsAndLegColor = limbsColor ?? (!isHumanoidPreset && hasExplicitCoat ? coatColor : undefined);
   const partBellyColor =
     !isModify || typeof raw.bellyColor === 'string'
       ? hexColor(raw.bellyColor, base.bellyColor)
       : undefined;
 
+  const muzzlePresetRaw = oneOf<CharacterMuzzlePresetId>(
+    raw.muzzlePreset,
+    [
+      'none',
+      'bunnySplit',
+      'squirrelPuff',
+      'catWhiskerPad',
+      'foxTaper',
+      'dogSnout',
+      'horseMuzzle',
+      'bearBroad',
+      'lizardSnout',
+      'custom',
+    ],
+    base.muzzle?.preset ?? 'none'
+  );
+  const snoutColorResolved = hexColor(
+    raw.snoutColor,
+    headColor ?? base.snoutColor ?? base.head.color
+  );
+  const resolvedMuzzle =
+    typeof raw.muzzlePreset === 'string' && muzzlePresetRaw !== 'custom'
+      ? createMuzzlePreset(muzzlePresetRaw, snoutColorResolved)
+      : base.muzzle
+        ? { ...base.muzzle, color: snoutColorResolved }
+        : createMuzzlePreset('none', snoutColorResolved);
+
+  const normalizedSnoutWidth = (() => {
+    const rawW = typeof raw.snoutWidth === 'number' ? raw.snoutWidth : Number(raw.snoutWidth);
+    if (!Number.isFinite(rawW)) return base.snoutWidth;
+    const scaled = rawW > 0.3 ? base.snoutWidth * Math.min(1.6, rawW) : rawW;
+    return Number(Math.max(0.035, Math.min(0.16, scaled)).toFixed(3));
+  })();
+  const normalizedSnoutLength = (() => {
+    if (muzzlePresetRaw === 'none' && typeof raw.snoutLength !== 'number') {
+      return isHumanoidPreset ? 0 : base.snoutLength;
+    }
+    const rawL = typeof raw.snoutLength === 'number' ? raw.snoutLength : Number(raw.snoutLength);
+    if (!Number.isFinite(rawL)) return resolvedMuzzle.length || base.snoutLength;
+    const scaled = rawL > 0.35 ? 0.14 * Math.min(1.5, rawL) : rawL;
+    return Number(Math.max(0, Math.min(0.24, scaled)).toFixed(3));
+  })();
+
+  const beakStyle = oneOf<CharacterBeakStyle>(
+    raw.beakStyle,
+    ['none', 'songbird', 'duck', 'owl', 'eagleHawk', 'storkCrane', 'pelican'],
+    base.beakStyle ?? 'none'
+  );
+  const noseStyle = oneOf<CharacterNoseStyle>(
+    raw.noseStyle,
+    [
+      'none',
+      'buttonSphere',
+      'oval',
+      'flatButton',
+      'longHuman',
+      'bulbous',
+      'triangleAnimal',
+      'wideSnoutNose',
+    ],
+    base.noseStyle ?? (isHumanoidPreset ? 'longHuman' : 'buttonSphere')
+  );
+
+  // Addons (eyewear, headgear, bodyGear)
+  const rawAddons =
+    raw.addons && typeof raw.addons === 'object'
+      ? (raw.addons as Record<string, unknown>)
+      : {};
+  const baseAddons = base.addons ?? createDefaultAddonConfig();
+  const addons = {
+    ...baseAddons,
+    eyewear: oneOf<CharacterEyewearStyle>(
+      rawAddons.eyewear,
+      ['none', 'roundGlasses', 'goggles', 'cyberVisor', 'monocle'],
+      baseAddons.eyewear
+    ),
+    eyewearColor: hexColor(rawAddons.eyewearColor, baseAddons.eyewearColor),
+    eyewearLensColor: hexColor(rawAddons.eyewearLensColor, baseAddons.eyewearLensColor),
+    headGear: oneOf<CharacterHeadGearStyle>(
+      rawAddons.headGear,
+      ['none', 'adventurerCap', 'wizardHat', 'crown', 'halo', 'flowerCrown'],
+      baseAddons.headGear
+    ),
+    headGearColor: hexColor(rawAddons.headGearColor, baseAddons.headGearColor),
+    headGearAccentColor: hexColor(
+      rawAddons.headGearAccentColor,
+      baseAddons.headGearAccentColor
+    ),
+    bodyGear: oneOf<CharacterBodyGearStyle>(
+      rawAddons.bodyGear,
+      ['none', 'backpack', 'quiver', 'cape', 'scarf', 'pauldrons'],
+      baseAddons.bodyGear
+    ),
+    bodyGearColor: hexColor(rawAddons.bodyGearColor, baseAddons.bodyGearColor),
+    bodyGearAccentColor: hexColor(
+      rawAddons.bodyGearAccentColor,
+      baseAddons.bodyGearAccentColor
+    ),
+  };
+
+  // Spikes
+  const rawSpikes =
+    raw.spikes && typeof raw.spikes === 'object'
+      ? (raw.spikes as Record<string, unknown>)
+      : {};
+  const baseSpikes = base.spikes ?? createDefaultSpikesConfig();
+  const spikes = {
+    ...baseSpikes,
+    enabled:
+      typeof rawSpikes.enabled === 'boolean' ? rawSpikes.enabled : baseSpikes.enabled,
+    style: oneOf<CharacterSpikesStyle>(
+      rawSpikes.style,
+      ['porcupineQuills', 'boneSpikes', 'dorsalFins', 'crystalSpines'],
+      baseSpikes.style
+    ),
+    zone: oneOf<CharacterSpikesZone>(
+      rawSpikes.zone,
+      ['spine', 'headAndBack', 'shouldersAndBack', 'fullBody'],
+      baseSpikes.zone
+    ),
+    color: hexColor(rawSpikes.color, baseSpikes.color),
+    tipColor: hexColor(rawSpikes.tipColor, baseSpikes.tipColor),
+  };
+
+  // Hair & Facial Hair
+  const hairStyle = (() => {
+    const aliasMap: Record<string, CharacterHairStyle> = {
+      tuft: 'spikyTufts',
+      bob: 'bobCut',
+      spiky: 'messySpiky',
+      curly: 'curlyAfro',
+      longFlowing: 'longStraight',
+      twinTails: 'twinPigtails',
+    };
+    const rawHair =
+      typeof raw.hairStyle === 'string'
+        ? aliasMap[raw.hairStyle] ?? raw.hairStyle
+        : raw.hairStyle;
+    return oneOf<CharacterHairStyle>(
+      rawHair,
+      [
+        'none',
+        'shortCrop',
+        'sidePart',
+        'pompadour',
+        'messySpiky',
+        'undercut',
+        'buzzFade',
+        'surferCurtains',
+        'longStraight',
+        'longEndCurls',
+        'bobCut',
+        'bobFlip',
+        'wavyShoulder',
+        'twinPigtails',
+        'highBun',
+        'braidedCrown',
+        'ponytail',
+        'curlyAfro',
+        'spikyTufts',
+        'mohawk',
+        'curlSwirl',
+        'mushroomCap',
+        'horseMane',
+        'lionMane',
+        'featherTuft',
+        'fluffyBangs',
+      ],
+      base.hairStyle
+    );
+  })();
+  const hairColor = hexColor(raw.hairColor, base.hairColor);
+
+  const rawFacialHair =
+    raw.facialHair && typeof raw.facialHair === 'object'
+      ? (raw.facialHair as Record<string, unknown>)
+      : null;
+  const resolvedBaseFacial = resolveFacialHairConfig({ ...base, hairColor });
+  const mustacheStyle = oneOf<CharacterMustacheStyle>(
+    rawFacialHair?.mustacheStyle,
+    [
+      'none',
+      'pencil',
+      'classicStraight',
+      'chevron',
+      'handlebar',
+      'imperial',
+      'dali',
+      'walrus',
+      'bushyBrush',
+      'horseshoe',
+      'fuManchu',
+      'toothbrush',
+    ],
+    resolvedBaseFacial.mustache.style
+  );
+  const beardStyle = oneOf<CharacterBeardStyle>(
+    rawFacialHair?.beardStyle,
+    [
+      'none',
+      'soulPatch',
+      'goatee',
+      'vanDyke',
+      'circleBeard',
+      'chinStrap',
+      'chinCurtain',
+      'shortBoxed',
+      'fullTrimmed',
+      'bushyLumberjack',
+      'ducktail',
+      'wizardLong',
+      'vikingBraided',
+      'muttonChops',
+    ],
+    resolvedBaseFacial.beard.style
+  );
+  const sideburnsStyle = oneOf<CharacterSideburnsStyle>(
+    rawFacialHair?.sideburnsStyle,
+    ['none', 'shortNeat', 'pointed', 'flared', 'muttonChops', 'connectedFull'],
+    resolvedBaseFacial.sideburns.style
+  );
+  const facialHairColor = hexColor(rawFacialHair?.color, hairColor);
+  const facialHair = {
+    ...resolvedBaseFacial,
+    color: facialHairColor,
+    matchHairColor: !rawFacialHair?.color,
+    mustache: createMustachePresetConfig(mustacheStyle),
+    beard: createBeardPresetConfig(beardStyle),
+    sideburns: createSideburnsPresetConfig(sideburnsStyle),
+  };
+
+  const extremityTipColor = hexColor(raw.extremityTipColor, base.extremityTipColor);
+
   const doc: CharacterMakerDoc = {
     ...base,
     presetId,
-    blendSmoothness: num(raw.blendSmoothness, base.blendSmoothness, 0.015, 0.18),
-    shoulderWidth: num(raw.shoulderWidth, base.shoulderWidth, 0.6, 1.85),
-    hipWidth: num(raw.hipWidth, base.hipWidth, 0.6, 1.7),
+    materialFinish: oneOf<CharacterMaterialFinish>(
+      raw.materialFinish,
+      ['clay', 'toonSatin', 'glossySlime', 'velvetCreature'],
+      base.materialFinish
+    ),
+    blendSmoothness: num(raw.blendSmoothness, base.blendSmoothness, 0.018, 0.095),
+    shoulderWidth: normalizeMeterWidth(raw.shoulderWidth, base.shoulderWidth, 0.135, 0.31),
+    hipWidth: normalizeMeterWidth(raw.hipWidth, base.hipWidth, 0.09, 0.19),
+    legStanceWidth: normalizeMeterWidth(
+      raw.legStanceWidth,
+      base.legStanceWidth,
+      0.1,
+      0.22
+    ),
+    armSpreadDeg: num(raw.armSpreadDeg, base.armSpreadDeg || 32, 18, 50),
     bellyPatchEnabled:
       typeof raw.bellyPatchEnabled === 'boolean'
         ? raw.bellyPatchEnabled
         : base.bellyPatchEnabled,
     bellyColor: hexColor(raw.bellyColor, base.bellyColor),
-    extremityTipColor: hexColor(raw.extremityTipColor, base.extremityTipColor),
-    snoutLength: num(raw.snoutLength, base.snoutLength, 0, 1.6),
-    snoutWidth: num(raw.snoutWidth, base.snoutWidth, 0.35, 1.6),
-    snoutColor: hexColor(raw.snoutColor, base.snoutColor),
-    head: applyScale(base.head, 'head', partCoatColor),
-    neck: applyScale(base.neck, 'neck', partCoatColor),
-    torso: applyScale(base.torso, 'torso', partCoatColor),
+    extremityTipColor,
+    snoutLength: normalizedSnoutLength,
+    snoutWidth: normalizedSnoutWidth,
+    snoutColor: snoutColorResolved,
+    muzzle: resolvedMuzzle,
+    head: applyScale(base.head, 'head', headColor),
+    neck: applyScale(base.neck, 'neck', headColor),
+    torso: applyScale(base.torso, 'torso', torsoColor),
     belly: applyScale(base.belly, 'belly', partBellyColor),
-    hips: applyScale(base.hips, 'hips', partCoatColor),
-    upperArm: applyScale(base.upperArm, 'upperArm', partCoatColor),
-    lowerArm: applyScale(base.lowerArm, 'lowerArm', partCoatColor),
-    upperLeg: applyScale(base.upperLeg, 'upperLeg', partCoatColor),
-    lowerLeg: applyScale(base.lowerLeg, 'lowerLeg', partCoatColor),
+    hips: applyScale(base.hips, 'hips', hipsAndLegColor),
+    upperArm: applyScale(base.upperArm, 'upperArm', upperArmColor),
+    lowerArm: applyScale(base.lowerArm, 'lowerArm', lowerArmColor),
+    upperLeg: applyScale(base.upperLeg, 'upperLeg', hipsAndLegColor),
+    lowerLeg: applyScale(base.lowerLeg, 'lowerLeg', hipsAndLegColor),
+    beakStyle,
+    beakLength: beakStyle !== 'none' ? Math.max(base.beakLength ?? 0.07, 0.065) : base.beakLength,
+    beakColor: hexColor(raw.beakColor, base.beakColor ?? '#F59E0B'),
+    noseStyle,
+    noseColor: headColor ?? base.noseColor,
     handStyle: oneOf<CharacterHandStyle>(
       raw.handStyle,
       ['fingers5', 'fingers4', 'fingers3', 'fingers2', 'paw', 'claw', 'hoof', 'nub'],
       base.handStyle
     ),
-    handScale: num(raw.handScale, base.handScale, 0.5, 1.8),
+    handScale: num(raw.handScale, base.handScale, 0.75, 1.45),
     footStyle: oneOf<CharacterFootStyle>(
       raw.footStyle,
       ['biped', 'paw', 'claw', 'hoof'],
       base.footStyle
     ),
-    footScale: num(raw.footScale, base.footScale, 0.5, 1.8),
+    footScale: num(raw.footScale, base.footScale, 0.8, 1.45),
     earStyle: oneOf<CharacterEarStyle>(
       raw.earStyle,
       [
@@ -920,13 +1271,11 @@ export function sanitizeCharacterMakerResult(
       ],
       base.earStyle
     ),
-    earSize: num(raw.earSize, base.earSize, 0.3, 2.0),
+    earSize: num(raw.earSize, base.earSize, 0.4, 1.8),
     earColor:
       typeof raw.earColor === 'string'
         ? hexColor(raw.earColor, base.earColor)
-        : !isModify || hasExplicitCoat
-          ? coatColor
-          : base.earColor,
+        : headColor ?? base.earColor,
     tailStyle: oneOf<CharacterTailStyle>(
       raw.tailStyle,
       [
@@ -975,52 +1324,13 @@ export function sanitizeCharacterMakerResult(
       ],
       base.wingStyle
     ),
-    wingSpan: num(raw.wingSpan, base.wingSpan, 0.4, 2.0),
+    wingSpan: num(raw.wingSpan, base.wingSpan, 0.45, 1.8),
     wingColor: hexColor(raw.wingColor, base.wingColor),
-    hairStyle: (() => {
-      const aliasMap: Record<string, CharacterHairStyle> = {
-        tuft: 'spikyTufts',
-        bob: 'bobCut',
-        spiky: 'messySpiky',
-        curly: 'curlyAfro',
-        longFlowing: 'longStraight',
-        twinTails: 'twinPigtails',
-      };
-      const rawHair = typeof raw.hairStyle === 'string' ? aliasMap[raw.hairStyle] ?? raw.hairStyle : raw.hairStyle;
-      return oneOf<CharacterHairStyle>(
-        rawHair,
-        [
-          'none',
-          'shortCrop',
-          'sidePart',
-          'pompadour',
-          'messySpiky',
-          'undercut',
-          'buzzFade',
-          'surferCurtains',
-          'longStraight',
-          'longEndCurls',
-          'bobCut',
-          'bobFlip',
-          'wavyShoulder',
-          'twinPigtails',
-          'highBun',
-          'braidedCrown',
-          'ponytail',
-          'curlyAfro',
-          'spikyTufts',
-          'mohawk',
-          'curlSwirl',
-          'mushroomCap',
-          'horseMane',
-          'lionMane',
-          'featherTuft',
-          'fluffyBangs',
-        ],
-        base.hairStyle
-      );
-    })(),
-    hairColor: hexColor(raw.hairColor, base.hairColor),
+    hairStyle,
+    hairColor,
+    facialHair,
+    addons,
+    spikes,
     irisColor: hexColor(raw.irisColor ?? raw.eyeColor, base.irisColor),
     eyebrowExpression: (() => {
       const aliasMap: Record<string, CharacterEyebrowExpression> = {
@@ -1078,9 +1388,136 @@ export function sanitizeCharacterMakerResult(
       density: base.surfaceCoat?.density ?? 0.75,
       scaleSize: base.surfaceCoat?.scaleSize ?? 0.85,
       clumpiness: base.surfaceCoat?.clumpiness ?? 0.4,
-      tipColor: hexColor(raw.extremityTipColor, base.surfaceCoat?.tipColor ?? coatColor),
+      tipColor: extremityTipColor,
     },
   };
+
+  // Enforce ticked Prompt Helper overrides cleanly
+  if (characterGuide) {
+    if (characterGuide.extremities === 'hands') {
+      doc.handStyle = 'fingers5';
+      doc.footStyle = 'biped';
+    } else if (characterGuide.extremities === 'paw') {
+      doc.handStyle = 'paw';
+      doc.footStyle = 'paw';
+    } else if (characterGuide.extremities === 'claw') {
+      doc.handStyle = 'claw';
+      doc.footStyle = 'claw';
+    } else if (characterGuide.extremities === 'hoof') {
+      doc.handStyle = 'hoof';
+      doc.footStyle = 'hoof';
+    } else if (characterGuide.extremities === 'nub') {
+      doc.handStyle = 'nub';
+    }
+
+    if (characterGuide.surface === 'smooth') {
+      doc.surfaceCoat = { ...doc.surfaceCoat!, mode: 'none' };
+      doc.materialFinish = 'clay';
+    } else if (characterGuide.surface === 'armor') {
+      doc.surfaceCoat = { ...doc.surfaceCoat!, mode: 'none' };
+      doc.materialFinish = 'toonSatin';
+    } else if (characterGuide.surface === 'furShort') {
+      doc.surfaceCoat = { ...doc.surfaceCoat!, mode: 'furShort' };
+      doc.materialFinish = 'velvetCreature';
+    } else if (characterGuide.surface === 'furLong') {
+      doc.surfaceCoat = { ...doc.surfaceCoat!, mode: 'furLong' };
+      doc.materialFinish = 'velvetCreature';
+    } else if (characterGuide.surface === 'scales') {
+      doc.surfaceCoat = { ...doc.surfaceCoat!, mode: 'scalesDragon' };
+      doc.materialFinish = 'toonSatin';
+    }
+
+    const extras = new Set(characterGuide.extras);
+    if (extras.has('helmetOrHat') && doc.addons && doc.addons.headGear === 'none') {
+      doc.addons.headGear = 'adventurerCap';
+    }
+    if (extras.has('pauldronsOrArmor') && doc.addons) {
+      doc.addons.bodyGear = 'pauldrons';
+    }
+    if (extras.has('capeOrCloak') && doc.addons && doc.addons.bodyGear === 'none') {
+      doc.addons.bodyGear = 'cape';
+    }
+    if (
+      extras.has('beardOrMustache') &&
+      doc.facialHair &&
+      doc.facialHair.beard.style === 'none' &&
+      doc.facialHair.mustache.style === 'none'
+    ) {
+      doc.facialHair = {
+        ...doc.facialHair,
+        beard: createBeardPresetConfig('shortBoxed'),
+        mustache: createMustachePresetConfig('classicStraight'),
+      };
+    }
+    if (extras.has('eyewear') && doc.addons && doc.addons.eyewear === 'none') {
+      doc.addons.eyewear = 'cyberVisor';
+    }
+    if (extras.has('wings') && doc.wingStyle === 'none') {
+      doc.wingStyle = 'feather';
+    }
+    if (extras.has('horns') && doc.hornCount === 0) {
+      doc.hornCount = 2;
+    }
+    if (extras.has('tail') && doc.tailStyle === 'none') {
+      doc.tailStyle = 'smooth';
+    }
+    if (extras.has('spikes') && doc.spikes) {
+      doc.spikes.enabled = true;
+    }
+  }
+
+  // HARD ANATOMICAL INVARIANTS (prevent detached forearms/hands & fused knee-level crotch)
+  const clampLimbMin = (
+    prof: CharacterLimbProfile,
+    minStart: number,
+    minMid: number,
+    minEnd: number,
+    minLen: number,
+    maxLen: number
+  ) => {
+    prof.startRadius = Number(Math.max(minStart, Math.min(0.24, prof.startRadius)).toFixed(3));
+    prof.midRadius = Number(Math.max(minMid, Math.min(0.24, prof.midRadius)).toFixed(3));
+    prof.endRadius = Number(Math.max(minEnd, Math.min(0.2, prof.endRadius)).toFixed(3));
+    prof.length = Number(Math.max(minLen, Math.min(maxLen, prof.length)).toFixed(3));
+  };
+
+  clampLimbMin(doc.upperArm, 0.04, 0.036, 0.032, 0.16, 0.4);
+  clampLimbMin(doc.lowerArm, Math.max(0.035, doc.upperArm.endRadius * 0.8), 0.033, 0.028, 0.15, 0.38);
+  clampLimbMin(doc.upperLeg, 0.06, 0.052, 0.044, 0.18, 0.48);
+  clampLimbMin(doc.lowerLeg, Math.max(0.044, doc.upperLeg.endRadius * 0.8), 0.038, 0.032, 0.18, 0.46);
+
+  // Keep hips/pelvis & upper thighs within bounds so legs separate cleanly above knees
+  doc.hips.startRadius = Number(Math.min(0.21, Math.max(0.085, doc.hips.startRadius)).toFixed(3));
+  doc.hips.midRadius = Number(Math.min(0.21, Math.max(0.095, doc.hips.midRadius)).toFixed(3));
+  doc.hips.endRadius = Number(Math.min(0.185, Math.max(0.08, doc.hips.endRadius)).toFixed(3));
+  doc.hips.length = Number(Math.min(0.2, Math.max(0.1, doc.hips.length)).toFixed(3));
+  doc.upperLeg.startRadius = Number(Math.min(0.125, doc.upperLeg.startRadius).toFixed(3));
+  doc.upperLeg.midRadius = Number(Math.min(0.105, doc.upperLeg.midRadius).toFixed(3));
+
+  // Keep shoulder sockets anchored inside chest width so arms never float away from torso
+  const torsoHalfX = doc.torso.midRadius * (doc.torso.squashX ?? 1.15);
+  doc.shoulderWidth = Number(
+    Math.max(0.135, Math.min(0.31, torsoHalfX + 0.045, doc.shoulderWidth)).toFixed(3)
+  );
+  doc.hipWidth = Number(
+    Math.max(0.09, Math.min(0.19, doc.hips.midRadius * 1.02, doc.hipWidth)).toFixed(3)
+  );
+
+  // Guarantee clear thigh separation gap so smooth-min blend never welds thighs to knees
+  const minStanceForThighs = Math.max(
+    0.1,
+    doc.upperLeg.midRadius + 0.028,
+    doc.upperLeg.startRadius * 0.92,
+    doc.hips.midRadius * 0.64
+  );
+  doc.legStanceWidth = Number(
+    Math.max(minStanceForThighs, Math.min(0.22, doc.legStanceWidth)).toFixed(3)
+  );
+  const thighHalfGap = Math.max(0.014, doc.legStanceWidth - doc.upperLeg.midRadius * 0.88);
+  const maxSafeBlend = Math.max(0.024, Math.min(0.085, thighHalfGap * 1.15));
+  doc.blendSmoothness = Number(
+    Math.max(0.018, Math.min(maxSafeBlend, doc.blendSmoothness)).toFixed(3)
+  );
 
   return {
     name: str(raw.name, 'AI Character'),
@@ -1617,14 +2054,20 @@ function matchClosestBoneName(
     [/chest|uppertorso|rib/, 'chest'],
     [/spine|torso|back|waist/, 'spine'],
     [/hip|pelvis|root/, 'hips'],
-    [/(left|l_).*(upperarm|shoulder|arm)/, 'leftUpperArm'],
+    [/(left|l_).*(clavicle|collar|shoulder)/, 'leftShoulder'],
+    [/(left|l_).*(upperarm|arm)/, 'leftUpperArm'],
     [/(left|l_).*(forearm|lowerarm|elbow)/, 'leftLowerArm'],
-    [/(right|r_).*(upperarm|shoulder|arm)/, 'rightUpperArm'],
+    [/(left|l_).*(hand|wrist|palm)/, 'leftHand'],
+    [/(right|r_).*(clavicle|collar|shoulder)/, 'rightShoulder'],
+    [/(right|r_).*(upperarm|arm)/, 'rightUpperArm'],
     [/(right|r_).*(forearm|lowerarm|elbow)/, 'rightLowerArm'],
+    [/(right|r_).*(hand|wrist|palm)/, 'rightHand'],
     [/(left|l_).*(thigh|upperleg|upleg|hip)/, 'leftUpperLeg'],
     [/(left|l_).*(shin|calf|lowerleg|knee)/, 'leftLowerLeg'],
+    [/(left|l_).*(foot|ankle|paw)/, 'leftFoot'],
     [/(right|r_).*(thigh|upperleg|upleg|hip)/, 'rightUpperLeg'],
     [/(right|r_).*(shin|calf|lowerleg|knee)/, 'rightLowerLeg'],
+    [/(right|r_).*(foot|ankle|paw)/, 'rightFoot'],
   ];
   for (const [pattern, role] of roleAlias) {
     if (pattern.test(lower) && autoMap[role]) {

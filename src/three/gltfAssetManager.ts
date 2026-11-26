@@ -659,6 +659,7 @@ export function resolveRigSettings(
       saved.boneMap && Object.keys(saved.boneMap).length > 0
         ? { ...saved.boneMap }
         : { ...defaults.boneMap },
+    invertedRoles: saved.invertedRoles ? { ...saved.invertedRoles } : undefined,
     limbSwingAxis: saved.limbSwingAxis ?? defaults.limbSwingAxis,
     armRelaxAngle: upgradeLegacyArmRelax
       ? defaults.armRelaxAngle
@@ -1018,6 +1019,7 @@ export function instantiateCustomModel(
       instance.rigSettings = {
         ...next,
         boneMap: { ...next.boneMap },
+        invertedRoles: next.invertedRoles ? { ...next.invertedRoles } : undefined,
         slotTuning: next.slotTuning ? { ...next.slotTuning } : undefined,
       };
       if (facingChanged) {

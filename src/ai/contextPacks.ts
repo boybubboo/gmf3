@@ -1,5 +1,5 @@
 import type { SkeletonInspection } from '../three/proceduralRigAnimator';
-import type { AiStudioContextId } from './studioBridge';
+import type { AiStudioContextId, CharacterPromptGuide } from './studioBridge';
 
 export interface AiContextMeta {
   id: AiStudioContextId;
@@ -26,13 +26,13 @@ export const AI_CONTEXT_META: Record<AiStudioContextId, AiContextMeta> = {
   character: {
     id: 'character',
     title: 'Character Maker AI',
-    tagline: 'Sculpts SDF clay proportions, coat, ears, horns, expressions & rig traits (or reads your GLB rig).',
+    tagline: 'Sculpts SDF clay proportions, coat, armor/addons, facial hair, expressions & rig traits.',
     accentHex: '#A855F7',
     saveAreaLabel: 'Save to Chars',
     starterPrompts: [
+      'A valiant medieval knight in gleaming steel plate armor with shoulder pauldrons, crimson cape, closed visor helmet and iron boots',
       'Stocky anthropomorphic brown bear hero with round ears, broad shoulders, warm snout and determined brows',
-      'Agile woodland ranger fox with bushy tail, bright amber coat and pointed ears',
-      'Friendly moss-horned forest spirit with stubby paws, glowing eyes and leafy tint',
+      'Wise elder wizard with long pointed blue hat, flowing white beard, dark cloak and glowing amber eyes',
     ],
   },
   creature: {
@@ -138,14 +138,47 @@ export interface GlbAiSummary {
   animationClips: string[];
 }
 
+function formatCharacterGuideSection(
+  guide?: CharacterPromptGuide | null
+): string {
+  if (!guide) return '';
+  const lines: string[] = [];
+  if (guide.archetype !== 'auto') {
+    lines.push(`- Body Archetype: ${guide.archetype} (pick matching presetId & proportions)`);
+  }
+  if (guide.extremities !== 'auto') {
+    lines.push(`- Hands & Feet Style: ${guide.extremities} (strictly set matching handStyle and footStyle)`);
+  }
+  if (guide.surface !== 'auto') {
+    lines.push(`- Surface & Finish: ${guide.surface} (set matching surfaceCoatMode and materialFinish)`);
+  }
+  if (guide.extras.length > 0) {
+    lines.push(
+      `- Required Extras (MUST include all checked): ${guide.extras.join(', ')}`
+    );
+  }
+  if (lines.length === 0) return '';
+  return `USER PROMPT HELPER SELECTIONS (HIGHEST PRIORITY — MUST OBEY):\n${lines.join('\n')}`;
+}
+
 export function buildContextualAiPrompts(params: {
   context: AiStudioContextId;
   userRequest: string;
   snapshot: Record<string, unknown>;
   glbSummary?: GlbAiSummary | null;
   modifyExisting?: boolean;
+  characterGuide?: CharacterPromptGuide | null;
+  hasReferenceImage?: boolean;
 }): { systemPrompt: string; userPrompt: string } {
-  const { context, userRequest, snapshot, glbSummary, modifyExisting } = params;
+  const {
+    context,
+    userRequest,
+    snapshot,
+    glbSummary,
+    modifyExisting,
+    characterGuide,
+    hasReferenceImage,
+  } = params;
 
   const glbSection = glbSummary
     ? `\nUPLOADED / ATTACHED GLB RIG DETECTED:
@@ -155,6 +188,14 @@ export function buildContextualAiPrompts(params: {
 - autoBoneMap: ${JSON.stringify(glbSummary.inspection.autoBoneMap)}
 - animationClips: ${JSON.stringify(glbSummary.animationClips)}
 Use exact bone names from boneNames / autoBoneMap whenever targeting bones!\n`
+    : '';
+
+  const guideSection =
+    context === 'character' ? formatCharacterGuideSection(characterGuide) : '';
+
+  const refImageSection = hasReferenceImage
+    ? `ATTACHED VISUAL GUIDE IMAGE:
+Study the attached reference image carefully. Match the subject's silhouette, species/humanoid build, clothing or armor colors, headgear/helmets, eyewear/visor, facial hair, ears/horns/wings/tail, and personality while staying strictly inside the exact Maker schema and anatomical meter bounds.`
     : '';
 
   const schemaSpec = getSchemaSpecForContext(context);
@@ -175,6 +216,8 @@ Use exact bone names from boneNames / autoBoneMap whenever targeting bones!\n`
     `EDIT MODE: ${modifyExisting ? 'MODIFY EXISTING ONLY (preserve everything not mentioned)' : 'FRESH BUILD (clean reset)'}`,
     `CURRENT STUDIO SNAPSHOT:\n${JSON.stringify(snapshot).slice(0, 5000)}`,
     glbSection,
+    refImageSection,
+    guideSection,
     `USER REQUEST:\n${userRequest.trim()}`,
     'Return ONLY valid JSON matching the target schema.',
   ]
@@ -316,47 +359,106 @@ function getSchemaSpecForContext(context: AiStudioContextId): string {
 }`;
 
     case 'character':
-      return `TARGET SCHEMA (Character Maker SDF Clay Rig):
+      return `TARGET SCHEMA (Character Maker SDF Clay Rig — READ UNITS & GUARDRAILS CAREFULLY):
+
+ANATOMICAL UNITS & GUARDRAILS (WHAT NOT TO DO):
+1. "shoulderWidth", "hipWidth", and "legStanceWidth" are HALF-WIDTHS IN METERS — NEVER MULTIPLIERS!
+   - Humanoid defaults: "shoulderWidth": 0.215, "hipWidth": 0.125, "legStanceWidth": 0.12.
+   - ALWAYS keep "shoulderWidth" between 0.14 and 0.28, "hipWidth" between 0.09 and 0.17, "legStanceWidth" between 0.10 and 0.19.
+   - Values > 0.35 stretch arms several meters wide and cause marching-cubes voxel slicing / detached forearms!
+2. NEVER fuse the thighs or make the crotch drop down to the knees:
+   - Keep "blendSmoothness" tight: 0.022..0.045 for humans/knights/armored heroes; 0.045..0.08 only for rounded plush animals.
+   - Keep "legStanceWidth" >= 0.115 whenever "upperLeg" or "hips" are broad/armored.
+   - Keep "partScales" multipliers moderate (0.8..1.35). Never shrink arm/leg X/Z thickness below 0.78 (thin wrists/ankles snap in voxels).
+3. ALWAYS set "armSpreadDeg" between 26 and 44 (natural A-pose; never 0..10 flat T-pose).
+4. NEVER output monochrome white ("#FFFFFF") clay unless the user explicitly asks for snow/ghost/marble. Paint distinct headColor (skin/helmet/fur), coatColor (torso armor/tunic/fur), limbsColor (pants/greaves/sleeves), bellyColor (chestplate/trim/belly), and extremityTipColor (boots/gauntlets/hooves).
+
+ARCHETYPE PLAYBOOK:
+- KNIGHTS / WARRIORS / PALADINS / GUARDS:
+  Use "presetId": "standardHumanoid" (or "adventurer"), "materialFinish": "toonSatin", "blendSmoothness": 0.028, metallic plate colors ("coatColor": "#94A3B8" steel or "#64748B" iron, "limbsColor": "#475569", "bellyPatchEnabled": true, "bellyColor": "#D97706" gold/tabard accent, "extremityTipColor": "#1E293B" boots/gauntlets). If helmeted/armored face: "headColor": "#94A3B8" + "addons.eyewear": "cyberVisor" (visor slit!) + "addons.eyewearColor": "#334155" + "addons.eyewearLensColor": "#1E293B" + "hairStyle": "none"; if open-faced knight: natural skin "headColor": "#E8B996", "hairStyle": "shortCrop", determined brows, optional beard. ALWAYS include "addons.bodyGear": "pauldrons" (shoulder armor!) or "cape", and optionally "addons.headGear": "crown" for royal knights.
+- WIZARDS / MAGES:
+  Use "presetId": "standardHumanoid", robe colors, "addons.headGear": "wizardHat", "addons.bodyGear": "cape", "facialHair": { "beardStyle": "wizardLong", "mustacheStyle": "walrus" }.
+- ADVENTURERS / RANGERS / SCIENTISTS:
+  Use "presetId": "adventurer" or "forestElf", tunic/coat colors, "addons.headGear": "adventurerCap", "addons.bodyGear": "backpack" or "quiver", optional "eyewear": "goggles" or "roundGlasses".
+- ANIMALS / CRITTERS / BIRDS / MONSTERS:
+  Match species preset ("storyBear", "storyFox", "storyRabbit", "storySquirrel", "storyHorse", "storyGecko", "storyOwl", "storyTweety", "hornedMonster", "pocketCritter"), set matching "muzzlePreset" (or "beakStyle" for birds; "none" for humans), "earStyle", "tailStyle", "handStyle", "footStyle", and "surfaceCoatMode".
+
 {
-  "name": string (e.g. "Barnaby the Honey Bear"),
+  "name": string (e.g. "Sir Roland of Ironcrest" or "Barnaby the Honey Bear"),
   "summary": string,
   "presetId": "standardHumanoid" | "adventurer" | "forestElf" | "pocketCritter" | "alienExplorer" | "hornedMonster" | "storyHorse" | "storySquirrel" | "storyRabbit" | "storyFox" | "storyGecko" | "storyBear" | "storyOwl" | "storyTweety",
-  "blendSmoothness": number (0.02..0.16),
-  "shoulderWidth": number (0.65..1.75),
-  "hipWidth": number (0.65..1.6),
-  "coatColor": "#RRGGBB",
+  "materialFinish": "clay" | "toonSatin" | "glossySlime" | "velvetCreature",
+  "blendSmoothness": number (0.02..0.085),
+  "shoulderWidth": number (HALF-WIDTH IN METERS 0.14..0.28, default 0.215),
+  "hipWidth": number (HALF-WIDTH IN METERS 0.09..0.17, default 0.125),
+  "legStanceWidth": number (HALF-WIDTH IN METERS 0.10..0.19, default 0.12),
+  "armSpreadDeg": number (26..44),
+  "headColor": "#RRGGBB" (skin tone for open-faced humans, helmet metal if visored, or fur/scale color),
+  "coatColor": "#RRGGBB" (torso armor / tunic / jacket / upper coat),
+  "limbsColor": "#RRGGBB" (arm sleeves/vambraces & leg pants/greaves),
   "bellyPatchEnabled": boolean,
   "bellyColor": "#RRGGBB",
-  "extremityTipColor": "#RRGGBB",
-  "snoutLength": number (0..1.4),
-  "snoutWidth": number (0.4..1.4),
+  "extremityTipColor": "#RRGGBB" (boots, gauntlets, gloves, claws or hooves),
+  "muzzlePreset": "none" | "bunnySplit" | "squirrelPuff" | "catWhiskerPad" | "foxTaper" | "dogSnout" | "horseMuzzle" | "bearBroad" | "lizardSnout",
+  "snoutLength": number (0..0.22),
+  "snoutWidth": number (0.04..0.14),
   "snoutColor": "#RRGGBB",
+  "beakStyle": "none" | "songbird" | "duck" | "owl" | "eagleHawk" | "storkCrane" | "pelican",
+  "beakColor": "#RRGGBB",
+  "noseStyle": "none" | "buttonSphere" | "oval" | "flatButton" | "longHuman" | "bulbous" | "triangleAnimal" | "wideSnoutNose",
   "handStyle": "fingers5" | "fingers4" | "fingers3" | "paw" | "claw" | "hoof" | "nub",
-  "handScale": number (0.6..1.6),
+  "handScale": number (0.8..1.35),
   "footStyle": "biped" | "paw" | "claw" | "hoof",
-  "footScale": number (0.6..1.6),
-  "earStyle": "none" | "rabbitLong" | "rabbitFloppy" | "squirrelRound" | "catFoxTriangle" | "dogFloppy" | "horsePerked" | "human" | "elfPointed" | "animalPerk" | "bat" | "antennae",
-  "earSize": number (0.4..1.8),
+  "footScale": number (0.85..1.35),
+  "earStyle": "none" | "human" | "elfPointed" | "rabbitLong" | "rabbitFloppy" | "squirrelRound" | "catFoxTriangle" | "dogFloppy" | "horsePerked" | "animalPerk" | "floppy" | "bat" | "fin" | "antennae",
+  "earSize": number (0.5..1.6),
   "earColor": "#RRGGBB",
-  "tailStyle": "none" | "bunnyCotton" | "squirrelPlume" | "catTail" | "dogTail" | "foxBrush" | "dragonTail" | "smooth" | "fluffy",
+  "tailStyle": "none" | "bunnyCotton" | "squirrelPlume" | "horseTail" | "catTail" | "dogTail" | "foxBrush" | "lionTail" | "geckoTail" | "dragonTail" | "fishTail" | "birdTail" | "smooth" | "bulbTip" | "spiky" | "fluffy" | "fin",
   "hornCount": 0 | 1 | 2 | 4,
   "hornStyle": "straight" | "curvedBack" | "ramSpiral" | "devilSweep" | "antler",
   "hornColor": "#RRGGBB",
-  "wingStyle": "none" | "birdRound" | "dragon" | "bat" | "feather" | "fairy" | "fairyButterfly" | "angelFeather",
-  "wingSpan": number (0.5..1.8),
+  "wingStyle": "none" | "birdRound" | "birdSoaring" | "birdLong" | "dragon" | "bat" | "feather" | "fairy" | "fairyButterfly" | "angelFeather",
+  "wingSpan": number (0.5..1.6),
   "wingColor": "#RRGGBB",
-  "hairStyle": "none" | "shortCrop" | "messySpiky" | "bobCut" | "longStraight" | "twinPigtails" | "ponytail" | "curlyAfro" | "spikyTufts" | "mohawk" | "lionMane",
+  "hairStyle": "none" | "shortCrop" | "sidePart" | "pompadour" | "messySpiky" | "undercut" | "buzzFade" | "surferCurtains" | "longStraight" | "longEndCurls" | "bobCut" | "wavyShoulder" | "twinPigtails" | "highBun" | "braidedCrown" | "ponytail" | "curlyAfro" | "spikyTufts" | "mohawk" | "horseMane" | "lionMane" | "featherTuft" | "fluffyBangs",
   "hairColor": "#RRGGBB",
+  "facialHair": {
+    "mustacheStyle": "none" | "pencil" | "classicStraight" | "chevron" | "handlebar" | "imperial" | "walrus" | "bushyBrush",
+    "beardStyle": "none" | "soulPatch" | "goatee" | "vanDyke" | "circleBeard" | "chinStrap" | "shortBoxed" | "fullTrimmed" | "bushyLumberjack" | "wizardLong" | "vikingBraided",
+    "color": "#RRGGBB"
+  },
   "irisColor": "#RRGGBB",
   "eyebrowExpression": "neutral" | "determined" | "friendly" | "surprised" | "sly",
   "mouthStyle": "none" | "smile" | "smirk" | "frown" | "catW" | "fangs" | "openSmile" | "openSurprised" | "openWorried" | "openGrin" | "beak",
   "surfaceCoatMode": "none" | "furShort" | "furLong" | "furClumped" | "scalesFish" | "scalesDragon" | "scalesHex",
+  "addons": {
+    "eyewear": "none" | "roundGlasses" | "goggles" | "cyberVisor" | "monocle",
+    "eyewearColor": "#RRGGBB",
+    "eyewearLensColor": "#RRGGBB",
+    "headGear": "none" | "adventurerCap" | "wizardHat" | "crown" | "halo" | "flowerCrown",
+    "headGearColor": "#RRGGBB",
+    "headGearAccentColor": "#RRGGBB",
+    "bodyGear": "none" | "backpack" | "quiver" | "cape" | "scarf" | "pauldrons",
+    "bodyGearColor": "#RRGGBB",
+    "bodyGearAccentColor": "#RRGGBB"
+  },
+  "spikes": {
+    "enabled": boolean,
+    "style": "porcupineQuills" | "boneSpikes" | "dorsalFins" | "crystalSpines",
+    "zone": "spine" | "headAndBack" | "shouldersAndBack" | "fullBody",
+    "color": "#RRGGBB",
+    "tipColor": "#RRGGBB"
+  },
   "partScales": {
-    "head": [x 0.6..1.6, y 0.6..1.6, z 0.6..1.6],
-    "torso": [x, y, z],
-    "belly": [x, y, z],
-    "upperArm": [x, y, z],
-    "upperLeg": [x, y, z]
+    "head": [x 0.8..1.35, y 0.8..1.35, z 0.8..1.35],
+    "neck": [x 0.8..1.25, y 0.7..1.3, z 0.8..1.25],
+    "torso": [x 0.8..1.4, y 0.8..1.3, z 0.8..1.35],
+    "belly": [x 0.8..1.35, y 0.8..1.3, z 0.8..1.35],
+    "hips": [x 0.85..1.25, y 0.85..1.2, z 0.85..1.25],
+    "upperArm": [x 0.85..1.35, y 0.85..1.25, z 0.85..1.35],
+    "lowerArm": [x 0.85..1.35, y 0.85..1.25, z 0.85..1.35],
+    "upperLeg": [x 0.85..1.25, y 0.85..1.25, z 0.85..1.25],
+    "lowerLeg": [x 0.85..1.25, y 0.85..1.25, z 0.85..1.25]
   }
 }`;
 

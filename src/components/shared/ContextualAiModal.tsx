@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   Cpu,
+  ImagePlus,
   Layers,
   Loader2,
   RefreshCw,
@@ -44,7 +45,13 @@ import {
   getActiveStudioAiBridge,
   resolveContextFromStage,
   useActiveStudioAiBridge,
+  type AiReferenceImage,
   type AiStudioContextId,
+  type CharacterGuideArchetype,
+  type CharacterGuideExtra,
+  type CharacterGuideExtremity,
+  type CharacterGuideSurface,
+  type CharacterPromptGuide,
 } from '../../ai/studioBridge';
 import { createEntity } from '../../data/registries';
 import type { MakerStore } from '../../store/useMakerStore';
@@ -75,6 +82,85 @@ const GEMINI_MODELS = [
   { id: 'gemini-4-neon', label: 'Gemini Pro (Deep Reasoning)' },
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
 ];
+
+const DEFAULT_CHARACTER_GUIDE: CharacterPromptGuide = {
+  archetype: 'auto',
+  extremities: 'auto',
+  surface: 'auto',
+  extras: [],
+};
+
+const CHAR_ARCHETYPE_OPTIONS: { id: CharacterGuideArchetype; label: string }[] = [
+  { id: 'auto', label: 'Auto' },
+  { id: 'humanoid', label: 'Human' },
+  { id: 'animal', label: 'Animal' },
+  { id: 'bird', label: 'Bird' },
+  { id: 'fantasy', label: 'Fantasy' },
+  { id: 'bug', label: 'Bug' },
+];
+
+const CHAR_EXTREMITY_OPTIONS: { id: CharacterGuideExtremity; label: string }[] = [
+  { id: 'auto', label: 'Auto' },
+  { id: 'hands', label: 'Hands' },
+  { id: 'paw', label: 'Paws' },
+  { id: 'claw', label: 'Claws' },
+  { id: 'hoof', label: 'Hooves' },
+  { id: 'nub', label: 'Nubs' },
+];
+
+const CHAR_SURFACE_OPTIONS: { id: CharacterGuideSurface; label: string }[] = [
+  { id: 'auto', label: 'Auto' },
+  { id: 'smooth', label: 'Smooth' },
+  { id: 'armor', label: 'Armor' },
+  { id: 'furShort', label: 'Short Fur' },
+  { id: 'furLong', label: 'Fluffy' },
+  { id: 'scales', label: 'Scales' },
+];
+
+const CHAR_EXTRA_OPTIONS: { id: CharacterGuideExtra; label: string }[] = [
+  { id: 'helmetOrHat', label: 'Helmet / Hat' },
+  { id: 'pauldronsOrArmor', label: 'Pauldrons' },
+  { id: 'capeOrCloak', label: 'Cape' },
+  { id: 'beardOrMustache', label: 'Beard' },
+  { id: 'eyewear', label: 'Visor / Glasses' },
+  { id: 'wings', label: 'Wings' },
+  { id: 'horns', label: 'Horns' },
+  { id: 'tail', label: 'Tail' },
+  { id: 'spikes', label: 'Spikes' },
+];
+
+async function encodeReferenceImageFile(file: File): Promise<AiReferenceImage> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Could not decode selected image.'));
+      el.src = objectUrl;
+    });
+    const maxDim = 896;
+    const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+    const w = Math.max(1, Math.round((img.width || 512) * scale));
+    const h = Math.max(1, Math.round((img.height || 512) * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D unavailable');
+    ctx.drawImage(img, 0, 0, w, h);
+    const usePng = file.type === 'image/png';
+    const mimeType: AiReferenceImage['mimeType'] = usePng ? 'image/png' : 'image/jpeg';
+    const dataUrl = canvas.toDataURL(mimeType, 0.86);
+    const data = dataUrl.replace(/^data:image\/[a-z0-9+.-]+;base64,/i, '');
+    return {
+      mimeType,
+      data,
+      fileName: file.name,
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
   store,
@@ -135,6 +221,15 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
   );
   const [glbSummary, setGlbSummary] = useState<GlbAiSummary | null>(null);
   const [loadingGlb, setLoadingGlb] = useState(false);
+
+  // Optional Multimodal Reference Image & Character Prompt Helper
+  const refImageInputRef = useRef<HTMLInputElement | null>(null);
+  const [referenceImage, setReferenceImage] = useState<AiReferenceImage | null>(null);
+  const [loadingRefImage, setLoadingRefImage] = useState(false);
+  const [showCharGuide, setShowCharGuide] = useState(true);
+  const [characterGuide, setCharacterGuide] = useState<CharacterPromptGuide>(
+    DEFAULT_CHARACTER_GUIDE
+  );
 
   useEffect(() => {
     void fetchAiProviderStatus()
@@ -265,13 +360,18 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
     data: Record<string, unknown>,
     useModify: boolean
   ): string => {
+    const activeCharGuide =
+      targetContext === 'character' ? characterGuide : undefined;
     const liveBridge = activeBridge ?? getActiveStudioAiBridge();
     if (
       liveBridge &&
       (liveBridge.context === targetContext ||
         (liveBridge.context === 'creature' && (targetContext === 'creature' || targetContext === 'cast')))
     ) {
-      return liveBridge.applyResult(data, { modifyExisting: useModify });
+      return liveBridge.applyResult(data, {
+        modifyExisting: useModify,
+        characterGuide: activeCharGuide,
+      });
     }
 
     if (targetContext === 'world') {
@@ -320,7 +420,7 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
     }
     if (targetContext === 'character') {
       const baseDoc = useModify ? store.customAssets.find((a) => a.id === store.currentProject?.heroCustomAssetId)?.characterRecipe : undefined;
-      const res = sanitizeCharacterMakerResult(data, baseDoc);
+      const res = sanitizeCharacterMakerResult(data, baseDoc, characterGuide);
       store.updateProject('AI update hero character', (prev) => ({
         ...prev,
         heroName: res.name,
@@ -445,7 +545,12 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
   };
 
   const handleGenerate = async () => {
-    if (!prompt.trim() || generating) return;
+    const effectiveRequest =
+      prompt.trim() ||
+      (referenceImage
+        ? 'Build a faithful 3D Maker model matching the uploaded visual guide image.'
+        : '');
+    if (!effectiveRequest || generating) return;
     setGenerating(true);
     setErrorMsg(null);
     setStatusBanner(null);
@@ -455,16 +560,19 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
       const snapshot = buildCurrentSnapshot();
       const { systemPrompt, userPrompt } = buildContextualAiPrompts({
         context: targetContext,
-        userRequest: prompt,
+        userRequest: effectiveRequest,
         snapshot,
         glbSummary,
         modifyExisting,
+        characterGuide: targetContext === 'character' ? characterGuide : undefined,
+        hasReferenceImage: Boolean(referenceImage),
       });
 
       const res = await runContextualAiGeneration({
         prefs,
         systemPrompt,
         userPrompt,
+        referenceImage,
       });
 
       setLastRawData(res.data);
@@ -483,6 +591,22 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
       setErrorMsg(err instanceof Error ? err.message : 'AI generation failed.');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleUploadRefImage = async (file: File) => {
+    setLoadingRefImage(true);
+    setErrorMsg(null);
+    try {
+      const encoded = await encodeReferenceImageFile(file);
+      setReferenceImage(encoded);
+      setStatusBanner(`Attached guide image "${file.name}".`);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Could not load guide image.'
+      );
+    } finally {
+      setLoadingRefImage(false);
     }
   };
 
@@ -898,6 +1022,280 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
               </div>
             )}
 
+            {/* Visual Guide Image Upload (Multimodal) */}
+            {(targetContext === 'character' ||
+              targetContext === 'creature' ||
+              targetContext === 'object' ||
+              targetContext === 'plant' ||
+              targetContext === 'tree') && (
+              <div
+                className={`p-2.5 rounded-xl border space-y-2 ${
+                  embedded
+                    ? 'bg-slate-50 dark:bg-[#12151E] border-slate-200/80 dark:border-white/[0.08]'
+                    : 'bg-[#171A23] border-white/[0.08]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold">
+                    <ImagePlus size={13} className="text-[#A855F7]" />
+                    <span>Guide Image (Optional)</span>
+                    {loadingRefImage && (
+                      <Loader2 size={11} className="animate-spin text-[#A855F7]" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <input
+                      ref={refImageInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void handleUploadRefImage(file);
+                        e.target.value = '';
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => refImageInputRef.current?.click()}
+                      className="h-7 px-2 rounded-lg bg-[#A855F7]/15 hover:bg-[#A855F7]/25 text-[#9333EA] dark:text-[#C084FC] text-[10px] font-bold inline-flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <Upload size={10} />
+                      <span>{referenceImage ? 'Change' : 'Load Image'}</span>
+                    </button>
+                    {referenceImage && (
+                      <button
+                        type="button"
+                        onClick={() => setReferenceImage(null)}
+                        title="Remove guide image"
+                        className="h-7 w-7 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-500 inline-flex items-center justify-center"
+                      >
+                        <X size={11} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {referenceImage ? (
+                  <div className="flex items-center gap-2.5">
+                    <img
+                      src={`data:${referenceImage.mimeType};base64,${referenceImage.data}`}
+                      alt={referenceImage.fileName || 'Guide preview'}
+                      className="w-12 h-12 rounded-lg object-cover border border-white/15 shrink-0"
+                    />
+                    <div className="min-w-0 text-[10px] leading-snug">
+                      <div className="font-bold truncate">
+                        {referenceImage.fileName || 'Reference Guide'}
+                      </div>
+                      <div
+                        className={
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }
+                      >
+                        AI will match proportions, colors &amp; silhouette from this image.
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p
+                    className={`text-[10px] leading-snug ${
+                      embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                    }`}
+                  >
+                    Attach concept art or a sketch so the AI mirrors colors, silhouette &amp; gear.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Character Prompt Helper Checklist */}
+            {targetContext === 'character' && (
+              <div
+                className={`p-2.5 rounded-xl border space-y-2 ${
+                  embedded
+                    ? 'bg-slate-50 dark:bg-[#12151E] border-slate-200/80 dark:border-white/[0.08]'
+                    : 'bg-[#171A23] border-white/[0.08]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCharGuide((v) => !v)}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-left"
+                  >
+                    {showCharGuide ? (
+                      <ChevronUp size={13} className="text-[#A855F7]" />
+                    ) : (
+                      <ChevronDown size={13} className="text-[#A855F7]" />
+                    )}
+                    <span>Character Prompt Helper</span>
+                  </button>
+                  {(characterGuide.archetype !== 'auto' ||
+                    characterGuide.extremities !== 'auto' ||
+                    characterGuide.surface !== 'auto' ||
+                    characterGuide.extras.length > 0) && (
+                    <button
+                      type="button"
+                      onClick={() => setCharacterGuide(DEFAULT_CHARACTER_GUIDE)}
+                      className="text-[10px] font-bold text-[#A855F7] hover:underline"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {showCharGuide && (
+                  <div className="space-y-2 pt-0.5">
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Body Type
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {CHAR_ARCHETYPE_OPTIONS.map((opt) => {
+                          const active = characterGuide.archetype === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setCharacterGuide((prev) => ({
+                                  ...prev,
+                                  archetype: opt.id,
+                                }))
+                              }
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                                active
+                                  ? 'bg-[#A855F7] border-[#A855F7] text-white'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Hands &amp; Feet
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {CHAR_EXTREMITY_OPTIONS.map((opt) => {
+                          const active = characterGuide.extremities === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setCharacterGuide((prev) => ({
+                                  ...prev,
+                                  extremities: opt.id,
+                                }))
+                              }
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                                active
+                                  ? 'bg-[#A855F7] border-[#A855F7] text-white'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Surface &amp; Coat
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {CHAR_SURFACE_OPTIONS.map((opt) => {
+                          const active = characterGuide.surface === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setCharacterGuide((prev) => ({
+                                  ...prev,
+                                  surface: opt.id,
+                                }))
+                              }
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                                active
+                                  ? 'bg-[#A855F7] border-[#A855F7] text-white'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Tick Extras to Force
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {CHAR_EXTRA_OPTIONS.map((opt) => {
+                          const checked = characterGuide.extras.includes(opt.id);
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setCharacterGuide((prev) => ({
+                                  ...prev,
+                                  extras: checked
+                                    ? prev.extras.filter((x) => x !== opt.id)
+                                    : [...prev.extras, opt.id],
+                                }))
+                              }
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border inline-flex items-center justify-center gap-1 transition-colors ${
+                                checked
+                                  ? 'bg-[#20B46A]/20 border-[#20B46A] text-emerald-700 dark:text-emerald-200'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              {checked && <Check size={9} className="shrink-0" />}
+                              <span className="truncate">{opt.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Starter Idea Chips */}
             <div className="space-y-1">
               <div
@@ -1007,7 +1405,7 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
 
               <button
                 type="button"
-                disabled={generating || !prompt.trim()}
+                disabled={generating || (!prompt.trim() && !referenceImage)}
                 onClick={() => void handleGenerate()}
                 className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold text-white shadow-sm disabled:opacity-45 whitespace-nowrap transition-opacity hover:opacity-95"
                 style={{ backgroundColor: contextMeta.accentHex }}

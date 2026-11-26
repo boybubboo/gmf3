@@ -26,7 +26,9 @@ import {
   User,
   Wand2,
   X,
+  Pencil,
 } from 'lucide-react';
+import { CharacterSketchModal } from '../shared/CharacterSketchModal';
 import {
   requestOpenContextualAiModal,
   useRegisterStudioAiBridge,
@@ -573,6 +575,7 @@ export const CharacterMakerModal: React.FC<CharacterMakerModalProps> = ({
   const [editingAssetId, setEditingAssetId] = useState<string | null>(initialAssetId);
   const [charName, setCharName] = useState<string>('Standard Humanoid');
   const [doc, setDoc] = useState<CharacterMakerDoc>(() => createCharacterPresetDoc('standardHumanoid'));
+  const [showingSketchModal, setShowingSketchModal] = useState<boolean>(false);
   const [undoStack, setUndoStack] = useState<CharacterMakerDoc[]>([]);
   const [redoStack, setRedoStack] = useState<CharacterMakerDoc[]>([]);
 
@@ -826,6 +829,7 @@ export const CharacterMakerModal: React.FC<CharacterMakerModalProps> = ({
     paintTool,
     spaceOrbiting,
     paintBrush,
+    showingSketchModal,
   });
   latestRef.current = {
     animMode,
@@ -837,6 +841,7 @@ export const CharacterMakerModal: React.FC<CharacterMakerModalProps> = ({
     paintTool,
     spaceOrbiting,
     paintBrush,
+    showingSketchModal,
   };
 
   const triggerManualBlink = useCallback(() => {
@@ -1117,7 +1122,9 @@ export const CharacterMakerModal: React.FC<CharacterMakerModalProps> = ({
         }
 
         state.controls.update();
-        renderer.render(scene, camera);
+        if (!cur.showingSketchModal) {
+          renderer.render(scene, camera);
+        }
       } catch {
         // ignore transient draw error
       } finally {
@@ -1225,7 +1232,13 @@ export const CharacterMakerModal: React.FC<CharacterMakerModalProps> = ({
     const st = studioRef.current;
     if (!st) return;
 
-    const targetRes = isSliderActive ? 32 : crispResMode ? 56 : 36;
+    const targetRes = isSliderActive
+      ? 32
+      : doc.sculptData?.enabled
+      ? Math.max(crispResMode ? 56 : 36, Math.min(72, doc.sculptData.resolution))
+      : crispResMode
+      ? 56
+      : 36;
     const delayMs = isSliderActive ? 12 : 45;
 
     const timer = window.setTimeout(() => {
@@ -1614,7 +1627,8 @@ export const CharacterMakerModal: React.FC<CharacterMakerModalProps> = ({
     applyResult: (raw, options) => {
       const res = sanitizeCharacterMakerResult(
         raw,
-        options?.modifyExisting ? doc : undefined
+        options?.modifyExisting ? doc : undefined,
+        options?.characterGuide
       );
       setUndoStack((u) => [...u.slice(-24), doc]);
       if (!options?.modifyExisting) {
@@ -2024,6 +2038,15 @@ export const CharacterMakerModal: React.FC<CharacterMakerModalProps> = ({
                 Save Copy
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => setShowingSketchModal(true)}
+              className="h-8 px-2.5 rounded-xl border border-[#7C5CFF]/40 bg-[#7C5CFF]/15 text-[#7C5CFF] dark:text-[#C4B5FD] text-xs font-extrabold whitespace-nowrap inline-flex items-center gap-1.5 hover:bg-[#7C5CFF]/25"
+            >
+              <Pencil size={13} />
+              <span>3D Sculpt &amp; Stamp</span>
+            </button>
             <button
               type="button"
               disabled={saving}
@@ -5930,6 +5953,17 @@ export const CharacterMakerModal: React.FC<CharacterMakerModalProps> = ({
           </aside>
         </div>
       </div>
+      {showingSketchModal && (
+        <CharacterSketchModal
+          doc={doc}
+          charName={charName}
+          onSave={(nextDoc) => {
+            updateDoc(() => nextDoc, true);
+            setShowingSketchModal(false);
+          }}
+          onClose={() => setShowingSketchModal(false)}
+        />
+      )}
     </div>
   );
 };

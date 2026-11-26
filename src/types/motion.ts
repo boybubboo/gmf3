@@ -143,14 +143,20 @@ export type RigBoneRole =
   | 'chest'
   | 'neck'
   | 'head'
+  | 'leftShoulder'
   | 'leftUpperArm'
   | 'leftLowerArm'
+  | 'leftHand'
+  | 'rightShoulder'
   | 'rightUpperArm'
   | 'rightLowerArm'
+  | 'rightHand'
   | 'leftUpperLeg'
   | 'leftLowerLeg'
+  | 'leftFoot'
   | 'rightUpperLeg'
-  | 'rightLowerLeg';
+  | 'rightLowerLeg'
+  | 'rightFoot';
 
 export type RigAnimationMode = 'auto' | 'clips' | 'procedural';
 
@@ -169,6 +175,7 @@ export interface SlotMotionTuning {
 export interface CustomRigSettings {
   mode: RigAnimationMode;
   boneMap: Partial<Record<RigBoneRole, string>>;
+  invertedRoles?: Partial<Record<RigBoneRole, boolean>>;
   limbSwingAxis: RigSwingAxis;
   armRelaxAngle: number;
   armSpreadAngle: number;
@@ -214,6 +221,7 @@ export interface CustomMotionPreset {
   rigArchetype?: MotionRigArchetype;
   hipsHeightRef?: number;
   sourcePresetId?: string;
+  sourceType?: 'builtin' | 'custom' | 'ai' | 'mixamo';
   events?: MotionEventMarker[];
 }
 

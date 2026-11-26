@@ -36,6 +36,7 @@ import {
   buildFacialHairGroup,
   resolveFacialHairConfig,
 } from './facialHairBuilder';
+import { applyMonsterSculptData } from './creatureSculptEngine';
 import {
   polygonizeSdfToGeometry,
   SdfFieldEvaluator,
@@ -6717,6 +6718,33 @@ export function buildCharacterRigAndMesh(
   // 4. Evaluate SDF & Polygonize Seamless Clay Mesh via Marching Cubes
   const evaluator = new SdfFieldEvaluator(prims, doc.blendSmoothness);
   const mcResult = polygonizeSdfToGeometry(evaluator, bones.length, resolution, includeEditorGuides);
+  if (doc.sculptData && doc.sculptData.enabled) {
+    applyMonsterSculptData(mcResult.geometry, doc.sculptData, resolution);
+    if (doc.sculptData.boneOffsets && doc.sculptData.boneOffsets.length > 0) {
+      const offsetMap = new Map(doc.sculptData.boneOffsets.map((o) => [o.boneName, o.delta]));
+      root.updateMatrixWorld(true);
+      const targetWorldByBone = new Map<THREE.Bone, THREE.Vector3>();
+      for (const bone of bones) {
+        if (bone.name === 'Hips') continue;
+        const d = offsetMap.get(bone.name);
+        if (d) {
+          const wp = new THREE.Vector3();
+          bone.getWorldPosition(wp);
+          wp.x += d[0];
+          wp.y += d[1];
+          wp.z += d[2];
+          targetWorldByBone.set(bone, wp);
+        }
+      }
+      for (const bone of bones) {
+        const targetWp = targetWorldByBone.get(bone);
+        if (targetWp && bone.parent) {
+          bone.parent.updateMatrixWorld(true);
+          bone.position.copy(bone.parent.worldToLocal(targetWp.clone()));
+        }
+      }
+    }
+  }
 
   const bodyMat = createClayMaterial(doc.materialFinish);
   const coatTextures = createSurfaceCoatTextures(ext.surfaceCoat);
