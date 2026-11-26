@@ -76,6 +76,7 @@ import {
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
+  initMakerRenderer,
   setupSceneEnvironment,
 } from '../../three/islandScene';
 import {
@@ -1888,7 +1889,7 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
       studioState.renderer = renderer;
       studioState.controls = controls;
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (disposed) return false;
         envTex = setupSceneEnvironment(scene, renderer);
         return true;
@@ -1900,7 +1901,7 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
     void (async () => {
       let ok = false;
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (!isSoftwareGl && isWebGPUFallbackAdapter(renderer)) {
           ok = await switchToWebGLFallback();
         } else {

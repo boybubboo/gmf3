@@ -17,6 +17,7 @@ import {
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
+  initMakerRenderer,
   setupSceneEnvironment,
 } from '../../three/islandScene';
 import { buildObjectMakerSceneGroup } from '../../three/objectMakerBuilder';
@@ -404,7 +405,7 @@ export const ObjectInteractionTestModal: React.FC<ObjectInteractionTestModalProp
 
     void (async () => {
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (!isSoftwareGl && isWebGPUFallbackAdapter(renderer)) {
           controls.dispose();
           renderer.dispose();
@@ -414,7 +415,7 @@ export const ObjectInteractionTestModal: React.FC<ObjectInteractionTestModalProp
           mount.innerHTML = '';
           mount.appendChild(renderer.domElement);
           controls = createOrbit(renderer.domElement);
-          await renderer.init();
+          await initMakerRenderer(renderer);
         }
       } catch {
         if (disposed) return;
@@ -430,7 +431,7 @@ export const ObjectInteractionTestModal: React.FC<ObjectInteractionTestModalProp
         mount.innerHTML = '';
         mount.appendChild(renderer.domElement);
         controls = createOrbit(renderer.domElement);
-        await renderer.init().catch(() => {});
+        await initMakerRenderer(renderer).catch(() => {});
       }
       if (disposed) return;
       envTex = setupSceneEnvironment(scene, renderer);

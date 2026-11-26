@@ -22,12 +22,16 @@ import {
   createSideburnsPresetConfig,
   resolveFacialHairConfig,
 } from '../three/facialHairBuilder';
+import * as THREE from 'three';
 import {
   OBJECT_PRIMITIVE_CATALOG,
+  buildPartGeometry,
   centerAndGroundObjectDoc,
+  computePartWorldMatrix,
   createDefaultMaterialFinish,
   createDefaultPartSpec,
 } from '../three/objectMakerBuilder';
+import { performBooleanCsg, serializeBufferGeometry } from '../three/meshCsg';
 import {
   PLANT_SHAPE_CATALOG,
   createClusterGroupAndParts,
@@ -108,6 +112,10 @@ import type {
   ObjectMechanism,
   ObjectPartSpec,
   ObjectPrimitiveShapeId,
+  ObjectSdfBlobConfig,
+  ObjectSdfNode,
+  ObjectSplineConfig,
+  ObjectSplineProfile,
   PlantClusterLayout,
   PlantClusterRecipe,
   PlantLeafPatternId,
@@ -347,6 +355,166 @@ export function sanitizeObjectMakerResult(
     const emissiveHex =
       typeof p.emissive === 'string' ? hexColor(p.emissive, '') : '';
 
+    // Deformers (accept either top-level p.taperStart or nested p.modifiers.taperStart)
+    const modRaw =
+      p.modifiers && typeof p.modifiers === 'object'
+        ? (p.modifiers as Record<string, unknown>)
+        : {};
+    const getMod = (k: string) => (modRaw[k] !== undefined ? modRaw[k] : p[k]);
+
+    const rawTaperStart = getMod('taperStart');
+    const rawTaperEnd = getMod('taperEnd');
+    const rawSmoothStart = getMod('taperSmoothStart');
+    const rawSmoothEnd = getMod('taperSmoothEnd');
+    const rawBendAngle = getMod('bendAngle');
+    const rawBendAxis = getMod('bendAxis');
+    const rawTwistAngle = getMod('twistAngle');
+
+    const modifiers = {
+      ...base.modifiers,
+      bevel:
+        getMod('bevel') !== undefined
+          ? num(getMod('bevel'), base.modifiers.bevel, 0, 0.35)
+          : base.modifiers.bevel,
+      segments:
+        getMod('segments') !== undefined
+          ? Math.round(num(getMod('segments'), base.modifiers.segments ?? 16, 8, 32))
+          : base.modifiers.segments,
+      taperStart:
+        rawTaperStart !== undefined
+          ? num(rawTaperStart, base.modifiers.taperStart ?? 1, 0.05, 2.2)
+          : base.modifiers.taperStart,
+      taperEnd:
+        rawTaperEnd !== undefined
+          ? num(rawTaperEnd, base.modifiers.taperEnd ?? 1, 0.05, 2.2)
+          : base.modifiers.taperEnd,
+      taperSmoothStart:
+        rawSmoothStart !== undefined
+          ? num(rawSmoothStart, base.modifiers.taperSmoothStart ?? 0.35, 0.05, 1)
+          : base.modifiers.taperSmoothStart,
+      taperSmoothEnd:
+        rawSmoothEnd !== undefined
+          ? num(rawSmoothEnd, base.modifiers.taperSmoothEnd ?? 0.35, 0.05, 1)
+          : base.modifiers.taperSmoothEnd,
+      bendAngle:
+        rawBendAngle !== undefined
+          ? num(rawBendAngle, base.modifiers.bendAngle ?? 0, -170, 170)
+          : base.modifiers.bendAngle,
+      bendAxis:
+        rawBendAxis === 'x' || rawBendAxis === 'z'
+          ? (rawBendAxis as 'x' | 'z')
+          : base.modifiers.bendAxis,
+      twistAngle:
+        rawTwistAngle !== undefined
+          ? num(rawTwistAngle, base.modifiers.twistAngle ?? 0, -360, 360)
+          : base.modifiers.twistAngle,
+    };
+
+    // Sanitize splineConfig (accept nested p.splineConfig or top-level p.points)
+    let splineConfig: ObjectSplineConfig | undefined = base.splineConfig;
+    const rawSpline =
+      p.splineConfig && typeof p.splineConfig === 'object'
+        ? (p.splineConfig as Record<string, unknown>)
+        : Array.isArray(p.points)
+          ? p
+          : null;
+    if (shape === 'splineTube' && rawSpline) {
+      const rawPts = Array.isArray(rawSpline.points) ? rawSpline.points : [];
+      const parsedPts: [number, number, number][] = [];
+      for (const entry of rawPts.slice(0, 16)) {
+        if (Array.isArray(entry) && entry.length >= 3) {
+          parsedPts.push([
+            num(entry[0], 0, -4, 4),
+            num(entry[1], 0, -4, 4),
+            num(entry[2], 0, -4, 4),
+          ]);
+        }
+      }
+      const fallbackPts = base.splineConfig?.points ?? [
+        [0, -0.6, -0.14],
+        [0, 0, 0.14],
+        [0, 0.6, -0.14],
+      ];
+      const finalPts = parsedPts.length >= 2 ? parsedPts : fallbackPts;
+      const rawRadii = Array.isArray(rawSpline.pointRadii) ? rawSpline.pointRadii : null;
+      const pointRadii =
+        rawRadii && rawRadii.length === finalPts.length
+          ? rawRadii.map((r) => num(r, 1, 0.08, 3.0))
+          : undefined;
+      splineConfig = {
+        points: finalPts,
+        ...(pointRadii ? { pointRadii } : {}),
+        profile: oneOf<ObjectSplineProfile>(
+          rawSpline.profile,
+          ['round', 'oval', 'flatStave', 'beveledBar'],
+          base.splineConfig?.profile ?? 'round'
+        ),
+        radius: num(rawSpline.radius, base.splineConfig?.radius ?? 0.045, 0.006, 0.6),
+        ovalness: num(rawSpline.ovalness, base.splineConfig?.ovalness ?? 0.55, 0.15, 2.0),
+        taperStart: num(rawSpline.taperStart ?? modifiers.taperStart, 1, 0.05, 2.2),
+        taperEnd: num(rawSpline.taperEnd ?? modifiers.taperEnd, 1, 0.05, 2.2),
+        taperSmoothStart: num(rawSpline.taperSmoothStart ?? modifiers.taperSmoothStart, 0.35, 0.05, 1),
+        taperSmoothEnd: num(rawSpline.taperSmoothEnd ?? modifiers.taperSmoothEnd, 0.35, 0.05, 1),
+        closed: Boolean(rawSpline.closed),
+        steps: Math.round(num(rawSpline.steps, Math.max(24, finalPts.length * 7), 12, 72)),
+        radialSegments: Math.round(num(rawSpline.radialSegments ?? modifiers.segments, 14, 6, 24)),
+        mirrorSymmetry: oneOf(rawSpline.mirrorSymmetry, ['none', 'y', 'x'] as const, 'none'),
+      };
+    }
+
+    // Sanitize latheProfile
+    let latheProfile: [number, number][] | undefined = base.latheProfile;
+    if (shape === 'lathe' && Array.isArray(p.latheProfile)) {
+      const pts: [number, number][] = [];
+      for (const entry of p.latheProfile.slice(0, 24)) {
+        if (Array.isArray(entry) && entry.length >= 2) {
+          pts.push([num(entry[0], 0.15, 0.004, 2.5), num(entry[1], 0, -3, 3)]);
+        }
+      }
+      if (pts.length >= 2) latheProfile = pts;
+    }
+
+    // Sanitize sdfBlobConfig
+    let sdfBlobConfig: ObjectSdfBlobConfig | undefined = base.sdfBlobConfig;
+    const rawSdf =
+      p.sdfBlobConfig && typeof p.sdfBlobConfig === 'object'
+        ? (p.sdfBlobConfig as Record<string, unknown>)
+        : Array.isArray(p.sdfPrimitives)
+          ? { primitives: p.sdfPrimitives }
+          : null;
+    if (shape === 'sdfBlob' && rawSdf) {
+      const rawNodes = Array.isArray(rawSdf.primitives) ? rawSdf.primitives : [];
+      const nodes: ObjectSdfNode[] = [];
+      for (const entry of rawNodes.slice(0, 14)) {
+        if (!entry || typeof entry !== 'object') continue;
+        const n = entry as Record<string, unknown>;
+        const rawKind =
+          n.kind === 'box'
+            ? 'roundedBox'
+            : n.kind === 'cone'
+              ? 'capsule'
+              : n.kind;
+        nodes.push({
+          kind: oneOf(rawKind, ['ellipsoid', 'capsule', 'roundedBox'] as const, 'ellipsoid'),
+          op: n.op === 'sub' ? 'sub' : 'add',
+          a: vec3(n.a, [0, 0, 0], -3, 3),
+          b: vec3(n.b, [0.22, 0.22, 0.22], -3, 3),
+          ...(n.startRadius !== undefined ? { startRadius: num(n.startRadius, 0.14, 0.015, 0.8) } : {}),
+          ...(n.midRadius !== undefined ? { midRadius: num(n.midRadius, 0.14, 0.015, 0.8) } : {}),
+          ...(n.endRadius !== undefined ? { endRadius: num(n.endRadius, 0.12, 0.01, 0.8) } : {}),
+          ...(n.curvature !== undefined ? { curvature: num(n.curvature, 0, -0.8, 0.8) } : {}),
+          ...(n.roundness !== undefined ? { roundness: num(n.roundness, 0.05, 0.005, 0.3) } : {}),
+        });
+      }
+      if (nodes.length > 0) {
+        sdfBlobConfig = {
+          blendK: num(rawSdf.blendK, 0.12, 0.02, 0.4),
+          resolution: Math.round(num(rawSdf.resolution, 28, 18, 38)),
+          primitives: nodes,
+        };
+      }
+    }
+
     return {
       ...base,
       id: prevPart?.id ?? uid(),
@@ -362,19 +530,13 @@ export function sanitizeObjectMakerResult(
           : base.rotation,
       dimensions:
         p.dimensions !== undefined
-          ? vec3(p.dimensions, base.dimensions, 0.04, 4)
+          ? vec3(p.dimensions, base.dimensions, 0.01, 4)
           : base.dimensions,
-      modifiers: {
-        ...base.modifiers,
-        bevel:
-          p.bevel !== undefined
-            ? num(p.bevel, base.modifiers.bevel, 0, 0.35)
-            : base.modifiers.bevel,
-        segments:
-          p.segments !== undefined
-            ? Math.round(num(p.segments, base.modifiers.segments ?? 16, 8, 28))
-            : base.modifiers.segments,
-      },
+      modifiers,
+      ...(splineConfig ? { splineConfig } : {}),
+      ...(latheProfile ? { latheProfile } : {}),
+      ...(sdfBlobConfig ? { sdfBlobConfig } : {}),
+      ...(p.isCutter === true ? { isCutter: true } : {}),
       material: {
         ...finish,
         color:
@@ -406,10 +568,20 @@ export function sanitizeObjectMakerResult(
 
   const rawParts = Array.isArray(raw.parts) ? raw.parts : [];
   let parts: ObjectPartSpec[] = [];
+  const cutterTargetsById = new Map<string, string[]>();
+
+  const trackCutTargets = (partId: string, entry: Record<string, unknown>) => {
+    if (entry.isCutter === true && Array.isArray(entry.cutTargets)) {
+      const list = entry.cutTargets
+        .map((t) => (typeof t === 'string' ? t.trim().toLowerCase() : ''))
+        .filter(Boolean);
+      if (list.length > 0) cutterTargetsById.set(partId, list);
+    }
+  };
 
   if (isModify && existing && raw.replaceAll !== true) {
     parts = existing.doc.parts.map((pt) => ({ ...pt }));
-    rawParts.slice(0, 16).forEach((entry, idx) => {
+    rawParts.slice(0, 18).forEach((entry, idx) => {
       if (!entry || typeof entry !== 'object') return;
       const p = entry as Record<string, unknown>;
       const targetName = typeof p.name === 'string' ? p.name.trim().toLowerCase() : '';
@@ -418,15 +590,90 @@ export function sanitizeObjectMakerResult(
         : -1;
       if (matchIdx >= 0) {
         parts[matchIdx] = buildSanitizedPart(p, matchIdx, parts[matchIdx]);
+        trackCutTargets(parts[matchIdx].id, p);
       } else {
-        parts.push(buildSanitizedPart(p, parts.length + idx));
+        const added = buildSanitizedPart(p, parts.length + idx);
+        parts.push(added);
+        trackCutTargets(added.id, p);
       }
     });
   } else {
-    rawParts.slice(0, 16).forEach((entry, idx) => {
+    rawParts.slice(0, 18).forEach((entry, idx) => {
       if (!entry || typeof entry !== 'object') return;
-      parts.push(buildSanitizedPart(entry as Record<string, unknown>, idx));
+      const p = entry as Record<string, unknown>;
+      const added = buildSanitizedPart(p, idx);
+      parts.push(added);
+      trackCutTargets(added.id, p);
     });
+  }
+
+  // Automatically execute CSG boolean subtract for any AI cutter parts (`isCutter: true`)
+  const cutters = parts.filter((pt) => pt.isCutter);
+  if (cutters.length > 0) {
+    let solids = parts.filter((pt) => !pt.isCutter);
+    const tempDoc: ObjectMakerDoc = { version: 1, parts, groups: existing?.doc.groups ?? [] };
+    for (const cutter of cutters) {
+      const cutGeo = buildPartGeometry(cutter);
+      const cutMat = computePartWorldMatrix(tempDoc, cutter);
+      cutGeo.computeBoundingBox();
+      const cutBox = cutGeo.boundingBox?.clone().applyMatrix4(cutMat);
+      const targetNames = cutterTargetsById.get(cutter.id);
+
+      solids = solids.map((solid) => {
+        if (targetNames && !targetNames.includes(solid.name.toLowerCase())) {
+          return solid;
+        }
+        const solidGeo = buildPartGeometry(solid);
+        const solidMat = computePartWorldMatrix(tempDoc, solid);
+        solidGeo.computeBoundingBox();
+        const solidBox = solidGeo.boundingBox?.clone().applyMatrix4(solidMat);
+        if (cutBox && solidBox && !cutBox.intersectsBox(solidBox)) {
+          solidGeo.dispose();
+          return solid;
+        }
+        const csgRes = performBooleanCsg('subtract', solidGeo, solidMat, cutGeo, cutMat);
+        solidGeo.dispose();
+        if (!csgRes) return solid;
+
+        csgRes.geometry.computeBoundingBox();
+        const sz = new THREE.Vector3();
+        csgRes.geometry.boundingBox?.getSize(sz);
+        const baked = serializeBufferGeometry(csgRes.geometry);
+        csgRes.geometry.dispose();
+        return {
+          ...solid,
+          parentGroupId: null,
+          shape: 'csgResult',
+          position: [
+            Number(csgRes.center.x.toFixed(4)),
+            Number(csgRes.center.y.toFixed(4)),
+            Number(csgRes.center.z.toFixed(4)),
+          ],
+          rotation: [0, 0, 0],
+          dimensions: [
+            Number(Math.max(0.01, sz.x).toFixed(3)),
+            Number(Math.max(0.01, sz.y).toFixed(3)),
+            Number(Math.max(0.01, sz.z).toFixed(3)),
+          ],
+          modifiers: {
+            ...solid.modifiers,
+            bevel: 0,
+            chamfer: 0,
+            roundness: 0,
+            edgeWear: 0,
+            bendAngle: 0,
+            twistAngle: 0,
+            taperStart: 1,
+            taperEnd: 1,
+          },
+          bakedGeometry: baked,
+        };
+      });
+      cutGeo.dispose();
+    }
+    if (solids.length > 0) {
+      parts = solids;
+    }
   }
 
   if (parts.length === 0) {

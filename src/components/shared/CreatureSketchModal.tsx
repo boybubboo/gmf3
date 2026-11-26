@@ -35,6 +35,7 @@ import {
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
+  initMakerRenderer,
   setupSceneEnvironment,
 } from '../../three/islandScene';
 import { isWebGPUFallbackAdapter } from '../../three/webglUtils';
@@ -979,7 +980,7 @@ export const CreatureSketchModal: React.FC<CreatureSketchModalProps> = ({
       state.renderer = renderer;
       state.controls = controls;
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (disposed) return false;
         envTex = setupSceneEnvironment(scene, renderer);
         return true;
@@ -991,7 +992,7 @@ export const CreatureSketchModal: React.FC<CreatureSketchModalProps> = ({
     void (async () => {
       let ok = false;
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (!isSoftwareGl && isWebGPUFallbackAdapter(renderer)) {
           ok = await switchToWebGLFallback();
         } else {

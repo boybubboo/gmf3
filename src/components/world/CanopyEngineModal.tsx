@@ -82,6 +82,7 @@ import {
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
+  initMakerRenderer,
   setupSceneEnvironment,
 } from '../../three/islandScene';
 import { exportObjectGroupToGlbBuffer } from '../../three/objectMakerBuilder';
@@ -969,7 +970,7 @@ export const CanopyEngineModal: React.FC<CanopyEngineModalProps> = ({
         previewRefs.current.controls = controls;
       }
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (disposed) return false;
         envTex = setupSceneEnvironment(scene, renderer);
         return true;
@@ -982,7 +983,7 @@ export const CanopyEngineModal: React.FC<CanopyEngineModalProps> = ({
     void (async () => {
       let initOk = false;
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (!isSoftwareGl && isWebGPUFallbackAdapter(renderer)) {
           console.warn('CanopyEngine WebGPU returned a software fallback adapter; switching to hardware WebGL2.');
           initOk = await switchToWebGLFallback();

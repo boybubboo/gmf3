@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { CurveGuideConfig, CurveGuidePresetId } from '../types/maker';
+import type { CurveGuideConfig, CurveGuidePresetId, ObjectSplineConfig } from '../types/maker';
 import { WORLD_TEX_TILE_METERS } from './buildingBlocks';
 
 export function createCurvePresetPoints(
@@ -273,4 +273,306 @@ export function buildCurveSweepGeometry(
 
 export function computeCurveLength(cfg: CurveGuideConfig): number {
   return buildCurveInstance(cfg).getLength();
+}
+
+/**
+ * Computes smooth belly-preserving taper multiplier along u in [0, 1].
+ * smoothStart / smoothEnd control how gradually the taper transitions from tip into the center belly.
+ */
+export function evaluateTaperScale(
+  u: number,
+  taperStart = 1,
+  taperEnd = 1,
+  smoothStart = 0.35,
+  smoothEnd = 0.35
+): number {
+  const clampU = THREE.MathUtils.clamp(u, 0, 1);
+  const zoneS = 0.06 + THREE.MathUtils.clamp(smoothStart, 0.04, 1) * 0.44;
+  const zoneE = 0.06 + THREE.MathUtils.clamp(smoothEnd, 0.04, 1) * 0.44;
+  const tS = THREE.MathUtils.clamp(1 - clampU / zoneS, 0, 1);
+  const tE = THREE.MathUtils.clamp(1 - (1 - clampU) / zoneE, 0, 1);
+  const eS = tS * tS * (3 - 2 * tS);
+  const eE = tE * tE * (3 - 2 * tE);
+  return Math.max(0.03, 1 + (taperStart - 1) * eS + (taperEnd - 1) * eE);
+}
+
+function buildCrossSectionRing(
+  profile: ObjectSplineConfig['profile'],
+  radialSegments: number,
+  rx: number,
+  ry: number
+): [number, number][] {
+  const segs = Math.max(6, Math.min(28, Math.round(radialSegments)));
+  const pts: [number, number][] = [];
+  if (profile === 'flatStave') {
+    // Rounded-rectangle / D-shaped stave cross section (great for bows, scythes, blades, ribbons)
+    const hw = rx * 1.15;
+    const hh = ry;
+    const corner = Math.min(hw, hh) * 0.32;
+    for (let i = 0; i < segs; i++) {
+      const a = (i / segs) * Math.PI * 2;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const sx = Math.sign(ca);
+      const sy = Math.sign(sa);
+      const x = sx * Math.max(0, hw - corner) + ca * corner;
+      const y = sy * Math.max(0, hh - corner) + sa * corner;
+      // Blend toward smooth rounded stave perimeter
+      const bx = sx * Math.pow(Math.abs(ca), 0.55) * hw;
+      const by = sy * Math.pow(Math.abs(sa), 0.72) * hh;
+      pts.push([bx * 0.7 + x * 0.3, by * 0.7 + y * 0.3]);
+    }
+    return pts;
+  }
+  if (profile === 'beveledBar') {
+    const hw = rx * 0.96;
+    const hh = ry * 0.96;
+    const ch = 0.24;
+    const raw: [number, number][] = [
+      [hw, hh * (1 - ch)],
+      [hw * (1 - ch), hh],
+      [-hw * (1 - ch), hh],
+      [-hw, hh * (1 - ch)],
+      [-hw, -hh * (1 - ch)],
+      [-hw * (1 - ch), -hh],
+      [hw * (1 - ch), -hh],
+      [hw, -hh * (1 - ch)],
+    ];
+    return raw;
+  }
+  // 'round' or 'oval'
+  for (let i = 0; i < segs; i++) {
+    const a = (i / segs) * Math.PI * 2;
+    pts.push([Math.cos(a) * rx, Math.sin(a) * ry]);
+  }
+  return pts;
+}
+
+/**
+ * Generates a watertight, smoothly tapered swept mesh along a 3D spline using parallel-transport
+ * frames so curves never twist-flip, with independent end tapers, falloff smoothness, and end caps.
+ */
+export function buildSplineTubeGeometry(cfg: ObjectSplineConfig): THREE.BufferGeometry {
+  const rawPts =
+    cfg.points && cfg.points.length >= 2
+      ? cfg.points.map((p) => new THREE.Vector3(p[0], p[1], p[2]))
+      : [new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, 0.5, 0)];
+
+  // Ensure non-zero curve even if points collapse onto each other
+  const allEqual = rawPts.every((p) => p.distanceToSquared(rawPts[0]) < 1e-6);
+  if (allEqual) {
+    rawPts[rawPts.length - 1] = rawPts[0].clone().add(new THREE.Vector3(0, 0.25, 0));
+  }
+
+  const closed = Boolean(cfg.closed && rawPts.length >= 3);
+  const curve = new THREE.CatmullRomCurve3(rawPts, closed, 'catmullrom', 0.5);
+  const steps = Math.max(12, Math.min(80, Math.round(cfg.steps ?? Math.max(24, rawPts.length * 7))));
+  const baseRadius = Math.max(0.004, cfg.radius ?? 0.06);
+  const ovalRatio =
+    cfg.profile === 'oval'
+      ? THREE.MathUtils.clamp(cfg.ovalness ?? 0.6, 0.2, 2.0)
+      : cfg.profile === 'flatStave'
+      ? THREE.MathUtils.clamp(cfg.ovalness ?? 0.48, 0.18, 1.5)
+      : 1.0;
+
+  const baseRing = buildCrossSectionRing(
+    cfg.profile ?? 'round',
+    cfg.radialSegments ?? 14,
+    1,
+    ovalRatio
+  );
+  const ringCount = baseRing.length;
+
+  // Sample centers & tangents
+  const centers: THREE.Vector3[] = [];
+  const tangents: THREE.Vector3[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps;
+    centers.push(curve.getPointAt(closed ? u % 1 : u));
+    const tan = curve.getTangentAt(closed ? u % 1 : u);
+    if (tan.lengthSq() < 1e-8) tan.set(0, 1, 0);
+    else tan.normalize();
+    tangents.push(tan);
+  }
+
+  // Parallel-transport (Bishop) frames to avoid Frenet flips on S-curves & inflection points
+  const normals: THREE.Vector3[] = [];
+  const binormals: THREE.Vector3[] = [];
+  const t0 = tangents[0];
+  const refVec =
+    Math.abs(t0.dot(new THREE.Vector3(0, 0, 1))) < 0.9
+      ? new THREE.Vector3(0, 0, 1)
+      : new THREE.Vector3(1, 0, 0);
+  const n0 = new THREE.Vector3().crossVectors(refVec, t0).normalize();
+  const b0 = new THREE.Vector3().crossVectors(t0, n0).normalize();
+  normals.push(n0);
+  binormals.push(b0);
+
+  const qRot = new THREE.Quaternion();
+  for (let i = 1; i <= steps; i++) {
+    qRot.setFromUnitVectors(tangents[i - 1], tangents[i]);
+    const n = normals[i - 1].clone().applyQuaternion(qRot).normalize();
+    // Re-orthogonalize against tangent
+    n.addScaledVector(tangents[i], -n.dot(tangents[i]));
+    if (n.lengthSq() < 1e-8) n.copy(normals[i - 1]);
+    else n.normalize();
+    const b = new THREE.Vector3().crossVectors(tangents[i], n).normalize();
+    normals.push(n);
+    binormals.push(b);
+  }
+
+  const pointRadii = cfg.pointRadii;
+  const samplePointScale = (u: number): number => {
+    if (!pointRadii || pointRadii.length === 0) return 1;
+    if (pointRadii.length === 1) return Math.max(0.05, pointRadii[0]);
+    const f = THREE.MathUtils.clamp(u, 0, 1) * (pointRadii.length - 1);
+    const i0 = Math.floor(f);
+    const i1 = Math.min(pointRadii.length - 1, i0 + 1);
+    const frac = f - i0;
+    return THREE.MathUtils.lerp(
+      Math.max(0.05, pointRadii[i0] ?? 1),
+      Math.max(0.05, pointRadii[i1] ?? 1),
+      frac * frac * (3 - 2 * frac)
+    );
+  };
+
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const totalLen = Math.max(0.1, curve.getLength());
+
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps;
+    const taper = closed
+      ? 1
+      : evaluateTaperScale(
+          u,
+          cfg.taperStart ?? 1,
+          cfg.taperEnd ?? 1,
+          cfg.taperSmoothStart ?? 0.35,
+          cfg.taperSmoothEnd ?? 0.35
+        );
+    const rHere = baseRadius * taper * samplePointScale(u);
+    const c = centers[i];
+    const n = normals[i];
+    const b = binormals[i];
+
+    for (let j = 0; j <= ringCount; j++) {
+      const [rx, ry] = baseRing[j % ringCount];
+      const vx = c.x + (n.x * rx + b.x * ry) * rHere;
+      const vy = c.y + (n.y * rx + b.y * ry) * rHere;
+      const vz = c.z + (n.z * rx + b.z * ry) * rHere;
+      positions.push(vx, vy, vz);
+      uvs.push(
+        (j / ringCount) * (2 * Math.PI * Math.max(0.04, rHere)) / WORLD_TEX_TILE_METERS,
+        (u * totalLen) / WORLD_TEX_TILE_METERS
+      );
+    }
+  }
+
+  const stride = ringCount + 1;
+  for (let i = 0; i < steps; i++) {
+    for (let j = 0; j < ringCount; j++) {
+      const v00 = i * stride + j;
+      const v01 = i * stride + (j + 1);
+      const v10 = (i + 1) * stride + j;
+      const v11 = (i + 1) * stride + (j + 1);
+      indices.push(v00, v01, v11);
+      indices.push(v00, v11, v10);
+    }
+  }
+
+  // Watertight end caps for non-closed curves
+  if (!closed) {
+    const startCenterIdx = positions.length / 3;
+    const cStart = centers[0];
+    positions.push(cStart.x, cStart.y, cStart.z);
+    uvs.push(0.5, 0.5);
+    const startRingStart = positions.length / 3;
+    for (let j = 0; j < ringCount; j++) {
+      const src = j * 3;
+      positions.push(positions[src], positions[src + 1], positions[src + 2]);
+      uvs.push(0.5 + baseRing[j][0] * 0.25, 0.5 + baseRing[j][1] * 0.25);
+    }
+    for (let j = 0; j < ringCount; j++) {
+      const nextJ = (j + 1) % ringCount;
+      indices.push(startCenterIdx, startRingStart + nextJ, startRingStart + j);
+    }
+
+    const endCenterIdx = positions.length / 3;
+    const cEnd = centers[steps];
+    positions.push(cEnd.x, cEnd.y, cEnd.z);
+    uvs.push(0.5, 0.5);
+    const endRingStart = positions.length / 3;
+    const lastRingBase = steps * stride;
+    for (let j = 0; j < ringCount; j++) {
+      const src = (lastRingBase + j) * 3;
+      positions.push(positions[src], positions[src + 1], positions[src + 2]);
+      uvs.push(0.5 + baseRing[j][0] * 0.25, 0.5 + baseRing[j][1] * 0.25);
+    }
+    for (let j = 0; j < ringCount; j++) {
+      const nextJ = (j + 1) % ringCount;
+      indices.push(endCenterIdx, endRingStart + j, endRingStart + nextJ);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+export function computeSplineLength(cfg: ObjectSplineConfig): number {
+  const pts =
+    cfg.points && cfg.points.length >= 2
+      ? cfg.points.map((p) => new THREE.Vector3(p[0], p[1], p[2]))
+      : [new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, 0.5, 0)];
+  if (pts.every((p) => p.distanceToSquared(pts[0]) < 1e-6)) return 0.25;
+  return new THREE.CatmullRomCurve3(pts, Boolean(cfg.closed && pts.length >= 3)).getLength();
+}
+
+/**
+ * Mirrors control points & per-point radii symmetrically across Y=0 (for vertical bow limbs)
+ * or X=0 (for horizontal bars/horns) whenever mirrorSymmetry is enabled.
+ */
+export function applySplineSymmetryFromIndex(
+  cfg: ObjectSplineConfig,
+  editedIdx: number
+): ObjectSplineConfig {
+  const mode = cfg.mirrorSymmetry ?? 'none';
+  if (mode === 'none' || cfg.points.length < 2) return cfg;
+  const last = cfg.points.length - 1;
+  const oppIdx = last - editedIdx;
+  if (oppIdx < 0 || oppIdx >= cfg.points.length) return cfg;
+
+  const src = cfg.points[editedIdx];
+  const nextPoints = cfg.points.map((pt) => [...pt] as [number, number, number]);
+
+  if (editedIdx === oppIdx) {
+    // Center point sits cleanly on the symmetry plane
+    nextPoints[editedIdx] =
+      mode === 'y'
+        ? [src[0], 0, src[2]]
+        : [0, src[1], src[2]];
+  } else {
+    nextPoints[oppIdx] =
+      mode === 'y'
+        ? [src[0], Number((-src[1]).toFixed(3)), src[2]]
+        : [Number((-src[0]).toFixed(3)), src[1], src[2]];
+  }
+
+  let nextRadii = cfg.pointRadii ? [...cfg.pointRadii] : undefined;
+  if (nextRadii && nextRadii.length === cfg.points.length && oppIdx !== editedIdx) {
+    nextRadii[oppIdx] = nextRadii[editedIdx];
+  }
+
+  return {
+    ...cfg,
+    points: nextPoints,
+    ...(nextRadii ? { pointRadii: nextRadii } : {}),
+  };
 }

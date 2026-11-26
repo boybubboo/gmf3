@@ -34,7 +34,9 @@ import {
 } from './proceduralRigAnimator';
 import {
   createHardwareWebGL2Context,
+  getKnownWebGPUMaxTextureArrayLayers,
   optimizeObjectBuffers,
+  sanitizeObjectMorphTargets,
 } from './webglUtils';
 
 export interface CachedGLTF {
@@ -248,6 +250,8 @@ function prepareGLTFScene(gltf: GLTF, category: AssetCategory): CachedGLTF {
       });
     }
   });
+  const animations = gltf.animations ?? [];
+  sanitizeObjectMorphTargets(root, { animations });
   optimizeObjectBuffers(root, {
     weldUnindexed: true,
     interleave: true,
@@ -255,7 +259,6 @@ function prepareGLTFScene(gltf: GLTF, category: AssetCategory): CachedGLTF {
   });
   const { baseScale, baseGroundOffset } = computeNormalizedBounds(root, category);
   const skeletonInfo = inspectModelSkeleton(root);
-  const animations = gltf.animations ?? [];
   const clipDiagnostics = animations.map((c, idx) => inspectAnimationClip(c, `Clip ${idx + 1}`));
   const hasMovingClips = clipDiagnostics.some((d) => d.hasMotion);
   const defaultRigSettings = createDefaultRigSettings(skeletonInfo, hasMovingClips);
@@ -765,16 +768,37 @@ export function instantiateCustomModel(
         )
       : null;
 
+  const knownLayerCap = getKnownWebGPUMaxTextureArrayLayers();
+  let animationsForInstance = cached.animations;
+  if (knownLayerCap !== null && knownLayerCap > 0) {
+    let needsMorphCap = false;
+    clone.traverse((obj) => {
+      const m = obj as THREE.Mesh;
+      if (!m.isMesh || !m.geometry) return;
+      const ma = m.geometry.morphAttributes;
+      const len = ma?.position?.length ?? ma?.normal?.length ?? ma?.color?.length ?? 0;
+      if (len > knownLayerCap) needsMorphCap = true;
+    });
+    if (needsMorphCap) {
+      animationsForInstance = cached.animations.map((c) => c.clone());
+      sanitizeObjectMorphTargets(clone, {
+        animations: animationsForInstance,
+        maxLayers: knownLayerCap,
+        cloneSharedGeometries: true,
+      });
+    }
+  }
+
   let mixer: THREE.AnimationMixer | null = null;
   const clips: Partial<Record<CustomClipSlot, THREE.AnimationAction>> = {};
   const clipHasMotion: Partial<Record<CustomClipSlot, boolean>> = {};
   let fallbackAction: THREE.AnimationAction | null = null;
   let fallbackHasMotion = false;
 
-  if (cached.animations.length > 0) {
+  if (animationsForInstance.length > 0) {
     mixer = new THREE.AnimationMixer(clone);
     const clipByName = new Map<string, { clip: THREE.AnimationClip; hasMotion: boolean }>();
-    cached.animations.forEach((c, idx) => {
+    animationsForInstance.forEach((c, idx) => {
       const key = c.name || `Clip ${idx + 1}`;
       const diag = cached.clipDiagnostics[idx];
       clipByName.set(key, { clip: c, hasMotion: diag?.hasMotion ?? true });
@@ -823,7 +847,7 @@ export function instantiateCustomModel(
       }
     }
 
-    fallbackAction = mixer.clipAction(cached.animations[0]);
+    fallbackAction = mixer.clipAction(animationsForInstance[0]);
     fallbackHasMotion = cached.clipDiagnostics[0]?.hasMotion ?? true;
   }
 

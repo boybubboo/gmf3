@@ -21,6 +21,7 @@ import {
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
+  initMakerRenderer,
   setupSceneEnvironment,
 } from '../../three/islandScene';
 import { getTerrainTextureAtlas } from '../../three/proceduralTextures';
@@ -431,7 +432,7 @@ export const TextureStudioModal: React.FC<TextureStudioModalProps> = ({
     };
     void (async () => {
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
       } catch {
         // ignore if unmounted
       }

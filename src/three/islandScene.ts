@@ -148,8 +148,10 @@ import {
 import { StylizedGrassSystem } from './stylizedGrassSystem';
 import {
   createHardwareWebGL2Context,
+  getRendererMaxTextureArrayLayers,
   isIOSDevice,
   probeHardwareWebGL2,
+  recordWebGPUMaxTextureArrayLayers,
 } from './webglUtils';
 import {
   buildProceduralCanopyForest,
@@ -303,6 +305,63 @@ export function createMakerRenderer(isSoftwareGl: boolean, forceWebGL = false): 
   );
   renderer.shadowMap.enabled = !isSoftwareGl;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  return renderer;
+}
+
+/**
+ * Initializes a `WebGPURenderer` created by `createMakerRenderer`, inspecting the WebGPU
+ * adapter's `limits.maxTextureArrayLayers` prior to device creation so geometries with >256
+ * morph targets or array textures can allocate full-resolution layers (e.g. 2048) cleanly
+ * when supported, while keeping a safe fallback on hardware capped at 256.
+ */
+export async function initMakerRenderer(
+  renderer: WebGPURenderer,
+  desiredMaxTextureArrayLayers = 2048
+): Promise<WebGPURenderer> {
+  const backend = renderer.backend as
+    | {
+        isWebGPUBackend?: boolean;
+        parameters?: {
+          powerPreference?: GPUPowerPreference;
+          requiredLimits?: Record<string, number>;
+        };
+        device?: GPUDevice;
+      }
+    | undefined;
+
+  if (
+    backend?.isWebGPUBackend === true &&
+    typeof navigator !== 'undefined' &&
+    navigator.gpu &&
+    typeof navigator.gpu.requestAdapter === 'function'
+  ) {
+    try {
+      const adapterOptions = {
+        powerPreference: backend.parameters?.powerPreference ?? 'high-performance',
+        featureLevel: 'compatibility',
+      } as GPURequestAdapterOptions;
+      const adapter = await navigator.gpu.requestAdapter(adapterOptions);
+      const adapterMaxLayers = adapter?.limits?.maxTextureArrayLayers;
+      if (typeof adapterMaxLayers === 'number' && adapterMaxLayers > 256) {
+        const clampedTarget = Math.min(desiredMaxTextureArrayLayers, adapterMaxLayers);
+        if (clampedTarget > 256 && backend.parameters) {
+          backend.parameters.requiredLimits = {
+            ...(backend.parameters.requiredLimits ?? {}),
+            maxTextureArrayLayers: clampedTarget,
+          };
+        }
+      }
+    } catch {
+      // Proceed with default limits if pre-inspection fails
+    }
+  }
+
+  await renderer.init();
+
+  if (backend?.isWebGPUBackend === true) {
+    recordWebGPUMaxTextureArrayLayers(getRendererMaxTextureArrayLayers(renderer));
+  }
+
   return renderer;
 }
 

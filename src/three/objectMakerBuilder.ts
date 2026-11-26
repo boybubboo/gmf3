@@ -19,6 +19,12 @@ import {
   enableShadows,
 } from './buildingBlocks';
 import { deserializeBufferGeometry } from './meshCsg';
+import { buildSplineTubeGeometry, evaluateTaperScale } from './curveGuide';
+import {
+  SdfFieldEvaluator,
+  polygonizeSdfToGeometry,
+  type SdfPrimitive,
+} from './sdfMarchingCubes';
 import {
   buildPlantPartGeometry,
   createPlantPartMaterial,
@@ -54,6 +60,9 @@ export const OBJECT_PRIMITIVE_CATALOG: ObjectPrimitiveMeta[] = [
   { id: 'fence', label: 'Rail / Fence', defaultName: 'Fence', category: 'architectural', defaultSize: [1.6, 0.85, 0.2] },
   { id: 'roofAFrame', label: 'A-Frame Roof', defaultName: 'AFrameRoof', category: 'architectural', defaultSize: [1.8, 1.0, 1.6] },
   { id: 'roofSlope', label: 'Sloped Roof', defaultName: 'SlopedRoof', category: 'architectural', defaultSize: [1.6, 1.0, 1.6] },
+  { id: 'splineTube', label: 'Curved Spine', defaultName: 'Spine', category: 'basic', defaultSize: [0.35, 1.4, 0.35] },
+  { id: 'lathe', label: 'Turned Lathe', defaultName: 'Turned', category: 'basic', defaultSize: [0.65, 1.0, 0.65] },
+  { id: 'sdfBlob', label: 'Organic SDF', defaultName: 'Organic', category: 'basic', defaultSize: [0.8, 0.8, 0.8] },
 ];
 
 export const DEFAULT_PART_MODIFIERS: ObjectGeometryModifiers = {
@@ -62,6 +71,13 @@ export const DEFAULT_PART_MODIFIERS: ObjectGeometryModifiers = {
   roundness: 0,
   edgeWear: 0,
   segments: 16,
+  taperStart: 1,
+  taperEnd: 1,
+  taperSmoothStart: 0.35,
+  taperSmoothEnd: 0.35,
+  bendAngle: 0,
+  bendAxis: 'z',
+  twistAngle: 0,
 };
 
 export function createDefaultMaterialFinish(
@@ -108,6 +124,70 @@ export function createDefaultPartSpec(
       ? createDefaultMaterialFinish('clayTile')
       : createDefaultMaterialFinish('sandstone');
 
+  const defaultSplineConfig =
+    shape === 'splineTube'
+      ? overrides.splineConfig ?? {
+          points: [
+            [0, -0.65, -0.14],
+            [0, -0.34, 0.05],
+            [0, 0, 0.14],
+            [0, 0.34, 0.05],
+            [0, 0.65, -0.14],
+          ],
+          profile: 'round' as const,
+          radius: 0.055,
+          ovalness: 0.55,
+          taperStart: 0.45,
+          taperEnd: 0.45,
+          taperSmoothStart: 0.55,
+          taperSmoothEnd: 0.55,
+          closed: false,
+          steps: 36,
+          radialSegments: 14,
+          mirrorSymmetry: 'y' as const,
+        }
+      : overrides.splineConfig;
+
+  const defaultLatheProfile: [number, number][] | undefined =
+    shape === 'lathe'
+      ? overrides.latheProfile ?? [
+          [0.01, -0.5],
+          [0.24, -0.48],
+          [0.2, -0.38],
+          [0.08, -0.18],
+          [0.07, 0.05],
+          [0.26, 0.32],
+          [0.3, 0.5],
+          [0.01, 0.5],
+        ]
+      : overrides.latheProfile;
+
+  const defaultSdfBlobConfig =
+    shape === 'sdfBlob'
+      ? overrides.sdfBlobConfig ?? {
+          blendK: 0.14,
+          resolution: 28,
+          primitives: [
+            {
+              kind: 'ellipsoid',
+              op: 'add',
+              a: [0, 0, 0],
+              b: [0.28, 0.22, 0.24],
+            },
+            {
+              kind: 'capsule',
+              op: 'add',
+              a: [0, 0.08, 0.04],
+              b: [0, 0.36, -0.06],
+              startRadius: 0.16,
+              midRadius: 0.14,
+              endRadius: 0.09,
+              curvature: 0.25,
+            },
+          ],
+        }
+      : overrides.sdfBlobConfig;
+
   return {
     id: overrides.id ?? uid(),
     name: overrides.name ?? `${meta?.defaultName ?? 'Part'}_${Math.floor(Math.random() * 90 + 10)}`,
@@ -124,6 +204,9 @@ export function createDefaultPartSpec(
       ...defaultMat,
       ...(overrides.material ?? {}),
     },
+    ...(defaultSplineConfig ? { splineConfig: defaultSplineConfig } : {}),
+    ...(defaultLatheProfile ? { latheProfile: defaultLatheProfile } : {}),
+    ...(defaultSdfBlobConfig ? { sdfBlobConfig: defaultSdfBlobConfig } : {}),
     bakedGeometry: overrides.bakedGeometry,
     hidden: overrides.hidden,
     isCutter: overrides.isCutter,
@@ -340,6 +423,187 @@ function hashSeed(id: string): number {
   return Math.abs(h);
 }
 
+function hasParametricDeform(m: ObjectGeometryModifiers): boolean {
+  const taperS = m.taperStart ?? 1;
+  const taperE = m.taperEnd ?? 1;
+  const bend = m.bendAngle ?? 0;
+  const twist = m.twistAngle ?? 0;
+  return (
+    Math.abs(taperS - 1) > 0.01 ||
+    Math.abs(taperE - 1) > 0.01 ||
+    Math.abs(bend) > 0.4 ||
+    Math.abs(twist) > 0.4
+  );
+}
+
+/**
+ * Applies smooth end-taper with belly-preserving falloff, Y-axis twist, and circular-arc bend
+ * to any procedural BufferGeometry in local space.
+ */
+function applyParametricDeformers(
+  geo: THREE.BufferGeometry,
+  modifiers: ObjectGeometryModifiers
+): THREE.BufferGeometry {
+  if (!hasParametricDeform(modifiers)) return geo;
+
+  geo.computeBoundingBox();
+  const box = geo.boundingBox;
+  if (!box) return geo;
+  const minY = box.min.y;
+  const maxY = box.max.y;
+  const spanY = Math.max(0.01, maxY - minY);
+  const yMid = (minY + maxY) * 0.5;
+
+  const taperStart = THREE.MathUtils.clamp(modifiers.taperStart ?? 1, 0.04, 2.2);
+  const taperEnd = THREE.MathUtils.clamp(modifiers.taperEnd ?? 1, 0.04, 2.2);
+  const smoothStart = THREE.MathUtils.clamp(modifiers.taperSmoothStart ?? 0.35, 0.04, 1);
+  const smoothEnd = THREE.MathUtils.clamp(modifiers.taperSmoothEnd ?? 0.35, 0.04, 1);
+  const twistRad = THREE.MathUtils.degToRad(
+    THREE.MathUtils.clamp(modifiers.twistAngle ?? 0, -360, 360)
+  );
+  const bendRad = THREE.MathUtils.degToRad(
+    THREE.MathUtils.clamp(modifiers.bendAngle ?? 0, -180, 180)
+  );
+  const bendAxis = modifiers.bendAxis === 'x' ? 'x' : 'z';
+
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    let x = pos.getX(i);
+    let y = pos.getY(i);
+    let z = pos.getZ(i);
+
+    const u = THREE.MathUtils.clamp((y - minY) / spanY, 0, 1);
+
+    // 1. Taper Start & End with smooth belly transition
+    const scale = evaluateTaperScale(u, taperStart, taperEnd, smoothStart, smoothEnd);
+    x *= scale;
+    z *= scale;
+
+    // 2. Twist around Y
+    if (Math.abs(twistRad) > 1e-4) {
+      const a = twistRad * (u - 0.5);
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const rx = x * ca - z * sa;
+      const rz = x * sa + z * ca;
+      x = rx;
+      z = rz;
+    }
+
+    // 3. Circular-arc Bend preserving center arc length
+    if (Math.abs(bendRad) > 1e-4) {
+      const R = spanY / bendRad;
+      const relY = y - yMid;
+      const theta = relY / R;
+      const ct = Math.cos(theta);
+      const st = Math.sin(theta);
+      if (bendAxis === 'x') {
+        const nx = R - (R - x) * ct;
+        const ny = yMid + (R - x) * st;
+        x = nx;
+        y = ny;
+      } else {
+        const nz = R - (R - z) * ct;
+        const ny = yMid + (R - z) * st;
+        z = nz;
+        y = ny;
+      }
+    }
+
+    pos.setXYZ(i, x, y, z);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+function buildObjectSdfGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
+  const cfg = part.sdfBlobConfig;
+  const nodes = cfg?.primitives?.length
+    ? cfg.primitives
+    : [
+        {
+          kind: 'ellipsoid' as const,
+          op: 'add' as const,
+          a: [0, 0, 0] as [number, number, number],
+          b: [0.28, 0.22, 0.24] as [number, number, number],
+        },
+      ];
+
+  const sdfPrims: SdfPrimitive[] = nodes.map((n) => ({
+    kind: n.kind,
+    op: n.op === 'sub' ? 'sub' : 'add',
+    a: n.a,
+    b: n.b,
+    startRadius: n.startRadius ?? 0.14,
+    midRadius: n.midRadius ?? n.startRadius ?? 0.14,
+    endRadius: n.endRadius ?? n.startRadius ?? 0.12,
+    curvature: n.curvature ?? 0,
+    blendScale: n.blendScale ?? 1,
+    roundness: n.roundness ?? 0.06,
+    color: [0.85, 0.85, 0.85],
+    boneA: 0,
+  }));
+
+  const evaluator = new SdfFieldEvaluator(sdfPrims, THREE.MathUtils.clamp(cfg?.blendK ?? 0.12, 0.02, 0.45));
+  const res = polygonizeSdfToGeometry(
+    evaluator,
+    1,
+    THREE.MathUtils.clamp(cfg?.resolution ?? 28, 18, 44),
+    false
+  );
+  const geo = res.geometry;
+  geo.deleteAttribute('color');
+  geo.deleteAttribute('skinIndex');
+  geo.deleteAttribute('skinWeight');
+  applyPlanarMeterUVs(geo);
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+export function convertPartToSplinePart(part: ObjectPartSpec): ObjectPartSpec {
+  const w = Math.max(0.02, part.dimensions[0]);
+  const h = Math.max(0.04, part.dimensions[1]);
+  const d = Math.max(0.02, part.dimensions[2]);
+  const halfH = h * 0.5;
+  const baseRadius = Math.max(0.012, Math.min(w, d) * 0.5);
+  const ovalness =
+    Math.abs(w - d) > 0.01
+      ? THREE.MathUtils.clamp(Math.min(w, d) / Math.max(0.01, Math.max(w, d)), 0.22, 1.6)
+      : 1;
+  const bendAmt = ((part.modifiers.bendAngle ?? 0) / 90) * (h * 0.22);
+  const pts: [number, number, number][] = [0, 0.25, 0.5, 0.75, 1].map((u) => {
+    const y = Number((-halfH + u * h).toFixed(3));
+    const arch = Math.cos((u - 0.5) * Math.PI) * bendAmt;
+    return [
+      part.modifiers.bendAxis === 'x' ? Number(arch.toFixed(3)) : 0,
+      y,
+      part.modifiers.bendAxis !== 'x' ? Number(arch.toFixed(3)) : 0,
+    ];
+  });
+  return {
+    ...part,
+    shape: 'splineTube',
+    splineConfig: {
+      points: pts,
+      profile: ovalness < 0.72 ? 'flatStave' : 'round',
+      radius: Number(baseRadius.toFixed(3)),
+      ovalness: Number(ovalness.toFixed(2)),
+      taperStart: part.modifiers.taperStart ?? 1,
+      taperEnd: part.modifiers.taperEnd ?? 1,
+      taperSmoothStart: part.modifiers.taperSmoothStart ?? 0.35,
+      taperSmoothEnd: part.modifiers.taperSmoothEnd ?? 0.35,
+      closed: false,
+      steps: 36,
+      radialSegments: Math.max(10, Math.min(24, part.modifiers.segments ?? 16)),
+      mirrorSymmetry: 'none',
+    },
+  };
+}
+
 export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
   if (part.shape === 'csgResult' && part.bakedGeometry) {
     const geo = deserializeBufferGeometry(part.bakedGeometry);
@@ -354,6 +618,49 @@ export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
     return geo;
   }
 
+  if (part.shape === 'splineTube') {
+    const splineCfg = part.splineConfig ?? {
+      points: [
+        [0, -0.6, 0],
+        [0, 0, 0.15],
+        [0, 0.6, 0],
+      ],
+      profile: 'round' as const,
+      radius: 0.06,
+      taperStart: 1,
+      taperEnd: 1,
+      taperSmoothStart: 0.35,
+      taperSmoothEnd: 0.35,
+    };
+    return buildSplineTubeGeometry(splineCfg);
+  }
+
+  if (part.shape === 'lathe') {
+    const profile =
+      part.latheProfile && part.latheProfile.length >= 2
+        ? part.latheProfile
+        : [
+            [0.01, -0.4],
+            [0.24, -0.35],
+            [0.1, 0],
+            [0.22, 0.4],
+            [0.01, 0.42],
+          ];
+    const pts = profile.map(([r, y]) => new THREE.Vector2(Math.max(0.001, r), y));
+    const latheSegs = Math.max(10, Math.min(32, part.modifiers.segments ?? 20));
+    const g = new THREE.LatheGeometry(pts, latheSegs);
+    applyPlanarMeterUVs(g);
+    const deformed = applyParametricDeformers(g, part.modifiers);
+    deformed.computeVertexNormals();
+    deformed.computeBoundingBox();
+    deformed.computeBoundingSphere();
+    return deformed;
+  }
+
+  if (part.shape === 'sdfBlob') {
+    return buildObjectSdfGeometry(part);
+  }
+
   if (isPlantShape(part.shape)) {
     const plantGeo = buildPlantPartGeometry(part);
     plantGeo.computeBoundingBox();
@@ -361,12 +668,14 @@ export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
     return plantGeo;
   }
 
-  const w = Math.max(0.06, part.dimensions[0]);
-  const h = Math.max(0.06, part.dimensions[1]);
-  const d = Math.max(0.06, part.dimensions[2]);
+  const w = Math.max(0.01, part.dimensions[0]);
+  const h = Math.max(0.01, part.dimensions[1]);
+  const d = Math.max(0.01, part.dimensions[2]);
   const { bevel, chamfer, roundness, edgeWear } = part.modifiers;
   const minDim = Math.min(w, h, d);
-  const segBase = Math.max(8, Math.min(28, part.modifiers.segments ?? 16));
+  const segBase = Math.max(8, Math.min(32, part.modifiers.segments ?? 16));
+  const deformActive = hasParametricDeform(part.modifiers);
+  const heightSegs = deformActive ? Math.max(22, segBase) : Math.max(2, Math.round(bevel * 4) + 1);
   const seed = hashSeed(part.id);
 
   let geo: THREE.BufferGeometry;
@@ -378,7 +687,10 @@ export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
     case 'beamLarge':
     case 'beamSmall': {
       const organicAmount = Math.max(edgeWear, chamfer * 0.55);
-      if (edgeWear > 0.02 || (chamfer > 0.05 && edgeWear > 0)) {
+      if (deformActive) {
+        geo = new THREE.BoxGeometry(w, h, d, 4, heightSegs, 4);
+        applyPlanarMeterUVs(geo);
+      } else if (edgeWear > 0.02 || (chamfer > 0.05 && edgeWear > 0)) {
         const minCh = Math.min(minDim * 0.36, 0.015 + (bevel + chamfer) * minDim * 0.18);
         geo = createOrganicStoneBoxGeometry(w, h, d, 1, 1, 1, organicAmount, seed, minCh);
       } else if (roundness > 0.02 || bevel > 0.02 || chamfer > 0.02) {
@@ -413,7 +725,7 @@ export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
 
     case 'cylinder': {
       const topR = 0.5 * (1 - Math.min(0.35, chamfer * 0.2));
-      const g = new THREE.CylinderGeometry(topR, 0.5, 1, segBase, Math.max(2, Math.round(bevel * 4) + 1));
+      const g = new THREE.CylinderGeometry(topR, 0.5, 1, segBase, heightSegs);
       g.scale(w, h, d);
       geo = applyEdgeDegradationToGeometry(g, edgeWear, chamfer, seed);
       applyPlanarMeterUVs(geo);
@@ -422,7 +734,7 @@ export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
 
     case 'cone': {
       const tipR = Math.max(0, roundness * 0.16);
-      const g = new THREE.CylinderGeometry(tipR, 0.5, 1, segBase, 2);
+      const g = new THREE.CylinderGeometry(tipR, 0.5, 1, segBase, deformActive ? heightSegs : 2);
       g.scale(w, h, d);
       geo = applyEdgeDegradationToGeometry(g, edgeWear, chamfer * 0.5, seed);
       applyPlanarMeterUVs(geo);
@@ -431,17 +743,17 @@ export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
 
     case 'capsule': {
       const r = Math.min(w, d) * 0.5;
-      const len = Math.max(0.05, h - r * 2);
-      const g = new THREE.CapsuleGeometry(r, len, Math.max(4, Math.round(segBase * 0.35)), segBase);
-      if (Math.abs(w - d) > 0.01) {
-        g.scale(w / Math.max(0.01, Math.min(w, d)), 1, d / Math.max(0.01, Math.min(w, d)));
+      const len = Math.max(0.02, h - r * 2);
+      const g = new THREE.CapsuleGeometry(r, len, Math.max(4, Math.round(segBase * 0.35)), segBase, deformActive ? heightSegs : 1);
+      if (Math.abs(w - d) > 0.008) {
+        g.scale(w / Math.max(0.008, Math.min(w, d)), 1, d / Math.max(0.008, Math.min(w, d)));
       }
       geo = applyEdgeDegradationToGeometry(g, edgeWear * 0.7, 0, seed);
       break;
     }
 
     case 'torus': {
-      const tubeR = THREE.MathUtils.clamp(h * 0.5, 0.03, Math.min(w, d) * 0.28);
+      const tubeR = THREE.MathUtils.clamp(h * 0.5, 0.01, Math.min(w, d) * 0.28);
       const mainR = Math.max(tubeR * 1.4, Math.min(w, d) * 0.5 - tubeR);
       const g = new THREE.TorusGeometry(mainR, tubeR, Math.max(8, Math.round(segBase * 0.65)), segBase);
       g.rotateX(Math.PI / 2);
@@ -451,7 +763,7 @@ export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
 
     case 'prism': {
       const sides = 6;
-      const g = new THREE.CylinderGeometry(0.5, 0.5, 1, sides, 2);
+      const g = new THREE.CylinderGeometry(0.5, 0.5, 1, sides, deformActive ? heightSegs : 2);
       g.scale(w, h, d);
       geo = applyEdgeDegradationToGeometry(g, edgeWear, chamfer, seed);
       applyPlanarMeterUVs(geo);
@@ -579,14 +891,16 @@ export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
 
     case 'pillar': {
       const radius = Math.min(w, d) * 0.42;
-      const g = new THREE.CylinderGeometry(radius * 0.88, radius, h, Math.max(8, segBase), 4);
+      const g = new THREE.CylinderGeometry(radius * 0.88, radius, h, Math.max(8, segBase), deformActive ? heightSegs : 4);
       geo = applyEdgeDegradationToGeometry(g, edgeWear, chamfer, seed);
       applyPlanarMeterUVs(geo);
       break;
     }
 
     case 'fence': {
-      const g = new RoundedBoxGeometry(w, h, d, 2, Math.min(d * 0.3, 0.03));
+      const g = deformActive
+        ? new THREE.BoxGeometry(w, h, d, 4, heightSegs, 4)
+        : new RoundedBoxGeometry(w, h, d, 2, Math.min(d * 0.3, 0.03));
       geo = applyEdgeDegradationToGeometry(g, edgeWear, chamfer, seed);
       applyPlanarMeterUVs(geo);
       break;
@@ -599,6 +913,7 @@ export function buildPartGeometry(part: ObjectPartSpec): THREE.BufferGeometry {
     }
   }
 
+  geo = applyParametricDeformers(geo, part.modifiers);
   geo.computeBoundingBox();
   geo.computeBoundingSphere();
   return geo;

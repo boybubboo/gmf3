@@ -54,11 +54,13 @@ import {
 } from '../../three/buildingBlocks';
 import { WEATHERING_PRESETS } from '../../three/nodeMaterialUtils';
 import {
+  applySplineSymmetryFromIndex,
+  buildCurveInstance,
+  buildSplineTubeGeometry,
+  computeCurveLength,
+  computeSplineLength,
   createCurvePresetPoints,
   createDefaultCurveGuide,
-  buildCurveInstance,
-  buildCurveSweepGeometry,
-  computeCurveLength,
   sampleCurveTransforms,
 } from '../../three/curveGuide';
 import {
@@ -75,6 +77,7 @@ import {
   buildPartGeometry,
   centerAndGroundObjectDoc,
   computePartWorldMatrix,
+  convertPartToSplinePart,
   createDefaultMaterialFinish,
   createDefaultPartSpec,
   createSavePlinthObjectDoc,
@@ -111,6 +114,7 @@ import {
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
+  initMakerRenderer,
   setupSceneEnvironment,
 } from '../../three/islandScene';
 import { isWebGPUFallbackAdapter } from '../../three/webglUtils';
@@ -581,6 +585,10 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
   const [curveSweepWidth, setCurveSweepWidth] = useState<number>(0.14);
   const [curveArrayCount, setCurveArrayCount] = useState<number>(8);
 
+  // Live Segmented Spine Editor state (part-local splineTube editing)
+  const [editSplineMode, setEditSplineMode] = useState<boolean>(true);
+  const [activeSplinePtIdx, setActiveSplinePtIdx] = useState<number | null>(null);
+
   // Mechanics inspection & testing state
   const [scenePartNodes, setScenePartNodes] = useState<ObjectPartNode[]>([]);
   const [activeMechanismId, setActiveMechanismId] = useState<string | null>(null);
@@ -910,6 +918,62 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     setSelectedPartIds([newPart.id]);
     setSelectedGroupId(null);
     setActiveCurvePtIdx(null);
+    if (shape === 'splineTube' && newPart.splineConfig) {
+      setEditSplineMode(true);
+      setActiveSplinePtIdx(Math.floor(newPart.splineConfig.points.length / 2));
+      setToolMode('translate');
+    } else {
+      setActiveSplinePtIdx(null);
+    }
+  };
+
+  const handleConvertToSegmentedSpline = () => {
+    if (!primaryPart || primaryPart.shape === 'csgResult' || primaryPart.shape === 'splineTube') return;
+    const converted = convertPartToSplinePart(primaryPart);
+    commitDoc((prev) => ({
+      ...prev,
+      parts: prev.parts.map((p) => (p.id === primaryPart.id ? converted : p)),
+    }));
+    setEditSplineMode(true);
+    const midIdx = Math.floor((converted.splineConfig?.points.length ?? 3) / 2);
+    setActiveSplinePtIdx(midIdx);
+    setToolMode('translate');
+    flashToast('Converted to live Segmented Spine — drag spheres to bend');
+  };
+
+  const handleMirrorDuplicateX = () => {
+    if (!primaryPart) return;
+    const clone = JSON.parse(JSON.stringify(primaryPart)) as ObjectPartSpec;
+    clone.id = uid();
+    clone.name = `${primaryPart.name}_Mirror`;
+    clone.position = [
+      Number((-primaryPart.position[0]).toFixed(3)),
+      primaryPart.position[1],
+      primaryPart.position[2],
+    ];
+    clone.rotation = [
+      primaryPart.rotation[0],
+      Number((-primaryPart.rotation[1]).toFixed(1)),
+      Number((-primaryPart.rotation[2]).toFixed(1)),
+    ];
+    if (clone.splineConfig) {
+      clone.splineConfig = {
+        ...clone.splineConfig,
+        points: clone.splineConfig.points.map(([x, y, z]) => [
+          Number((-x).toFixed(3)),
+          y,
+          z,
+        ]),
+      };
+    }
+    commitDoc((prev) =>
+      ensureUniquePartAndGroupNames({
+        ...prev,
+        parts: [...prev.parts, clone],
+      })
+    );
+    setSelectedPartIds([clone.id]);
+    flashToast(`Mirrored "${primaryPart.name}" across X`);
   };
 
   const handleGroupSelected = () => {
@@ -1351,31 +1415,56 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
   };
 
   const handleSweepAlongCurve = (profile: 'tube' | 'ribbon' | 'beveledBar') => {
-    const geo = buildCurveSweepGeometry(curveCfg, profile, curveSweepWidth, 16);
-    geo.computeBoundingBox();
-    const center = new THREE.Vector3();
-    const size = new THREE.Vector3();
-    geo.boundingBox?.getCenter(center);
-    geo.boundingBox?.getSize(size);
-    geo.translate(-center.x, -center.y, -center.z);
-    const baked = serializeBufferGeometry(geo);
-    geo.dispose();
+    const rawPts = curveCfg.points.length >= 2 ? curveCfg.points : [[-1, 0.3, 0], [0, 0.3, 0], [1, 0.3, 0]];
+    const liftedPts = rawPts.map((pt, idx): [number, number, number] => {
+      if (curveCfg.preset !== 'arch' && Math.abs(curveCfg.elevationArch) > 0.01 && rawPts.length >= 3) {
+        const u = idx / (rawPts.length - 1);
+        const lift = Math.sin(u * Math.PI) * curveCfg.elevationArch;
+        return [pt[0], Number((pt[1] + lift).toFixed(3)), pt[2]];
+      }
+      return [pt[0], pt[1], pt[2]];
+    });
+    const cx = liftedPts.reduce((acc, p) => acc + p[0], 0) / liftedPts.length;
+    const cy = liftedPts.reduce((acc, p) => acc + p[1], 0) / liftedPts.length;
+    const cz = liftedPts.reduce((acc, p) => acc + p[2], 0) / liftedPts.length;
+    const localPts = liftedPts.map(
+      ([x, y, z]): [number, number, number] => [
+        Number((x - cx).toFixed(3)),
+        Number((y - cy).toFixed(3)),
+        Number((z - cz).toFixed(3)),
+      ]
+    );
+    const splineProfile =
+      profile === 'ribbon'
+        ? ('flatStave' as const)
+        : profile === 'beveledBar'
+        ? ('beveledBar' as const)
+        : ('round' as const);
 
     const matTemplate = primaryPart?.material ?? createDefaultMaterialFinish('hewnStone');
-    const sweptPart = createDefaultPartSpec('csgResult', {
-      name: `Curve_${profile === 'tube' ? 'Tube' : profile === 'ribbon' ? 'Ribbon' : 'Beam'}_${doc.parts.length + 1}`,
-      position: [
-        Number(center.x.toFixed(4)),
-        Number(center.y.toFixed(4)),
-        Number(center.z.toFixed(4)),
-      ],
+    const sweptPart = createDefaultPartSpec('splineTube', {
+      name: `Curve_${profile === 'tube' ? 'Tube' : profile === 'ribbon' ? 'Plank' : 'Bar'}_${doc.parts.length + 1}`,
+      position: [Number(cx.toFixed(4)), Number(cy.toFixed(4)), Number(cz.toFixed(4))],
       dimensions: [
-        Number(Math.max(0.08, size.x).toFixed(3)),
-        Number(Math.max(0.08, size.y).toFixed(3)),
-        Number(Math.max(0.08, size.z).toFixed(3)),
+        Number(Math.max(0.04, curveSweepWidth * 2).toFixed(3)),
+        Number(Math.max(0.04, computeCurveLength(curveCfg)).toFixed(3)),
+        Number(Math.max(0.04, curveSweepWidth * 2).toFixed(3)),
       ],
       material: { ...matTemplate },
-      bakedGeometry: baked,
+      splineConfig: {
+        points: localPts,
+        profile: splineProfile,
+        radius: Number(Math.max(0.01, curveSweepWidth).toFixed(3)),
+        ovalness: profile === 'ribbon' ? 0.34 : 1,
+        taperStart: 1,
+        taperEnd: 1,
+        taperSmoothStart: 0.35,
+        taperSmoothEnd: 0.35,
+        closed: Boolean(curveCfg.closed),
+        steps: Math.max(20, Math.round(curveCfg.segments * 3)),
+        radialSegments: 16,
+        mirrorSymmetry: 'none',
+      },
     });
     if (externalGlbMode) setExternalGlbMode(false);
     commitDoc((prev) =>
@@ -1386,7 +1475,11 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     );
     setSelectedPartIds([sweptPart.id]);
     setActiveCurvePtIdx(null);
-    flashToast(`Created ${profile} mesh along curve`);
+    setCurveEnabled(false);
+    setEditSplineMode(true);
+    setActiveSplinePtIdx(Math.floor(localPts.length / 2));
+    setToolMode('translate');
+    flashToast(`Created editable ${profile} spine along curve`);
   };
 
   const handleArrayAlongCurve = () => {
@@ -1820,11 +1913,14 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     transformControls: TransformControls;
     objectRootHolder: THREE.Group;
     curveGroup: THREE.Group;
+    splineOverlayGroup: THREE.Group;
     mechHelperGroup: THREE.Group;
     selectionBoxGroup: THREE.Group;
     partMeshes: Map<string, THREE.Mesh>;
     groupNodes: Map<string, THREE.Group>;
     curveHandleMeshes: THREE.Mesh[];
+    splineHandleMeshes: THREE.Mesh[];
+    splineDragDraft: { partId: string; config: NonNullable<ObjectPartSpec['splineConfig']> } | null;
     multiProxy: THREE.Group;
     pivotProxy: THREE.Object3D;
     mechController: MechanismRuntimeController | null;
@@ -1847,6 +1943,8 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     curveEnabled,
     curveCfg,
     activeCurvePtIdx,
+    editSplineMode,
+    activeSplinePtIdx,
     activeMechanismId,
     showPivotGizmo,
     mechProgress,
@@ -1868,6 +1966,8 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     curveEnabled,
     curveCfg,
     activeCurvePtIdx,
+    editSplineMode,
+    activeSplinePtIdx,
     activeMechanismId,
     showPivotGizmo,
     mechProgress,
@@ -1930,6 +2030,7 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
 
     const objectRootHolder = new THREE.Group();
     const curveGroup = new THREE.Group();
+    const splineOverlayGroup = new THREE.Group();
     const mechHelperGroup = new THREE.Group();
     const selectionBoxGroup = new THREE.Group();
     const multiProxy = new THREE.Group();
@@ -1937,6 +2038,7 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     scene.add(
       objectRootHolder,
       curveGroup,
+      splineOverlayGroup,
       mechHelperGroup,
       selectionBoxGroup,
       multiProxy,
@@ -1977,11 +2079,14 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
       transformControls,
       objectRootHolder,
       curveGroup,
+      splineOverlayGroup,
       mechHelperGroup,
       selectionBoxGroup,
       partMeshes: new Map<string, THREE.Mesh>(),
       groupNodes: new Map<string, THREE.Group>(),
       curveHandleMeshes: [] as THREE.Mesh[],
+      splineHandleMeshes: [] as THREE.Mesh[],
+      splineDragDraft: null as { partId: string; config: NonNullable<ObjectPartSpec['splineConfig']> } | null,
       multiProxy,
       pivotProxy,
       mechController: null as MechanismRuntimeController | null,
@@ -2101,6 +2206,24 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
         return;
       }
 
+      // 2b. Part-local segmented spine control point commit (with single undo step)
+      if (typeof attached.userData.splinePtIdx === 'number') {
+        const draft = studioState.splineDragDraft;
+        studioState.splineDragDraft = null;
+        if (draft) {
+          pushHistory(preSnap.doc, preSnap.mechanisms);
+          setGeometryDirty(true);
+          setDoc((prev) => ({
+            ...prev,
+            parts: prev.parts.map((p) =>
+              p.id === draft.partId ? { ...p, splineConfig: draft.config } : p
+            ),
+          }));
+        }
+        multiStartSnapshot = null;
+        return;
+      }
+
       // 3. Single Group commit
       if (attached.userData.groupId) {
         const gid = attached.userData.groupId as string;
@@ -2169,9 +2292,9 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
             const nextEuler = new THREE.Euler().setFromQuaternion(nextQuat, 'XYZ');
             const nextDims: [number, number, number] = didScale
               ? [
-                  Number(Math.max(0.06, p.dimensions[0] * Math.abs(scl.x)).toFixed(3)),
-                  Number(Math.max(0.06, p.dimensions[1] * Math.abs(scl.y)).toFixed(3)),
-                  Number(Math.max(0.06, p.dimensions[2] * Math.abs(scl.z)).toFixed(3)),
+                  Number(Math.max(0.01, p.dimensions[0] * Math.abs(scl.x)).toFixed(3)),
+                  Number(Math.max(0.01, p.dimensions[1] * Math.abs(scl.y)).toFixed(3)),
+                  Number(Math.max(0.01, p.dimensions[2] * Math.abs(scl.z)).toFixed(3)),
                 ]
               : p.dimensions;
             let nextBaked = p.bakedGeometry;
@@ -2226,9 +2349,9 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
             if (p.id !== pid) return p;
             const nextDims: [number, number, number] = didScale
               ? [
-                  Number(Math.max(0.06, p.dimensions[0] * Math.abs(scl.x)).toFixed(3)),
-                  Number(Math.max(0.06, p.dimensions[1] * Math.abs(scl.y)).toFixed(3)),
-                  Number(Math.max(0.06, p.dimensions[2] * Math.abs(scl.z)).toFixed(3)),
+                  Number(Math.max(0.01, p.dimensions[0] * Math.abs(scl.x)).toFixed(3)),
+                  Number(Math.max(0.01, p.dimensions[1] * Math.abs(scl.y)).toFixed(3)),
+                  Number(Math.max(0.01, p.dimensions[2] * Math.abs(scl.z)).toFixed(3)),
                 ]
               : p.dimensions;
             let nextBaked = p.bakedGeometry;
@@ -2299,6 +2422,64 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
         return;
       }
 
+      // 2b. Part-local Segmented Spine live mesh bending (60fps smooth, commits on drag end!)
+      if (typeof attached.userData.splinePtIdx === 'number') {
+        const ptIdx = attached.userData.splinePtIdx as number;
+        const partId = attached.userData.splinePartId as string | undefined;
+        const splinePart = cur.doc.parts.find((pt) => pt.id === partId);
+        if (splinePart && splinePart.splineConfig) {
+          const partMat = computePartWorldMatrix(cur.doc, splinePart);
+          const partMatInv = partMat.clone().invert();
+          const localPt = attached.position.clone().applyMatrix4(partMatInv);
+          const prevCfg = studioState.splineDragDraft?.partId === splinePart.id
+            ? studioState.splineDragDraft.config
+            : splinePart.splineConfig;
+          const rawNextCfg = {
+            ...prevCfg,
+            points: prevCfg.points.map((pt, idx): [number, number, number] =>
+              idx === ptIdx
+                ? [
+                    Number(localPt.x.toFixed(3)),
+                    Number(localPt.y.toFixed(3)),
+                    Number(localPt.z.toFixed(3)),
+                  ]
+                : pt
+            ),
+          };
+          const symCfg = applySplineSymmetryFromIndex(rawNextCfg, ptIdx);
+          studioState.splineDragDraft = { partId: splinePart.id, config: symCfg };
+
+          // Live update handle sphere positions (for mirrored twin point) & centerline line
+          symCfg.points.forEach((lp, idx) => {
+            const h = studioState.splineHandleMeshes[idx];
+            if (h && idx !== ptIdx) {
+              h.position.set(lp[0], lp[1], lp[2]).applyMatrix4(partMat);
+            }
+          });
+          const spineLine = studioState.splineOverlayGroup.getObjectByName('SplineCenterline') as THREE.Line | undefined;
+          if (spineLine && symCfg.points.length >= 2) {
+            const wPts = symCfg.points.map((lp) => new THREE.Vector3(lp[0], lp[1], lp[2]).applyMatrix4(partMat));
+            const curve = new THREE.CatmullRomCurve3(wPts, Boolean(symCfg.closed && wPts.length >= 3));
+            const newLineGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(48));
+            spineLine.geometry.dispose();
+            spineLine.geometry = newLineGeo;
+          }
+
+          // Rebuild spline mesh in place at 60fps
+          const mesh = studioState.partMeshes.get(splinePart.id);
+          if (mesh) {
+            const newGeo = buildSplineTubeGeometry(symCfg);
+            mesh.geometry.dispose();
+            mesh.geometry = newGeo;
+            refreshLiveSelectionBoxes();
+          }
+          setGizmoHudText(
+            `Spine Pt ${ptIdx + 1}: ${localPt.x.toFixed(2)}, ${localPt.y.toFixed(2)}, ${localPt.z.toFixed(2)}m`
+          );
+        }
+        return;
+      }
+
       // 3. Multi-part selection live preview (Move, Rotate & Scale in Three.js directly)
       if (attached === multiProxy && multiStartSnapshot) {
         const snap = multiStartSnapshot;
@@ -2346,9 +2527,9 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
             ? cur.doc.parts.find((p) => p.id === attached.userData.partId)
             : null;
           if (partSpec) {
-            const w = Math.max(0.06, partSpec.dimensions[0] * Math.abs(attached.scale.x));
-            const h = Math.max(0.06, partSpec.dimensions[1] * Math.abs(attached.scale.y));
-            const d = Math.max(0.06, partSpec.dimensions[2] * Math.abs(attached.scale.z));
+            const w = Math.max(0.01, partSpec.dimensions[0] * Math.abs(attached.scale.x));
+            const h = Math.max(0.01, partSpec.dimensions[1] * Math.abs(attached.scale.y));
+            const d = Math.max(0.01, partSpec.dimensions[2] * Math.abs(attached.scale.z));
             setGizmoHudText(`Size: ${w.toFixed(2)} × ${h.toFixed(2)} × ${d.toFixed(2)}m`);
           } else {
             setGizmoHudText(
@@ -2561,12 +2742,26 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
         }
       }
 
+      // Check segmented spine handles first when editing a splineTube part
+      if (latestRef.current.editSplineMode && studioState.splineHandleMeshes.length > 0) {
+        const splineHits = raycaster.intersectObjects(studioState.splineHandleMeshes, false);
+        if (splineHits.length > 0) {
+          const ptIdx = splineHits[0].object.userData.splinePtIdx;
+          if (typeof ptIdx === 'number') {
+            setActiveSplinePtIdx(ptIdx);
+            setToolMode('translate');
+            return;
+          }
+        }
+      }
+
       // Click on object meshes
       const hits = raycaster.intersectObjects(objectRootHolder.children, true);
       if (hits.length === 0) {
         if (!e.shiftKey && latestRef.current.toolMode === 'select') {
           setSelectedPartIds([]);
           setSelectedGroupId(null);
+          setActiveSplinePtIdx(null);
         }
         return;
       }
@@ -2593,19 +2788,20 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
         if (partId) {
           setActiveCurvePtIdx(null);
           if (e.shiftKey || e.metaKey || e.ctrlKey) {
+            setActiveSplinePtIdx(null);
             setSelectedPartIds((prev) =>
               prev.includes(partId) ? prev.filter((id) => id !== partId) : [...prev, partId]
             );
             setSelectedGroupId(null);
           } else {
-            const pSpec = latestRef.current.doc.parts.find((p) => p.id === partId);
-            if (pSpec?.parentGroupId && latestRef.current.selectedGroupId !== pSpec.parentGroupId && !e.altKey) {
-              setSelectedPartIds([partId]);
-              setSelectedGroupId(null);
-            } else {
-              setSelectedPartIds([partId]);
-              setSelectedGroupId(null);
+            const clickedSame =
+              latestRef.current.selectedPartIds.length === 1 &&
+              latestRef.current.selectedPartIds[0] === partId;
+            if (!clickedSame) {
+              setActiveSplinePtIdx(null);
             }
+            setSelectedPartIds([partId]);
+            setSelectedGroupId(null);
           }
         }
       }
@@ -2730,7 +2926,7 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
       studioState.renderer = renderer;
       studioState.controls = controls;
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (disposed) return false;
         envTex = setupSceneEnvironment(scene, renderer);
         return true;
@@ -2742,7 +2938,7 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     void (async () => {
       let ok = false;
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (!isSoftwareGl && isWebGPUFallbackAdapter(renderer)) {
           ok = await switchToWebGLFallback();
         } else {
@@ -2901,6 +3097,74 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     });
   }, [curveEnabled, curveCfg, activeCurvePtIdx]);
 
+  // Rebuild interactive segmented centerline & draggable spheres inside selected splineTube part
+  useEffect(() => {
+    const s = studioRef.current;
+    if (!s || s.isDraggingGizmo) return;
+    disposeObject3D(s.splineOverlayGroup);
+    s.splineOverlayGroup.clear();
+    s.splineHandleMeshes = [];
+
+    if (
+      externalGlbMode ||
+      !editSplineMode ||
+      inspectorTab !== 'shape' ||
+      !primaryPart ||
+      primaryPart.shape !== 'splineTube' ||
+      !primaryPart.splineConfig ||
+      selectedPartIds.length !== 1
+    ) {
+      return;
+    }
+
+    const partMat = computePartWorldMatrix(doc, primaryPart);
+    const cfg = primaryPart.splineConfig;
+    const worldPts = cfg.points.map((pt) =>
+      new THREE.Vector3(pt[0], pt[1], pt[2]).applyMatrix4(partMat)
+    );
+    if (worldPts.length >= 2) {
+      const curve = new THREE.CatmullRomCurve3(worldPts, Boolean(cfg.closed && worldPts.length >= 3));
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(48));
+      const lineMat = new THREE.LineBasicMaterial({
+        color: '#EC4899',
+        depthTest: false,
+        transparent: true,
+        opacity: 0.92,
+      });
+      const line = new THREE.Line(lineGeo, lineMat);
+      line.name = 'SplineCenterline';
+      line.renderOrder = 940;
+      s.splineOverlayGroup.add(line);
+    }
+
+    const handleRadius = Math.max(0.032, Math.min(0.085, (cfg.radius ?? 0.05) * 1.15));
+    const sphereGeo = new THREE.SphereGeometry(handleRadius, 14, 10);
+    worldPts.forEach((wp, idx) => {
+      const isSelected = activeSplinePtIdx === idx;
+      const mat = new THREE.MeshBasicMaterial({
+        color: isSelected ? '#F59E0B' : '#EC4899',
+        depthTest: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const handle = new THREE.Mesh(sphereGeo, mat);
+      handle.position.copy(wp);
+      handle.renderOrder = 950;
+      handle.userData.splinePtIdx = idx;
+      handle.userData.splinePartId = primaryPart.id;
+      s.splineOverlayGroup.add(handle);
+      s.splineHandleMeshes.push(handle);
+    });
+  }, [
+    doc,
+    primaryPart,
+    selectedPartIds,
+    editSplineMode,
+    activeSplinePtIdx,
+    inspectorTab,
+    externalGlbMode,
+  ]);
+
   // Rebuild Selection Bounding Boxes + TransformControls attachment + Mechanism Hinge/Slider Gizmo
   useEffect(() => {
     const s = studioRef.current;
@@ -3021,6 +3285,19 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
       return;
     }
 
+    if (
+      !externalGlbMode &&
+      editSplineMode &&
+      inspectorTab === 'shape' &&
+      primaryPart?.shape === 'splineTube' &&
+      activeSplinePtIdx !== null &&
+      s.splineHandleMeshes[activeSplinePtIdx]
+    ) {
+      tc.setMode('translate');
+      tc.attach(s.splineHandleMeshes[activeSplinePtIdx]);
+      return;
+    }
+
     if (externalGlbMode || toolMode === 'select' || inspectorTab === 'mechanics' || inspectorTab === 'paint') {
       tc.detach();
       return;
@@ -3051,6 +3328,7 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     }
   }, [
     doc,
+    primaryPart,
     externalGlbMode,
     toolMode,
     gridSnapStep,
@@ -3062,6 +3340,8 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
     curveEnabled,
     curveCfg,
     activeCurvePtIdx,
+    editSplineMode,
+    activeSplinePtIdx,
     activeMechanism,
     showPivotGizmo,
   ]);
@@ -4003,8 +4283,30 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
 
                       {/* Dimensions (W / H / D) */}
                       <div className="space-y-1.5">
-                        <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
-                          Dimensions (Meters)
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
+                            Dimensions (Meters)
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {primaryPart.shape !== 'csgResult' && primaryPart.shape !== 'splineTube' && (
+                              <button
+                                type="button"
+                                onClick={handleConvertToSegmentedSpline}
+                                title="Convert shape into a bendable centerline spine with draggable control points"
+                                className="px-2 py-0.5 rounded-md bg-[#EC4899]/15 hover:bg-[#EC4899] text-[#EC4899] hover:text-white text-[10px] font-extrabold transition-colors"
+                              >
+                                Segmented Spine
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={handleMirrorDuplicateX}
+                              title="Duplicate and mirror this part across X=0"
+                              className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-[#1F2430] hover:bg-[#38BDF8] hover:text-slate-950 text-[10px] font-bold transition-colors"
+                            >
+                              Mirror X
+                            </button>
+                          </div>
                         </div>
                         <div className="grid grid-cols-3 gap-1.5">
                           {(['Width X', 'Height Y', 'Depth Z'] as const).map((lbl, idx) => (
@@ -4012,13 +4314,13 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
                               <span>{lbl}</span>
                               <input
                                 type="number"
-                                min={0.06}
+                                min={0.01}
                                 max={16}
-                                step={0.05}
-                                disabled={primaryPart.shape === 'csgResult'}
+                                step={0.02}
+                                disabled={primaryPart.shape === 'csgResult' || primaryPart.shape === 'splineTube'}
                                 value={primaryPart.dimensions[idx]}
                                 onChange={(e) => {
-                                  const val = Math.max(0.06, Number(e.target.value) || 0.06);
+                                  const val = Math.max(0.01, Number(e.target.value) || 0.01);
                                   updateSelectedParts((p) => {
                                     const next = [...p.dimensions] as [number, number, number];
                                     next[idx] = val;
@@ -4032,8 +4334,486 @@ export const ObjectMakerModal: React.FC<ObjectMakerModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Bevel / Chamfer / Round / Degrade Edges */}
+                      {/* Segmented Centerline / Spine Editor */}
+                      {primaryPart.shape === 'splineTube' && primaryPart.splineConfig && (() => {
+                        const sCfg = primaryPart.splineConfig!;
+                        const updateSpine = (
+                          updater: (c: NonNullable<ObjectPartSpec['splineConfig']>) => NonNullable<ObjectPartSpec['splineConfig']>,
+                          rec = false
+                        ) => {
+                          updateSelectedParts(
+                            (p) =>
+                              p.shape === 'splineTube' && p.splineConfig
+                                ? { ...p, splineConfig: updater(p.splineConfig) }
+                                : p,
+                            rec
+                          );
+                        };
+                        const ptScaleVal =
+                          activeSplinePtIdx !== null
+                            ? sCfg.pointRadii?.[activeSplinePtIdx] ?? 1
+                            : 1;
+                        return (
+                          <div className="space-y-2.5 pt-2.5 border-t border-slate-200/70 dark:border-white/[0.08]">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#EC4899] inline-flex items-center gap-1">
+                                <Spline size={12} />
+                                <span>Segmented Spine</span>
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-mono text-slate-400">
+                                  {computeSplineLength(sCfg).toFixed(2)}m
+                                </span>
+                                <label className="inline-flex items-center gap-1 text-[10px] font-bold cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={editSplineMode}
+                                    onChange={(e) => {
+                                      setEditSplineMode(e.target.checked);
+                                      if (!e.target.checked) setActiveSplinePtIdx(null);
+                                    }}
+                                    className="accent-[#EC4899]"
+                                  />
+                                  <span>Handles</span>
+                                </label>
+                              </div>
+                            </div>
+
+                            {/* Cross-section profile */}
+                            <div className="grid grid-cols-4 gap-1">
+                              {(
+                                [
+                                  ['round', 'Round'],
+                                  ['oval', 'Oval'],
+                                  ['flatStave', 'Stave'],
+                                  ['beveledBar', 'Bevel'],
+                                ] as const
+                              ).map(([prof, lbl]) => (
+                                <button
+                                  key={prof}
+                                  type="button"
+                                  onClick={() => updateSpine((c) => ({ ...c, profile: prof }), true)}
+                                  className={`py-1 rounded-lg text-[10px] font-bold ${
+                                    (sCfg.profile ?? 'round') === prof
+                                      ? 'bg-[#EC4899] text-white'
+                                      : 'bg-slate-100 dark:bg-[#12151E] text-slate-600 dark:text-[#A5AEC4]'
+                                  }`}
+                                >
+                                  {lbl}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Symmetry & Closed */}
+                            <div className="flex items-center justify-between gap-1.5">
+                              <div className="grid grid-cols-3 gap-1 flex-1">
+                                {(
+                                  [
+                                    ['none', 'Free'],
+                                    ['y', 'Mirror Y'],
+                                    ['x', 'Mirror X'],
+                                  ] as const
+                                ).map(([sym, lbl]) => (
+                                  <button
+                                    key={sym}
+                                    type="button"
+                                    onClick={() =>
+                                      updateSpine((c) => ({ ...c, mirrorSymmetry: sym }), true)
+                                    }
+                                    className={`py-1 rounded-md text-[10px] font-bold ${
+                                      (sCfg.mirrorSymmetry ?? 'none') === sym
+                                        ? 'bg-[#7C5CFF] text-white'
+                                        : 'bg-slate-100 dark:bg-[#12151E] text-slate-500'
+                                    }`}
+                                  >
+                                    {lbl}
+                                  </button>
+                                ))}
+                              </div>
+                              <label className="inline-flex items-center gap-1 text-[10px] font-bold cursor-pointer px-1.5">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(sCfg.closed)}
+                                  onChange={(e) =>
+                                    updateSpine((c) => ({ ...c, closed: e.target.checked }), true)
+                                  }
+                                  className="accent-[#7C5CFF]"
+                                />
+                                <span>Loop</span>
+                              </label>
+                            </div>
+
+                            {/* Point selector pills + Insert / Extend / Delete */}
+                            <div className="space-y-1.5 p-2 rounded-xl bg-slate-50 dark:bg-[#12151E] border border-slate-200/80 dark:border-white/[0.08]">
+                              <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 dark:text-[#949BB0]">
+                                <span>Control Points ({sCfg.points.length})</span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const baseIdx =
+                                        activeSplinePtIdx !== null && activeSplinePtIdx < sCfg.points.length - 1
+                                          ? activeSplinePtIdx
+                                          : Math.max(0, sCfg.points.length - 2);
+                                      const a = sCfg.points[baseIdx];
+                                      const b = sCfg.points[baseIdx + 1] ?? a;
+                                      const mid: [number, number, number] = [
+                                        Number(((a[0] + b[0]) * 0.5).toFixed(3)),
+                                        Number(((a[1] + b[1]) * 0.5).toFixed(3)),
+                                        Number(((a[2] + b[2]) * 0.5).toFixed(3)),
+                                      ];
+                                      updateSpine((c) => {
+                                        const pts = [...c.points];
+                                        pts.splice(baseIdx + 1, 0, mid);
+                                        const radii = c.pointRadii ? [...c.pointRadii] : undefined;
+                                        if (radii) radii.splice(baseIdx + 1, 0, 1);
+                                        return { ...c, points: pts, ...(radii ? { pointRadii: radii } : {}) };
+                                      }, true);
+                                      setEditSplineMode(true);
+                                      setActiveSplinePtIdx(baseIdx + 1);
+                                      setToolMode('translate');
+                                    }}
+                                    className="text-[#EC4899] hover:underline"
+                                  >
+                                    + Insert
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const n = sCfg.points.length;
+                                      const last = sCfg.points[n - 1] ?? [0, 0.5, 0];
+                                      const prevPt = sCfg.points[n - 2] ?? [0, 0, 0];
+                                      const dir = [
+                                        last[0] - prevPt[0],
+                                        last[1] - prevPt[1],
+                                        last[2] - prevPt[2],
+                                      ];
+                                      const len = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+                                      const stepPt: [number, number, number] = [
+                                        Number((last[0] + (dir[0] / len) * 0.35).toFixed(3)),
+                                        Number((last[1] + (dir[1] / len) * 0.35).toFixed(3)),
+                                        Number((last[2] + (dir[2] / len) * 0.35).toFixed(3)),
+                                      ];
+                                      updateSpine(
+                                        (c) => ({
+                                          ...c,
+                                          points: [...c.points, stepPt],
+                                          ...(c.pointRadii ? { pointRadii: [...c.pointRadii, 1] } : {}),
+                                        }),
+                                        true
+                                      );
+                                      setEditSplineMode(true);
+                                      setActiveSplinePtIdx(n);
+                                      setToolMode('translate');
+                                    }}
+                                    className="text-[#38BDF8] hover:underline"
+                                  >
+                                    + Extend
+                                  </button>
+                                  {sCfg.points.length > 2 && activeSplinePtIdx !== null && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const delIdx = activeSplinePtIdx;
+                                        updateSpine((c) => {
+                                          const pts = c.points.filter((_, idx) => idx !== delIdx);
+                                          const radii = c.pointRadii
+                                            ? c.pointRadii.filter((_, idx) => idx !== delIdx)
+                                            : undefined;
+                                          return {
+                                            ...c,
+                                            points: pts,
+                                            ...(radii ? { pointRadii: radii } : {}),
+                                          };
+                                        }, true);
+                                        setActiveSplinePtIdx(Math.max(0, delIdx - 1));
+                                      }}
+                                      className="text-rose-400 hover:underline"
+                                    >
+                                      Del
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap gap-1">
+                                {sCfg.points.map((_, idx) => (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => {
+                                      setEditSplineMode(true);
+                                      setActiveSplinePtIdx((cur) => (cur === idx ? null : idx));
+                                      setToolMode('translate');
+                                    }}
+                                    className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${
+                                      activeSplinePtIdx === idx
+                                        ? 'bg-[#F59E0B] text-slate-950'
+                                        : 'bg-white dark:bg-[#1A1F2D] text-slate-600 dark:text-slate-300 border border-slate-200/70 dark:border-white/[0.08]'
+                                    }`}
+                                  >
+                                    P{idx + 1}
+                                  </button>
+                                ))}
+                                {activeSplinePtIdx !== null && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveSplinePtIdx(null)}
+                                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#7C5CFF]/20 text-[#7C5CFF]"
+                                  >
+                                    Whole Part
+                                  </button>
+                                )}
+                              </div>
+
+                              {activeSplinePtIdx !== null && (
+                                <div className="space-y-0.5 pt-1">
+                                  <div className="flex items-center justify-between text-[10px] font-semibold">
+                                    <span>Point P{activeSplinePtIdx + 1} Radius Scale</span>
+                                    <span className="font-mono">{Math.round(ptScaleVal * 100)}%</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min={0.15}
+                                    max={2.4}
+                                    step={0.05}
+                                    value={ptScaleVal}
+                                    onChange={(e) => {
+                                      const val = Number(e.target.value);
+                                      const idx = activeSplinePtIdx;
+                                      updateSpine((c) => {
+                                        const arr =
+                                          c.pointRadii && c.pointRadii.length === c.points.length
+                                            ? [...c.pointRadii]
+                                            : c.points.map(() => 1);
+                                        arr[idx] = val;
+                                        return applySplineSymmetryFromIndex(
+                                          { ...c, pointRadii: arr },
+                                          idx
+                                        );
+                                      });
+                                    }}
+                                    className="w-full accent-[#F59E0B]"
+                                  />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Thickness & Ovalness */}
+                            <div className="space-y-1.5">
+                              <div className="space-y-0.5">
+                                <div className="flex items-center justify-between text-[11px] font-semibold">
+                                  <span>Base Thickness (Radius)</span>
+                                  <span className="font-mono text-slate-500 dark:text-[#949BB0]">
+                                    {(sCfg.radius ?? 0.055).toFixed(3)}m
+                                  </span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min={0.008}
+                                  max={0.45}
+                                  step={0.004}
+                                  value={sCfg.radius ?? 0.055}
+                                  onChange={(e) =>
+                                    updateSpine((c) => ({ ...c, radius: Number(e.target.value) }))
+                                  }
+                                  className="w-full accent-[#EC4899]"
+                                />
+                              </div>
+                              {(sCfg.profile === 'oval' || sCfg.profile === 'flatStave') && (
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center justify-between text-[11px] font-semibold">
+                                    <span>Flatness / Oval Ratio</span>
+                                    <span className="font-mono text-slate-500 dark:text-[#949BB0]">
+                                      {Math.round((sCfg.ovalness ?? 0.55) * 100)}%
+                                    </span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min={0.2}
+                                    max={1.8}
+                                    step={0.04}
+                                    value={sCfg.ovalness ?? 0.55}
+                                    onChange={(e) =>
+                                      updateSpine((c) => ({ ...c, ovalness: Number(e.target.value) }))
+                                    }
+                                    className="w-full accent-[#EC4899]"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* End Taper & Falloff Smoothness + Bend/Twist Deformers */}
                       {primaryPart.shape !== 'csgResult' && (
+                        <div className="space-y-2.5 pt-2.5 border-t border-slate-200/70 dark:border-white/[0.08]">
+                          <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
+                            Taper &amp; Falloff Sculpting
+                          </div>
+                          {(() => {
+                            const isSp = primaryPart.shape === 'splineTube' && Boolean(primaryPart.splineConfig);
+                            const tStart = isSp
+                              ? primaryPart.splineConfig!.taperStart ?? 1
+                              : primaryPart.modifiers.taperStart ?? 1;
+                            const tEnd = isSp
+                              ? primaryPart.splineConfig!.taperEnd ?? 1
+                              : primaryPart.modifiers.taperEnd ?? 1;
+                            const sStart = isSp
+                              ? primaryPart.splineConfig!.taperSmoothStart ?? 0.35
+                              : primaryPart.modifiers.taperSmoothStart ?? 0.35;
+                            const sEnd = isSp
+                              ? primaryPart.splineConfig!.taperSmoothEnd ?? 0.35
+                              : primaryPart.modifiers.taperSmoothEnd ?? 0.35;
+                            const setTaperField = (
+                              field: 'taperStart' | 'taperEnd' | 'taperSmoothStart' | 'taperSmoothEnd',
+                              val: number
+                            ) => {
+                              updateSelectedParts((p) => {
+                                if (p.shape === 'splineTube' && p.splineConfig) {
+                                  return {
+                                    ...p,
+                                    splineConfig: { ...p.splineConfig, [field]: val },
+                                  };
+                                }
+                                return {
+                                  ...p,
+                                  modifiers: { ...p.modifiers, [field]: val },
+                                };
+                              });
+                            };
+                            return (
+                              <>
+                                {(
+                                  [
+                                    ['taperStart', 'Start End Taper', tStart, 0.05, 2.0, `${Math.round(tStart * 100)}%`],
+                                    ['taperSmoothStart', 'Start Taper Smoothness', sStart, 0.05, 1.0, `${Math.round(sStart * 100)}%`],
+                                    ['taperEnd', 'Tip End Taper', tEnd, 0.05, 2.0, `${Math.round(tEnd * 100)}%`],
+                                    ['taperSmoothEnd', 'Tip Taper Smoothness', sEnd, 0.05, 1.0, `${Math.round(sEnd * 100)}%`],
+                                  ] as const
+                                ).map(([field, lbl, val, minV, maxV, txt]) => (
+                                  <div key={field} className="space-y-0.5">
+                                    <div className="flex items-center justify-between text-[11px] font-semibold">
+                                      <span>{lbl}</span>
+                                      <span className="font-mono tabular-nums text-slate-500 dark:text-[#949BB0]">
+                                        {txt}
+                                      </span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min={minV}
+                                      max={maxV}
+                                      step={0.02}
+                                      value={val}
+                                      onChange={(e) => setTaperField(field, Number(e.target.value))}
+                                      className="w-full accent-[#0EA5E9]"
+                                    />
+                                  </div>
+                                ))}
+                              </>
+                            );
+                          })()}
+
+                          {primaryPart.shape !== 'splineTube' && (
+                            <div className="space-y-2 pt-1.5 border-t border-slate-200/50 dark:border-white/[0.06]">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-semibold">Curve Bend</span>
+                                <div className="flex items-center gap-1">
+                                  {(['z', 'x'] as const).map((ax) => (
+                                    <button
+                                      key={ax}
+                                      type="button"
+                                      onClick={() =>
+                                        updateSelectedParts((p) => ({
+                                          ...p,
+                                          modifiers: { ...p.modifiers, bendAxis: ax },
+                                        }))
+                                      }
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase ${
+                                        (primaryPart.modifiers.bendAxis ?? 'z') === ax
+                                          ? 'bg-[#7C5CFF] text-white'
+                                          : 'bg-slate-100 dark:bg-[#12151E] text-slate-400'
+                                      }`}
+                                    >
+                                      {ax}
+                                    </button>
+                                  ))}
+                                  <span className="font-mono text-[11px] text-slate-500 dark:text-[#949BB0] w-10 text-right">
+                                    {Math.round(primaryPart.modifiers.bendAngle ?? 0)}°
+                                  </span>
+                                </div>
+                              </div>
+                              <input
+                                type="range"
+                                min={-160}
+                                max={160}
+                                step={2}
+                                value={primaryPart.modifiers.bendAngle ?? 0}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  updateSelectedParts((p) => ({
+                                    ...p,
+                                    modifiers: { ...p.modifiers, bendAngle: v },
+                                  }));
+                                }}
+                                className="w-full accent-[#7C5CFF]"
+                              />
+
+                              <div className="space-y-0.5">
+                                <div className="flex items-center justify-between text-[11px] font-semibold">
+                                  <span>Twist Angle</span>
+                                  <span className="font-mono tabular-nums text-slate-500 dark:text-[#949BB0]">
+                                    {Math.round(primaryPart.modifiers.twistAngle ?? 0)}°
+                                  </span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min={-360}
+                                  max={360}
+                                  step={5}
+                                  value={primaryPart.modifiers.twistAngle ?? 0}
+                                  onChange={(e) => {
+                                    const v = Number(e.target.value);
+                                    updateSelectedParts((p) => ({
+                                      ...p,
+                                      modifiers: { ...p.modifiers, twistAngle: v },
+                                    }));
+                                  }}
+                                  className="w-full accent-[#7C5CFF]"
+                                />
+                              </div>
+
+                              <div className="space-y-0.5">
+                                <div className="flex items-center justify-between text-[11px] font-semibold">
+                                  <span>Mesh Segments</span>
+                                  <span className="font-mono tabular-nums text-slate-500 dark:text-[#949BB0]">
+                                    {primaryPart.modifiers.segments ?? 16}
+                                  </span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min={8}
+                                  max={32}
+                                  step={2}
+                                  value={primaryPart.modifiers.segments ?? 16}
+                                  onChange={(e) => {
+                                    const v = Number(e.target.value);
+                                    updateSelectedParts((p) => ({
+                                      ...p,
+                                      modifiers: { ...p.modifiers, segments: v },
+                                    }));
+                                  }}
+                                  className="w-full accent-[#7C5CFF]"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Bevel / Chamfer / Round / Degrade Edges */}
+                      {primaryPart.shape !== 'csgResult' && primaryPart.shape !== 'splineTube' && (
                         <div className="space-y-2.5 pt-2.5 border-t border-slate-200/70 dark:border-white/[0.08]">
                           <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
                             Edge Sculpting

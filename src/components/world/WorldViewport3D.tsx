@@ -55,6 +55,7 @@ import {
   detectSoftwareGl,
   disposeObject3D,
   ensureSkyDome,
+  initMakerRenderer,
   setupSceneEnvironment,
   syncSkyDomeToCamera,
   updateIslandTerrainGeometryInPlace,
@@ -64,8 +65,10 @@ import {
 } from '../../three/islandScene';
 import {
   forceReleaseRendererContext,
+  getRendererMaxTextureArrayLayers,
   isIOSDevice,
   isWebGPUFallbackAdapter,
+  sanitizeObjectMorphTargets,
 } from '../../three/webglUtils';
 import { createDefaultFxEmitterConfig } from '../../data/fxEmitterPresets';
 import {
@@ -1813,8 +1816,12 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         sceneRefs.current.controls = controls;
       }
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (disposed) return false;
+        sanitizeObjectMorphTargets(scene, {
+          maxLayers: getRendererMaxTextureArrayLayers(renderer),
+          cloneSharedGeometries: true,
+        });
         envTex = setupSceneEnvironment(scene, renderer);
         postPipeline = new PostProcessingPipeline(
           renderer,
@@ -1851,7 +1858,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     void (async () => {
       let initOk = false;
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (!isSoftwareGl && isWebGPUFallbackAdapter(renderer)) {
           console.warn('WorldViewport WebGPU returned a software fallback adapter; switching to hardware WebGL2.');
           initOk = await switchToWebGLFallback();
@@ -1863,6 +1870,10 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         initOk = await switchToWebGLFallback();
       }
       if (disposed || !initOk) return;
+      sanitizeObjectMorphTargets(scene, {
+        maxLayers: getRendererMaxTextureArrayLayers(renderer),
+        cloneSharedGeometries: true,
+      });
       // Yield one frame after device init so PMREM & PostProcessing don't stack onto mount long tasks
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       if (disposed) return;

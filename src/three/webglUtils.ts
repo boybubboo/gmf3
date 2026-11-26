@@ -399,3 +399,325 @@ export function optimizeObjectBuffers(
 
   return { meshesVisited, totalBufferBytes };
 }
+
+let knownWebGPUMaxTextureArrayLayers: number | null = null;
+
+/**
+ * Updates the lowest observed active WebGPU device `maxTextureArrayLayers` limit.
+ */
+export function recordWebGPUMaxTextureArrayLayers(limit: number): void {
+  if (typeof limit !== 'number' || !Number.isFinite(limit) || limit <= 0) return;
+  knownWebGPUMaxTextureArrayLayers =
+    knownWebGPUMaxTextureArrayLayers === null
+      ? limit
+      : Math.min(knownWebGPUMaxTextureArrayLayers, limit);
+}
+
+/**
+ * Returns the observed active WebGPU `maxTextureArrayLayers` limit (or null if not yet initialized).
+ */
+export function getKnownWebGPUMaxTextureArrayLayers(): number | null {
+  return knownWebGPUMaxTextureArrayLayers;
+}
+
+/**
+ * Returns the active GPU device's maximum supported 2D texture array layers
+ * (`maxTextureArrayLayers` on WebGPU, `MAX_ARRAY_TEXTURE_LAYERS` on WebGL2).
+ */
+export function getRendererMaxTextureArrayLayers(
+  renderer?: { backend?: unknown; getContext?: () => unknown } | null
+): number {
+  const backend = renderer?.backend as
+    | {
+        isWebGPUBackend?: boolean;
+        device?: GPUDevice;
+      }
+    | undefined;
+  if (backend?.isWebGPUBackend) {
+    const limit = backend.device?.limits?.maxTextureArrayLayers;
+    return typeof limit === 'number' && limit > 0 ? limit : 256;
+  }
+  try {
+    const gl = (
+      typeof renderer?.getContext === 'function' ? renderer.getContext() : null
+    ) as WebGL2RenderingContext | null;
+    if (gl && typeof gl.getParameter === 'function' && 'MAX_ARRAY_TEXTURE_LAYERS' in gl) {
+      const val = Number(gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS));
+      if (Number.isFinite(val) && val > 0) return val;
+    }
+  } catch {
+    // ignore context query errors
+  }
+  return 2048;
+}
+
+function measureMorphAttributePeakDelta(
+  morphAttr: THREE.BufferAttribute,
+  baseAttr: THREE.BufferAttribute | THREE.InterleavedBufferAttribute | undefined,
+  isRelative: boolean
+): number {
+  const count = morphAttr.count;
+  const itemSize = morphAttr.itemSize;
+  let peak = 0;
+  for (let v = 0; v < count; v++) {
+    const dx = isRelative || !baseAttr ? morphAttr.getX(v) : morphAttr.getX(v) - baseAttr.getX(v);
+    const dy =
+      itemSize >= 2
+        ? isRelative || !baseAttr
+          ? morphAttr.getY(v)
+          : morphAttr.getY(v) - baseAttr.getY(v)
+        : 0;
+    const dz =
+      itemSize >= 3
+        ? isRelative || !baseAttr
+          ? morphAttr.getZ(v)
+          : morphAttr.getZ(v) - baseAttr.getZ(v)
+        : 0;
+    const mag = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz));
+    if (mag > peak) peak = mag;
+  }
+  return peak;
+}
+
+export interface SanitizeMorphTargetsOptions {
+  /** Optional animation clips whose `.morphTargetInfluences` tracks should stay aligned with compacted morph indices. */
+  animations?: THREE.AnimationClip[];
+  /** Optional hard upper cap on morph layers per geometry (used when active GPU limit < morph count). */
+  maxLayers?: number;
+  /** Clone shared/cached BufferGeometries before mutating morphAttributes (default: false). */
+  cloneSharedGeometries?: boolean;
+  /** Threshold below which a morph target is considered an empty zero-delta placeholder (default: 1e-5). */
+  epsilon?: number;
+}
+
+/**
+ * Losslessly prunes all-zero/empty placeholder morph targets across a 3D hierarchy, and
+ * (when `maxLayers` is specified and still exceeded) trims lowest-impact targets to stay
+ * strictly within WebGPU's `maxTextureArrayLayers` limit without downscaling per-layer resolution.
+ */
+export function sanitizeObjectMorphTargets(
+  root: THREE.Object3D,
+  options: SanitizeMorphTargetsOptions = {}
+): { prunedZeroCount: number; cappedCount: number; maxRemainingLayers: number } {
+  const epsilon = options.epsilon ?? 1e-5;
+  const maxLayers =
+    typeof options.maxLayers === 'number' && options.maxLayers > 0
+      ? Math.floor(options.maxLayers)
+      : undefined;
+
+  let prunedZeroCount = 0;
+  let cappedCount = 0;
+  let maxRemainingLayers = 0;
+
+  interface MeshRemapInfo {
+    mesh: THREE.Mesh;
+    oldCount: number;
+    keptIndices: number[];
+  }
+
+  const meshesToProcess: THREE.Mesh[] = [];
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    const morphAttrs = mesh.geometry.morphAttributes;
+    const refArr = morphAttrs?.position || morphAttrs?.normal || morphAttrs?.color;
+    if (refArr && refArr.length > 0) {
+      meshesToProcess.push(mesh);
+    }
+  });
+
+  if (meshesToProcess.length === 0) {
+    return { prunedZeroCount: 0, cappedCount: 0, maxRemainingLayers: 0 };
+  }
+
+  // Group meshes by geometry when mutating in-place so shared geometries stay consistent
+  const geometryGroups = new Map<THREE.BufferGeometry, THREE.Mesh[]>();
+  for (const mesh of meshesToProcess) {
+    const list = geometryGroups.get(mesh.geometry);
+    if (list) list.push(mesh);
+    else geometryGroups.set(mesh.geometry, [mesh]);
+  }
+
+  const remapsByTrackTarget = new Map<string, { oldCount: number; keptIndices: number[] }>();
+
+  for (const [origGeom, sharedMeshes] of geometryGroups.entries()) {
+    const posTargets = origGeom.morphAttributes.position as THREE.BufferAttribute[] | undefined;
+    const normTargets = origGeom.morphAttributes.normal as THREE.BufferAttribute[] | undefined;
+    const colTargets = origGeom.morphAttributes.color as THREE.BufferAttribute[] | undefined;
+    const oldCount = posTargets?.length ?? normTargets?.length ?? colTargets?.length ?? 0;
+    if (oldCount === 0) continue;
+
+    const isRelative = Boolean(origGeom.morphTargetsRelative);
+    const basePos = origGeom.attributes.position as
+      | THREE.BufferAttribute
+      | THREE.InterleavedBufferAttribute
+      | undefined;
+    const baseNorm = origGeom.attributes.normal as
+      | THREE.BufferAttribute
+      | THREE.InterleavedBufferAttribute
+      | undefined;
+    const baseCol = origGeom.attributes.color as
+      | THREE.BufferAttribute
+      | THREE.InterleavedBufferAttribute
+      | undefined;
+
+    const peakDeltas = new Float32Array(oldCount);
+    const activeIndices: number[] = [];
+
+    for (let i = 0; i < oldCount; i++) {
+      let peak = 0;
+      if (posTargets?.[i]) {
+        peak = Math.max(peak, measureMorphAttributePeakDelta(posTargets[i], basePos, isRelative));
+      }
+      if (normTargets?.[i]) {
+        peak = Math.max(peak, measureMorphAttributePeakDelta(normTargets[i], baseNorm, isRelative));
+      }
+      if (colTargets?.[i]) {
+        peak = Math.max(peak, measureMorphAttributePeakDelta(colTargets[i], baseCol, isRelative));
+      }
+      peakDeltas[i] = peak;
+      if (peak > epsilon) {
+        activeIndices.push(i);
+      }
+    }
+
+    const zeroDropped = oldCount - activeIndices.length;
+    prunedZeroCount += zeroDropped;
+
+    let keptIndices = activeIndices;
+    if (maxLayers !== undefined && keptIndices.length > maxLayers) {
+      const scored = keptIndices.map((idx) => {
+        let activeWeight = 0;
+        for (const m of sharedMeshes) {
+          const w = Math.abs(m.morphTargetInfluences?.[idx] ?? 0);
+          if (w > activeWeight) activeWeight = w;
+        }
+        return {
+          idx,
+          score: (activeWeight > 1e-4 ? 1e9 : 0) + peakDeltas[idx],
+        };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      keptIndices = scored
+        .slice(0, maxLayers)
+        .map((s) => s.idx)
+        .sort((a, b) => a - b);
+      cappedCount += activeIndices.length - keptIndices.length;
+    }
+
+    maxRemainingLayers = Math.max(maxRemainingLayers, keptIndices.length);
+    if (keptIndices.length === oldCount) continue;
+
+    const newIndexByOld = new Map<number, number>();
+    keptIndices.forEach((oldIdx, newIdx) => newIndexByOld.set(oldIdx, newIdx));
+
+    const applyToGeometry = (targetGeom: THREE.BufferGeometry) => {
+      if (keptIndices.length === 0) {
+        delete targetGeom.morphAttributes.position;
+        delete targetGeom.morphAttributes.normal;
+        delete targetGeom.morphAttributes.color;
+        return;
+      }
+      const tp = targetGeom.morphAttributes.position as THREE.BufferAttribute[] | undefined;
+      const tn = targetGeom.morphAttributes.normal as THREE.BufferAttribute[] | undefined;
+      const tc = targetGeom.morphAttributes.color as THREE.BufferAttribute[] | undefined;
+      if (tp) targetGeom.morphAttributes.position = keptIndices.map((k) => tp[k]);
+      if (tn) targetGeom.morphAttributes.normal = keptIndices.map((k) => tn[k]);
+      if (tc) targetGeom.morphAttributes.color = keptIndices.map((k) => tc[k]);
+    };
+
+    let sharedUpdatedGeom: THREE.BufferGeometry | null = null;
+    const remapsForMeshes: MeshRemapInfo[] = [];
+
+    for (const mesh of sharedMeshes) {
+      if (options.cloneSharedGeometries) {
+        if (!sharedUpdatedGeom) {
+          sharedUpdatedGeom = origGeom.clone();
+          applyToGeometry(sharedUpdatedGeom);
+        }
+        mesh.geometry = sharedUpdatedGeom;
+      } else if (!sharedUpdatedGeom) {
+        sharedUpdatedGeom = origGeom;
+        applyToGeometry(origGeom);
+      }
+
+      if (keptIndices.length === 0) {
+        mesh.morphTargetInfluences = undefined;
+        mesh.morphTargetDictionary = undefined;
+      } else {
+        const prevInfluences = mesh.morphTargetInfluences ?? [];
+        mesh.morphTargetInfluences = keptIndices.map((k) => prevInfluences[k] ?? 0);
+        if (mesh.morphTargetDictionary) {
+          const nextDict: Record<string, number> = {};
+          for (const [name, oldIdx] of Object.entries(mesh.morphTargetDictionary)) {
+            const mapped = newIndexByOld.get(oldIdx);
+            if (mapped !== undefined) {
+              nextDict[name] = mapped;
+            }
+          }
+          mesh.morphTargetDictionary = nextDict;
+        }
+      }
+
+      remapsForMeshes.push({ mesh, oldCount, keptIndices });
+    }
+
+    for (const info of remapsForMeshes) {
+      if (info.mesh.name) {
+        remapsByTrackTarget.set(info.mesh.name, { oldCount: info.oldCount, keptIndices: info.keptIndices });
+      }
+      remapsByTrackTarget.set(info.mesh.uuid, { oldCount: info.oldCount, keptIndices: info.keptIndices });
+      if (info.mesh.parent && info.mesh.parent !== root) {
+        if (info.mesh.parent.name && !remapsByTrackTarget.has(info.mesh.parent.name)) {
+          remapsByTrackTarget.set(info.mesh.parent.name, {
+            oldCount: info.oldCount,
+            keptIndices: info.keptIndices,
+          });
+        }
+        if (!remapsByTrackTarget.has(info.mesh.parent.uuid)) {
+          remapsByTrackTarget.set(info.mesh.parent.uuid, {
+            oldCount: info.oldCount,
+            keptIndices: info.keptIndices,
+          });
+        }
+      }
+    }
+  }
+
+  if (options.animations && remapsByTrackTarget.size > 0) {
+    for (const clip of options.animations) {
+      const nextTracks: THREE.KeyframeTrack[] = [];
+      for (const track of clip.tracks) {
+        if (!track.name.endsWith('.morphTargetInfluences')) {
+          nextTracks.push(track);
+          continue;
+        }
+        const targetKey = track.name.slice(0, -'.morphTargetInfluences'.length);
+        const remap = remapsByTrackTarget.get(targetKey);
+        if (!remap || track.values.length === 0 || track.values.length % remap.oldCount !== 0) {
+          nextTracks.push(track);
+          continue;
+        }
+        const { oldCount, keptIndices } = remap;
+        if (keptIndices.length === 0) {
+          continue;
+        }
+        const frameCount = track.values.length / oldCount;
+        const compacted = new Float32Array(frameCount * keptIndices.length);
+        for (let f = 0; f < frameCount; f++) {
+          const srcBase = f * oldCount;
+          const dstBase = f * keptIndices.length;
+          for (let k = 0; k < keptIndices.length; k++) {
+            compacted[dstBase + k] = track.values[srcBase + keptIndices[k]];
+          }
+        }
+        track.values = compacted;
+        nextTracks.push(track);
+      }
+      clip.tracks = nextTracks;
+    }
+  }
+
+  return { prunedZeroCount, cappedCount, maxRemainingLayers };
+}
+

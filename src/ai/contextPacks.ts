@@ -86,13 +86,13 @@ export const AI_CONTEXT_META: Record<AiStudioContextId, AiContextMeta> = {
   object: {
     id: 'object',
     title: 'Object Creator AI',
-    tagline: 'Assembles multi-part 3D props & mechanisms (hinges, sliders, glowing emissives) within Maker geometry limits.',
+    tagline: 'Builds curved splines (bows, horns, cables), tapered/bent primitives, turned lathes, organic SDF sculptures & boolean cutouts.',
     accentHex: '#7C5CFF',
     saveAreaLabel: 'Save to Objects',
     starterPrompts: [
-      'Warm glowing iron & amber-glass hanging trail lantern with handle ring and cap',
-      'Golden beehive with layered hexagonal tiers and dripping honey spout',
-      'Ornate magic honey spoon with carved oak handle and glowing golden bowl',
+      'Recurved wooden hunter bow with tapered flat limbs, leather hand grip, taut thin bowstring and nocked arrow',
+      'Warm glowing iron & amber-glass hanging trail lantern with curved handle ring and cap',
+      'Vintage flintlock pistol with carved wooden stock, tapered metal barrel, trigger guard cutout and hammer',
     ],
   },
   plant: {
@@ -230,33 +230,88 @@ Study the attached reference image carefully. Match the subject's silhouette, sp
 function getSchemaSpecForContext(context: AiStudioContextId): string {
   switch (context) {
     case 'object':
-      return `TARGET SCHEMA (Object Maker Prop / Mechanism):
+      return `TARGET SCHEMA (Object Maker Multi-Part & Curved/Sculpted Prop):
+
+CONSTRUCTION RULES & CAPABILITIES (READ CAREFULLY):
+1. NEVER build curved shapes (bows, horns, tusks, handles, cables, arches, scythes, sickles, fishing rods) out of a straight stick/cylinder!
+   - Use "shape": "splineTube" with 5 to 9 ordered 3D control points in "splineConfig.points" that trace the true silhouette curve, plus smooth end tapers ("taperStart": 0.25..0.5, "taperEnd": 0.25..0.5, "taperSmoothStart": 0.45..0.8, "taperSmoothEnd": 0.45..0.8).
+   - Or add "bendAngle" (-160..160) & "taperStart"/"taperEnd" (0.05..2.0) to cylinders/planks/beams.
+2. BOWS & RECURVE WEAPONS:
+   - MUST use a symmetric 7-point curved "splineTube" ("profile": "flatStave", "ovalness": 0.45, "radius": 0.032..0.045, "mirrorSymmetry": "y") whose belly curves toward +Z at Y=0 (e.g. [0,0,0.18]) and tips recurve smoothly at top/bottom (e.g. [0,±0.68,-0.16]) with tapered nock tips ("taperStart": 0.35, "taperEnd": 0.35, "taperSmoothStart": 0.65, "taperSmoothEnd": 0.65).
+   - Add a separate vertical leather grip wrap ("cylinder" or "splineTube") at the handle center, tip nock caps, and a taut straight bowstring ("cylinder", dimensions: [0.012, stringLength, 0.012]) spanning straight between the exact Z/Y coordinates of the two bowstring tip points! Optionally add a resting/nocked arrow if appropriate.
+3. TURNED VESSELS / BARRELS / BOTTLES / CHALICES / COLUMNS:
+   - Use "shape": "lathe" with "latheProfile": [[radius, y], ...] from bottom to top (up to 16 points, radius >= 0.005).
+4. ORGANIC / CREATURE / ROCK / SKULL / CARVED FORMS:
+   - Use "shape": "sdfBlob" with "sdfBlobConfig": { "blendK": 0.12, "resolution": 28, "primitives": [...] } combining smooth-blended ellipsoids, curved capsules, rounded boxes, and negative "op": "sub" eye sockets or hollows!
+5. COMPLEX HARD-SURFACE CUTOUTS (GUNS, TRIGGER GUARDS, KEYHOLES, SLOTS, ARCHED WINDOWS):
+   - Combine tapered/bent primitives & "lathe" barrels with optional cutter parts marked "isCutter": true and "cutTargets": ["PartName"] — the engine automatically boolean-subtracts "isCutter" volumes out of those target parts!
+6. Thin strings, wires, sights, blades, triggers can go down to 0.01m ("dimensions": [0.01..3, 0.01..3, 0.01..3]).
+
 {
-  "name": string (short asset title, e.g. "Glowing Trail Lantern"),
+  "name": string (short asset title, e.g. "Recurved Hunter Bow"),
   "category": "prop" | "scenery" | "building",
   "summary": string,
   "attachBodyPart": null | "rightHand" | "leftHand" | "head" | "back" | "hips",
-  "parts": [ (1 to 14 parts built cleanly centered around X=0, Z=0, base sitting near Y=0)
+  "parts": [ (1 to 16 parts centered around X=0, Z=0, base near Y=0)
     {
       "name": string,
-      "shape": "cube" | "halfCube" | "sphere" | "hemisphere" | "cylinder" | "cone" | "capsule" | "torus" | "wedge" | "arch" | "prism" | "plank" | "beamLarge" | "beamSmall" | "stairs" | "pillar" | "fence" | "roofAFrame" | "roofSlope",
-      "position": [number (-3..3), number (0..4), number (-3..3)],
+      "shape": "splineTube" | "lathe" | "sdfBlob" | "cube" | "halfCube" | "sphere" | "hemisphere" | "cylinder" | "cone" | "capsule" | "torus" | "wedge" | "arch" | "prism" | "plank" | "beamLarge" | "beamSmall" | "stairs" | "pillar" | "fence" | "roofAFrame" | "roofSlope",
+      "position": [number (-3..3), number (-2..4), number (-3..3)],
       "rotation": [number (deg -180..180), number, number],
-      "dimensions": [number (0.05..3), number (0.05..3), number (0.05..3)],
-      "bevel": number (0..0.25),
-      "segments": number (8..24),
+      "dimensions": [number (0.01..3.5), number (0.01..3.5), number (0.01..3.5)],
+      "bevel": number (0..0.35),
+      "segments": number (8..32),
+      "taperStart": number (0.05..2.0, optional, default 1),
+      "taperEnd": number (0.05..2.0, optional, default 1),
+      "taperSmoothStart": number (0.05..1.0, optional, default 0.35),
+      "taperSmoothEnd": number (0.05..1.0, optional, default 0.35),
+      "bendAngle": number (-165..165 deg, optional, default 0),
+      "bendAxis": "x" | "z" (optional, default "z"),
+      "twistAngle": number (-360..360 deg, optional, default 0),
+      "splineConfig": { (REQUIRED when shape === "splineTube")
+        "points": [[x, y, z], ...] (3..12 local points relative to part position!),
+        "pointRadii": [number (0.1..2.5), ...] (optional per-point multiplier matching points.length),
+        "profile": "round" | "oval" | "flatStave" | "beveledBar",
+        "radius": number (0.008..0.5),
+        "ovalness": number (0.25..1.8, e.g. 0.45 for flat bow stave),
+        "taperStart": number (0.05..2.0),
+        "taperEnd": number (0.05..2.0),
+        "taperSmoothStart": number (0.05..1.0),
+        "taperSmoothEnd": number (0.05..1.0),
+        "closed": boolean,
+        "mirrorSymmetry": "none" | "y" | "x"
+      },
+      "latheProfile": [[radius 0.005..1.5, y -2..2], ...] (REQUIRED when shape === "lathe", ordered bottom->top),
+      "sdfBlobConfig": { (REQUIRED when shape === "sdfBlob")
+        "blendK": number (0.03..0.35),
+        "resolution": number (20..36),
+        "primitives": [
+          {
+            "kind": "ellipsoid" | "capsule" | "roundedBox",
+            "op": "add" | "sub",
+            "a": [x, y, z],
+            "b": [x, y, z] (radii/half-extents for ellipsoid/box, or end point for capsule/cone),
+            "startRadius": number (0.02..0.5, for capsule/cone),
+            "midRadius": number (0.02..0.5, for capsule),
+            "endRadius": number (0.01..0.5, for capsule/cone),
+            "curvature": number (-0.6..0.6)
+          }
+        ]
+      },
+      "isCutter": boolean (optional; set true to boolean-subtract this volume from cutTargets or overlapping solid parts!),
+      "cutTargets": [string] (optional list of part names to carve when isCutter is true),
       "materialId": null | "hewnStone" | "sandstone" | "randomCobble" | "timberPlank" | "roundLogs" | "rustedIron" | "clayTile" | "thatchedStraw",
       "color": "#RRGGBB",
       "roughness": number (0.08..0.95),
       "metalness": number (0..1),
-      "emissive": "#RRGGBB" (optional, use with emissiveIntensity 0.5..2.4 for lanterns/crystals),
+      "emissive": "#RRGGBB" (optional),
       "emissiveIntensity": number (0..2.5)
     }
   ],
   "mechanisms": [ (optional interactive hinge/slider animations)
     {
       "name": string,
-      "targetPartName": string (must match a part.name above),
+      "targetPartName": string (must match a non-cutter part.name above),
       "kind": "hinge" | "slider",
       "axis": "x" | "y" | "z",
       "openAngleDeg": number (-160..160),

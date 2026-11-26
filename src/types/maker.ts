@@ -311,6 +311,9 @@ export type ObjectPrimitiveShapeId =
   | 'fence'
   | 'roofAFrame'
   | 'roofSlope'
+  | 'splineTube'
+  | 'lathe'
+  | 'sdfBlob'
   | 'csgResult'
   | PlantShapeId;
 
@@ -332,6 +335,50 @@ export interface ObjectGeometryModifiers {
   roundness: number;
   edgeWear: number;
   segments?: number;
+  taperStart?: number;
+  taperEnd?: number;
+  taperSmoothStart?: number;
+  taperSmoothEnd?: number;
+  bendAngle?: number;
+  bendAxis?: 'x' | 'z';
+  twistAngle?: number;
+}
+
+export type ObjectSplineProfile = 'round' | 'oval' | 'flatStave' | 'beveledBar';
+
+export interface ObjectSplineConfig {
+  points: [number, number, number][];
+  pointRadii?: number[];
+  profile: ObjectSplineProfile;
+  radius: number;
+  ovalness?: number;
+  taperStart: number;
+  taperEnd: number;
+  taperSmoothStart: number;
+  taperSmoothEnd: number;
+  closed?: boolean;
+  steps?: number;
+  radialSegments?: number;
+  mirrorSymmetry?: 'none' | 'y' | 'x';
+}
+
+export interface ObjectSdfNode {
+  kind: 'capsule' | 'ellipsoid' | 'roundedBox';
+  op?: 'add' | 'sub';
+  a: [number, number, number];
+  b: [number, number, number];
+  startRadius?: number;
+  midRadius?: number;
+  endRadius?: number;
+  curvature?: number;
+  blendScale?: number;
+  roundness?: number;
+}
+
+export interface ObjectSdfBlobConfig {
+  primitives: ObjectSdfNode[];
+  resolution?: number;
+  blendK?: number;
 }
 
 export interface ObjectSerializedGeometry {
@@ -351,6 +398,9 @@ export interface ObjectPartSpec {
   dimensions: [number, number, number];
   modifiers: ObjectGeometryModifiers;
   material: ObjectSurfaceFinish;
+  splineConfig?: ObjectSplineConfig;
+  latheProfile?: [number, number][];
+  sdfBlobConfig?: ObjectSdfBlobConfig;
   plantParams?: PlantPartConfig;
   bakedGeometry?: ObjectSerializedGeometry;
   hidden?: boolean;

@@ -184,6 +184,7 @@ import {
   detectSoftwareGl,
   disposeObject3D,
   ensureSkyDome,
+  initMakerRenderer,
   setupSceneEnvironment,
   syncSkyDomeToCamera,
   updateSkyClouds,
@@ -192,8 +193,10 @@ import {
 import { hideBatchEntry, setBatchEntryMatrix } from '../../three/batchedScatterBuilder';
 import {
   forceReleaseRendererContext,
+  getRendererMaxTextureArrayLayers,
   isIOSDevice,
   isWebGPUFallbackAdapter,
+  sanitizeObjectMorphTargets,
 } from '../../three/webglUtils';
 import {
   MechanismRuntimeController,
@@ -2179,7 +2182,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         dom.addEventListener('pointerdown', onPointerDown);
         dom.addEventListener('wheel', onWheel, { passive: true });
         try {
-          await renderer.init();
+          await initMakerRenderer(renderer);
           return true;
         } catch (fallbackErr) {
           console.error('PlayMode WebGL fallback renderer init failed:', fallbackErr);
@@ -2188,7 +2191,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       };
 
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (!isSoftwareGl && isWebGPUFallbackAdapter(renderer)) {
           console.warn('PlayMode WebGPU returned a software fallback adapter; switching to hardware WebGL2.');
           initOk = await initHardwareWebGLFallback();
@@ -2200,6 +2203,10 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         initOk = await initHardwareWebGLFallback();
       }
       if (disposed || !initOk) return;
+      sanitizeObjectMorphTargets(scene, {
+        maxLayers: getRendererMaxTextureArrayLayers(renderer),
+        cloneSharedGeometries: true,
+      });
       // Yield one frame after GPU init so PMREM, PostProcessing, and terrain don't stack onto one long task
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       if (disposed) return;

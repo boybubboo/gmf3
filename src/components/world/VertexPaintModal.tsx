@@ -44,6 +44,7 @@ import {
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
+  initMakerRenderer,
   setupSceneEnvironment,
 } from '../../three/islandScene';
 import { buildEntityMesh } from '../../three/proceduralModels';
@@ -837,7 +838,7 @@ export const VertexPaintModal: React.FC<VertexPaintModalProps> = ({
 
     void (async () => {
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
       } catch {
         // ignore if unmounted
       }

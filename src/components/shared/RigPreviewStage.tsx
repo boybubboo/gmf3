@@ -13,9 +13,14 @@ import {
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
+  initMakerRenderer,
   setupSceneEnvironment,
 } from '../../three/islandScene';
-import { isWebGPUFallbackAdapter } from '../../three/webglUtils';
+import {
+  getRendererMaxTextureArrayLayers,
+  isWebGPUFallbackAdapter,
+  sanitizeObjectMorphTargets,
+} from '../../three/webglUtils';
 import {
   getBoneWorldPosition,
   type RigTestOverride,
@@ -1292,8 +1297,12 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
       bindDomControls(renderer.domElement, prevTarget, prevMinDist, prevMaxDist);
 
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (!active) return false;
+        sanitizeObjectMorphTargets(scene, {
+          maxLayers: getRendererMaxTextureArrayLayers(renderer),
+          cloneSharedGeometries: true,
+        });
         refs.rendererInitialized = true;
         try {
           envTex = setupSceneEnvironment(scene, renderer);
@@ -1309,7 +1318,7 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
     void (async () => {
       let initOk = false;
       try {
-        await renderer.init();
+        await initMakerRenderer(renderer);
         if (!active) return;
         if (!isSoftwareGl && isWebGPUFallbackAdapter(renderer)) {
           initOk = await switchToWebGLFallback();
@@ -1320,6 +1329,10 @@ export const RigPreviewStage: React.FC<RigPreviewStageProps> = ({
         initOk = await switchToWebGLFallback();
       }
       if (!active || !initOk) return;
+      sanitizeObjectMorphTargets(scene, {
+        maxLayers: getRendererMaxTextureArrayLayers(renderer),
+        cloneSharedGeometries: true,
+      });
       refs.rendererInitialized = true;
       const backend = refs.renderer.backend as {
         isWebGPUBackend?: boolean;
