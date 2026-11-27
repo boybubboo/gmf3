@@ -132,6 +132,7 @@ import {
   sampleTerrainWeathering,
   terrainHasMainMountainCave,
   type CollisionFilterContext,
+  type WalkInBuildingSpec,
 } from '../../utils/terrain';
 import { readJsHeapUsageMB } from '../../utils/resourceMonitor';
 import {
@@ -216,6 +217,7 @@ import {
   buildPortalMarker,
   buildTreeStumpMesh,
   updateParachuteBlanketRig,
+  updateRpgLivingVillageAnimations,
   type BaddieRig,
   type CreatureAnimRefs,
   type HeroRig,
@@ -2611,6 +2613,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       let shownSwimTip = false;
       let shownCaveTip = false;
       let caveCamBlend = 0;
+      let interiorCamBlend = 0;
+      let canopyOcclusionBlend = 0;
+      let heroInsideWalkInBuilding = false;
       let respawnX = startX;
       let respawnZ = startZ;
       let respawnYaw = heroYaw;
@@ -8575,6 +8580,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           } | null = null;
           let nearestChestPromptDist = 999;
           let nearInteractableEntity = false;
+          heroInsideWalkInBuilding = false;
 
           for (const rt of runtimeEntities) {
             if (!rt.alive) continue;
@@ -8663,9 +8669,77 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               rt.mesh.rotation.x = Math.max(0, Math.sin(t * 3.8)) * 0.24;
             }
 
+            // Animate Blacksmith hammering & flying sparks, Tavern patrons & bartender, Villager raking yard, and Tethered horses
+            updateRpgLivingVillageAnimations(rt.mesh, gameElapsed);
+
             const dist = Math.hypot(rt.x - heroX, rt.z - heroZ);
             const rtBaseY = sampleLevelHeight(activeLevel, rt.x, rt.z) + (rt.elevationY ?? 0);
             const vertOk = Math.abs(heroY - rtBaseY) < 2.2;
+
+            // Walk-In Full-Sized Building: Hinged Front Door (Press E to Open), Roof Cutaway & Closer Interior Camera
+            if (rt.mesh.userData?.walkInBuilding && rt.mesh.userData?.walkInSpec) {
+              const spec = rt.mesh.userData.walkInSpec as WalkInBuildingSpec;
+              const yawB = rt.mesh.rotation.y;
+              const cosB = Math.cos(yawB);
+              const sinB = Math.sin(yawB);
+              const dxB = heroX - rt.x;
+              const dzB = heroZ - rt.z;
+              const lxB = dxB * cosB - dzB * sinB;
+              const lzB = dxB * sinB + dzB * cosB;
+
+              const insideFootprint =
+                Math.abs(lxB) <= spec.halfW - 0.15 && Math.abs(lzB) <= spec.halfD - 0.15;
+              const inDoorwayThreshold =
+                rt.opened &&
+                Math.abs(lxB) <= spec.doorHalfW + 0.65 &&
+                lzB >= spec.halfD - 0.6 &&
+                lzB <= spec.halfD + 1.4;
+              if (insideFootprint || inDoorwayThreshold) {
+                heroInsideWalkInBuilding = true;
+              }
+
+              const roofGrp = rt.mesh.userData.cutawayRoofGroup as THREE.Group | undefined;
+              if (roofGrp) {
+                roofGrp.visible = !(insideFootprint || inDoorwayThreshold);
+              }
+
+              const doorPivot = rt.mesh.userData.frontDoorPivot as THREE.Group | undefined;
+              if (doorPivot) {
+                const targetDoorYaw = rt.opened ? -Math.PI * 0.64 : 0;
+                doorPivot.rotation.y = THREE.MathUtils.damp(
+                  doorPivot.rotation.y,
+                  targetDoorYaw,
+                  10,
+                  dt
+                );
+              }
+
+              // Distance from hero to the front door center (lx = 0, lz = +spec.halfD)
+              const doorDist = Math.hypot(lxB, lzB - spec.halfD);
+              if (doorDist < 3.1 && Math.abs(heroY - rtBaseY) < 3.0) {
+                nearInteractableEntity = true;
+                if (doorDist < nearestDoorPromptDist) {
+                  nearestDoorPromptDist = doorDist;
+                  nearestDoorPrompt = {
+                    label: `${rt.name} Door`,
+                    isOpen: rt.opened,
+                    locked: false,
+                  };
+                }
+                if (didInteract && !interactConsumed) {
+                  interactConsumed = true;
+                  rt.opened = !rt.opened;
+                  if (rt.opened) openedDoorIds.add(rt.id);
+                  else openedDoorIds.delete(rt.id);
+                  AudioEngine.playSound(activeLevel.audio.door);
+                  showToast(
+                    rt.opened
+                      ? `${rt.name} door opened — walk inside to explore!`
+                      : `${rt.name} door closed`
+                  );
+                }
+              }
+            }
 
             // Live Particle & FX Emitter simulation (auto-paused whenever Play Mode pauses)
             if (rt.fxRuntime) {
@@ -12320,6 +12394,113 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           showToast('Entered the Mountain Cave');
         }
         caveCamBlend = THREE.MathUtils.damp(caveCamBlend, heroInCave ? 1 : 0, 6.5, dt);
+        interiorCamBlend = THREE.MathUtils.damp(
+          interiorCamBlend,
+          heroInsideWalkInBuilding ? 1 : 0,
+          5.5,
+          dt
+        );
+
+        // Universal Camera Sightline Occlusion Helper (detects lush forest canopies & tall obstacles in ANY game mode)
+        const applyUniversalCameraAutoZoom = () => {
+          if (camModeNow === 'firstPerson') return;
+          const focusY = heroY + 1.25;
+          const segDX = _targetCamPos.x - heroX;
+          const segDY = _targetCamPos.y - focusY;
+          const segDZ = _targetCamPos.z - heroZ;
+          const segLenXZSq = segDX * segDX + segDZ * segDZ;
+
+          let rawCanopyObstruction = 0;
+          if (segLenXZSq > 4.0 && !heroInsideWalkInBuilding) {
+            const testCanopyCylinder = (ox: number, oz: number, radius: number, minY: number, maxY: number) => {
+              const tProj = ((ox - heroX) * segDX + (oz - heroZ) * segDZ) / segLenXZSq;
+              if (tProj <= 0.08 || tProj >= 0.94) return;
+              const cx = heroX + segDX * tProj;
+              const cy = focusY + segDY * tProj;
+              const cz = heroZ + segDZ * tProj;
+              if (cy < minY || cy > maxY) return;
+              const distXZ = Math.hypot(ox - cx, oz - cz);
+              if (distXZ < radius) {
+                const strength = Math.min(1, (1 - distXZ / radius) * 1.45);
+                if (strength > rawCanopyObstruction) {
+                  rawCanopyObstruction = strength;
+                }
+              }
+            };
+
+            // 1. Check scatter forest trees
+            const scatterList = activeLevel.terrain?.scatter;
+            if (scatterList && scatterList.length > 0) {
+              for (let si = 0; si < scatterList.length; si++) {
+                const scItem = scatterList[si];
+                if (scItem.kind !== 'tree') {
+                  continue;
+                }
+                if (Math.abs(scItem.x - heroX) > 28 || Math.abs(scItem.z - heroZ) > 28) continue;
+                const treeKey = `scatter_${si}`;
+                if (choppedTreeIds.has(treeKey)) continue;
+                const sc = Math.max(0.6, scItem.size || 1);
+                const treeBaseY = sampleLevelHeight(activeLevel, scItem.x, scItem.z);
+                testCanopyCylinder(
+                  scItem.x,
+                  scItem.z,
+                  2.55 * sc,
+                  treeBaseY + 1.4 * sc,
+                  treeBaseY + 7.5 * sc
+                );
+              }
+            }
+
+            // 2. Check placed EZ-Tree / Canopy Tree / Tropical Jungle Tree / Hollow Tree / Tall Building entities
+            for (let ri = 0; ri < runtimeEntities.length; ri++) {
+              const rt = runtimeEntities[ri];
+              if (!rt.alive || choppedTreeIds.has(rt.id)) continue;
+              if (Math.abs(rt.x - heroX) > 28 || Math.abs(rt.z - heroZ) > 28) continue;
+              const lName = rt.name.toLowerCase();
+              const isTreeEnt =
+                Boolean(rt.mesh.userData?.canopyTree) ||
+                lName.includes('tree') ||
+                lName.includes('tropical') ||
+                lName.includes('canopy') ||
+                lName.includes('jungle');
+              if (isTreeEnt) {
+                const sc = Math.max(0.6, rt.mesh.scale.x || 1);
+                const tBaseY = sampleLevelHeight(activeLevel, rt.x, rt.z);
+                testCanopyCylinder(rt.x, rt.z, 2.75 * sc, tBaseY + 1.4 * sc, tBaseY + 8.0 * sc);
+              } else if (rt.mesh.userData?.walkInBuilding && rt.mesh.userData?.walkInSpec) {
+                const spec = rt.mesh.userData.walkInSpec as WalkInBuildingSpec;
+                const bBaseY = sampleLevelHeight(activeLevel, rt.x, rt.z);
+                testCanopyCylinder(
+                  rt.x,
+                  rt.z,
+                  Math.max(spec.halfW, spec.halfD) * 0.92,
+                  bBaseY + 1.2,
+                  bBaseY + spec.wallHeight + 3.0
+                );
+              }
+            }
+          }
+
+          canopyOcclusionBlend = THREE.MathUtils.damp(
+            canopyOcclusionBlend,
+            rawCanopyObstruction > 0.05 ? Math.min(1, rawCanopyObstruction) : 0,
+            rawCanopyObstruction > 0.05 ? 5.8 : 3.4,
+            dt
+          );
+
+          // Combine Walk-In Building Interior Zoom and Forest Canopy Auto-Zoom
+          const zoomInFactor = Math.max(interiorCamBlend * 0.52, canopyOcclusionBlend * 0.45);
+          const heightDropFactor = Math.max(interiorCamBlend * 0.54, canopyOcclusionBlend * 0.42);
+          if (zoomInFactor > 0.005) {
+            _targetCamPos.x = THREE.MathUtils.lerp(_targetCamPos.x, heroX + shakeX, zoomInFactor);
+            _targetCamPos.z = THREE.MathUtils.lerp(_targetCamPos.z, heroZ, zoomInFactor);
+            _targetCamPos.y = THREE.MathUtils.lerp(
+              _targetCamPos.y,
+              Math.max(heroY + 2.35, focusY + 1.4),
+              heightDropFactor
+            );
+          }
+        };
 
         // Responsive camera presets (zero-allocation)
         const camDist = inp.cameraDistance;
@@ -12548,6 +12729,10 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 );
               }
               _lookTarget.set(heroX, heroY + 1.15, heroZ);
+            }
+
+            if (!activeCutaway) {
+              applyUniversalCameraAutoZoom();
             }
 
             if (activeCutaway) {

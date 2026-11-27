@@ -85,7 +85,12 @@ import { FxEmitterRuntime } from '../../three/fxEmitterRuntime';
 import { getBuildingBlockDimensions } from '../../three/buildingBlocks';
 import { PostProcessingPipeline } from '../../three/postProcessingPipeline';
 import { MechanismRuntimeController } from '../../three/mechanismController';
-import { buildEntityMesh, buildHeroModel, buildPortalMarker } from '../../three/proceduralModels';
+import {
+  buildEntityMesh,
+  buildHeroModel,
+  buildPortalMarker,
+  updateRpgLivingVillageAnimations,
+} from '../../three/proceduralModels';
 import { buildCarModel } from '../../three/vehicleModels';
 import { applyVertexPaintStrokesToObject } from '../../three/vertexPainter';
 import { createOptInMeshletPipeline, prepareObjectForMeshletCulling } from '../../three/meshletPipeline';
@@ -1604,6 +1609,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
             grp.rotation.y += Math.sin(t * 0.9 + ph) * dt * 0.65;
             grp.rotation.x = Math.max(0, Math.sin(t * 4.5 + ph)) * 0.22;
           }
+          updateRpgLivingVillageAnimations(grp, t);
         });
         for (let ti = 0; ti < refs.torchFlameObjects.length; ti++) {
           const tf = refs.torchFlameObjects[ti];

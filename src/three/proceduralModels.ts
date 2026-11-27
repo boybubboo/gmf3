@@ -13,6 +13,7 @@ import { buildFxEmitterFallbackGroup } from './fxEmitterRuntime';
 import { DUNGEON_TRAP_STYLE_META } from '../services/DungeonGenerator';
 import { buildBuildingBlockMesh, buildModularDoorMesh } from './buildingBlocks';
 import { buildQuadrupedMonsterMesh } from './quadrupedMonsterBuilder';
+import { getWalkInBuildingSpec, isRopeBridgeEntity, type WalkInBuildingSpec } from '../utils/terrain';
 
 export interface CreatureAnimRefs {
   creatureType: CreatureBodyId;
@@ -2685,24 +2686,833 @@ function buildRpgRewardCardsShrineMesh(entity: LevelEntity): THREE.Group {
   return root;
 }
 
+function buildMiniVillagerFigure(options: {
+  tunicColor: string;
+  hairColor: string;
+  skinColor?: string;
+  seated?: boolean;
+  apronColor?: string;
+  hatColor?: string;
+}): {
+  root: THREE.Group;
+  head: THREE.Group;
+  armL: THREE.Group;
+  armR: THREE.Group;
+  torso: THREE.Group;
+} {
+  const root = new THREE.Group();
+  const skinMat = new THREE.MeshStandardMaterial({ color: options.skinColor ?? '#F2C5A0', roughness: 0.72 });
+  const tunicMat = new THREE.MeshStandardMaterial({ color: options.tunicColor, roughness: 0.8 });
+  const hairMat = new THREE.MeshStandardMaterial({ color: options.hairColor, roughness: 0.85 });
+  const trouserMat = new THREE.MeshStandardMaterial({ color: '#3E3227', roughness: 0.88 });
+  const bootMat = new THREE.MeshStandardMaterial({ color: '#271E17', roughness: 0.82 });
+
+  const torso = new THREE.Group();
+  const baseH = options.seated ? 0.56 : 0.72;
+  torso.position.y = baseH;
+  const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.23, 0.54, 10), tunicMat);
+  chest.position.y = 0.27;
+  chest.castShadow = true;
+  torso.add(chest);
+
+  if (options.apronColor) {
+    const apronMat = new THREE.MeshStandardMaterial({ color: options.apronColor, roughness: 0.78 });
+    const apron = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.52, 0.12), apronMat);
+    apron.position.set(0, 0.22, 0.16);
+    torso.add(apron);
+  }
+
+  const head = new THREE.Group();
+  head.position.set(0, 0.66, 0);
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 10), skinMat);
+  skull.castShadow = true;
+  const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.58), hairMat);
+  hairCap.position.y = 0.02;
+  const eyeMat = new THREE.MeshBasicMaterial({ color: '#1F2937' });
+  for (const sx of [-0.065, 0.065]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.024, 6, 6), eyeMat);
+    eye.position.set(sx, 0.02, 0.16);
+    head.add(eye);
+  }
+  if (options.hatColor) {
+    const hatMat = new THREE.MeshStandardMaterial({ color: options.hatColor, roughness: 0.85 });
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.36, 0.04, 12), hatMat);
+    brim.position.y = 0.13;
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.16, 10), hatMat);
+    crown.position.y = 0.21;
+    head.add(brim, crown);
+  }
+  head.add(skull, hairCap);
+  torso.add(head);
+
+  const armL = new THREE.Group();
+  armL.position.set(-0.26, 0.48, 0);
+  const armLMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.055, 0.42, 8), tunicMat);
+  armLMesh.position.y = -0.18;
+  const handL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), skinMat);
+  handL.position.y = -0.4;
+  armL.add(armLMesh, handL);
+
+  const armR = new THREE.Group();
+  armR.position.set(0.26, 0.48, 0);
+  const armRMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.055, 0.42, 8), tunicMat);
+  armRMesh.position.y = -0.18;
+  const handR = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), skinMat);
+  handR.position.y = -0.4;
+  armR.add(armRMesh, handR);
+
+  torso.add(armL, armR);
+  root.add(torso);
+
+  for (const sx of [-0.11, 0.11]) {
+    if (options.seated) {
+      const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.07, 0.34, 8), trouserMat);
+      thigh.rotation.x = Math.PI / 2;
+      thigh.position.set(sx, 0.48, 0.16);
+      const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.06, 0.38, 8), bootMat);
+      shin.position.set(sx, 0.24, 0.32);
+      root.add(thigh, shin);
+    } else {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.065, 0.56, 8), trouserMat);
+      leg.position.set(sx, 0.38, 0);
+      const boot = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.14, 0.22), bootMat);
+      boot.position.set(sx, 0.07, 0.03);
+      root.add(leg, boot);
+    }
+  }
+
+  return { root, head, armL, armR, torso };
+}
+
+function buildWalkInBuildingMesh(entity: LevelEntity, spec: WalkInBuildingSpec): THREE.Group {
+  const root = new THREE.Group();
+  // Walk-in building coordinates in spec are scaled by entity.scale in terrain.ts,
+  // while Three.js scales the root group by entity.scale automatically. Use unscaled base dimensions here!
+  const s = Math.max(0.65, entity.scale ?? 1);
+  const halfW = spec.halfW / s;
+  const halfD = spec.halfD / s;
+  const doorHalfW = spec.doorHalfW / s;
+  const floorY = spec.floorOffset;
+  const wallH = (spec.wallHeight / s) * 0.62;
+  const wallT = spec.wallThick / s;
+
+  const isScifi = spec.buildingType === 'scifiBuilding';
+  const isModern = spec.buildingType === 'modernBuilding';
+  const isTemple = spec.buildingType === 'stoneShrine';
+
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: isScifi ? '#1E293B' : isModern ? '#334155' : '#6A707A',
+    roughness: isScifi ? 0.45 : 0.9,
+    metalness: isScifi ? 0.55 : 0.05,
+  });
+  const darkStoneMat = new THREE.MeshStandardMaterial({
+    color: isScifi ? '#0F172A' : '#474C55',
+    roughness: 0.88,
+  });
+  const woodFloorMat = new THREE.MeshStandardMaterial({
+    color: isScifi ? '#1E293B' : isTemple ? '#57534E' : isModern ? '#855836' : '#6E472B',
+    roughness: isModern ? 0.55 : 0.82,
+    metalness: isScifi ? 0.45 : 0.05,
+  });
+  const plankSeamMat = new THREE.MeshStandardMaterial({
+    color: isScifi ? '#0EA5E9' : isTemple ? '#44403C' : '#4A2E1A',
+    emissive: isScifi ? '#0284C7' : '#000000',
+    emissiveIntensity: isScifi ? 0.45 : 0,
+    roughness: 0.85,
+  });
+  const wallMat = new THREE.MeshStandardMaterial({
+    color:
+      entity.styleTint ??
+      (isScifi
+        ? '#334155'
+        : isModern
+          ? '#F1F5F9'
+          : isTemple
+            ? '#78716C'
+            : spec.buildingType === 'blacksmith'
+              ? '#B8A996'
+              : '#E5D7C1'),
+    roughness: isScifi ? 0.38 : 0.84,
+    metalness: isScifi ? 0.42 : 0.04,
+  });
+  const timberMat = new THREE.MeshStandardMaterial({
+    color: isScifi ? '#0F172A' : isModern ? '#1E293B' : '#4E321D',
+    roughness: 0.84,
+  });
+  const furnitureWoodMat = new THREE.MeshStandardMaterial({
+    color: isScifi ? '#334155' : '#7C5132',
+    roughness: 0.78,
+  });
+  const roofMat = new THREE.MeshStandardMaterial({
+    color: isScifi ? '#0F172A' : isModern ? '#1E293B' : isTemple ? '#57534E' : '#7A3424',
+    roughness: 0.8,
+  });
+  const mossMat = new THREE.MeshStandardMaterial({ color: '#3F6E38', roughness: 0.88 });
+  const ironMat = new THREE.MeshStandardMaterial({ color: '#374151', roughness: 0.35, metalness: 0.82 });
+  const goldMat = new THREE.MeshStandardMaterial({ color: '#F59E0B', roughness: 0.32, metalness: 0.72 });
+  const lanternGlowMat = new THREE.MeshStandardMaterial({
+    color: isScifi ? '#38BDF8' : '#FFD584',
+    emissive: isScifi ? '#0EA5E9' : '#FF8F00',
+    emissiveIntensity: 1.75,
+    roughness: 0.2,
+  });
+  const windowGlassMat = new THREE.MeshStandardMaterial({
+    color: isScifi ? '#7DD3FC' : '#FFE4A0',
+    emissive: isScifi ? '#0284C7' : '#F59E0B',
+    emissiveIntensity: 0.65,
+    transparent: true,
+    opacity: 0.72,
+    roughness: 0.18,
+  });
+
+  // 1. Stone Foundation Plinth & Detailed Wooden Plank Floor
+  const plinth = new THREE.Mesh(
+    new THREE.BoxGeometry(halfW * 2 + 0.6, floorY, halfD * 2 + 0.6),
+    stoneMat
+  );
+  plinth.position.y = floorY * 0.5;
+  plinth.receiveShadow = true;
+  root.add(plinth);
+
+  const floorDeck = new THREE.Mesh(
+    new THREE.BoxGeometry(halfW * 2 - 0.1, 0.08, halfD * 2 - 0.1),
+    woodFloorMat
+  );
+  floorDeck.position.y = floorY + 0.02;
+  floorDeck.receiveShadow = true;
+  root.add(floorDeck);
+
+  // Visible wooden plank floor boards & entrance stone threshold
+  const plankCount = Math.floor((halfW * 2 - 0.6) / 0.85);
+  for (let i = 0; i <= plankCount; i++) {
+    const px = -halfW + 0.4 + i * 0.85;
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.02, halfD * 2 - 0.3), plankSeamMat);
+    seam.position.set(px, floorY + 0.055, 0);
+    root.add(seam);
+  }
+  const threshold = new THREE.Mesh(new THREE.BoxGeometry(doorHalfW * 2.4, 0.1, 1.35), darkStoneMat);
+  threshold.position.set(0, floorY * 0.65, halfD + 0.32);
+  threshold.receiveShadow = true;
+  root.add(threshold);
+
+  // 2. Perimeter Walls with Front Doorway Gap & Framed Windows
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2, wallH, wallT), wallMat);
+  backWall.position.set(0, floorY + wallH * 0.5, -halfD);
+  backWall.castShadow = true;
+  backWall.receiveShadow = true;
+
+  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(wallT, wallH, halfD * 2), wallMat);
+  leftWall.position.set(-halfW, floorY + wallH * 0.5, 0);
+  leftWall.castShadow = true;
+  leftWall.receiveShadow = true;
+
+  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(wallT, wallH, halfD * 2), wallMat);
+  rightWall.position.set(halfW, floorY + wallH * 0.5, 0);
+  rightWall.castShadow = true;
+  rightWall.receiveShadow = true;
+
+  const frontSegW = Math.max(0.6, halfW - doorHalfW);
+  const frontSegCenter = doorHalfW + frontSegW * 0.5;
+  const frontLeftWall = new THREE.Mesh(new THREE.BoxGeometry(frontSegW, wallH, wallT), wallMat);
+  frontLeftWall.position.set(-frontSegCenter, floorY + wallH * 0.5, halfD);
+  frontLeftWall.castShadow = true;
+  frontLeftWall.receiveShadow = true;
+
+  const frontRightWall = new THREE.Mesh(new THREE.BoxGeometry(frontSegW, wallH, wallT), wallMat);
+  frontRightWall.position.set(frontSegCenter, floorY + wallH * 0.5, halfD);
+  frontRightWall.castShadow = true;
+  frontRightWall.receiveShadow = true;
+
+  // Doorway header beam above front entrance
+  const doorH = Math.min(wallH - 0.55, 2.55);
+  const doorHeaderH = Math.max(0.35, wallH - doorH);
+  const doorHeader = new THREE.Mesh(
+    new THREE.BoxGeometry(doorHalfW * 2 + 0.2, doorHeaderH, wallT + 0.06),
+    timberMat
+  );
+  doorHeader.position.set(0, floorY + doorH + doorHeaderH * 0.5, halfD);
+  root.add(backWall, leftWall, rightWall, frontLeftWall, frontRightWall, doorHeader);
+
+  // Corner & intermediate timber framing posts
+  for (const px of [-halfW, -doorHalfW, doorHalfW, halfW]) {
+    for (const pz of [-halfD, halfD]) {
+      if (Math.abs(px) === doorHalfW && pz < 0) continue;
+      const post = new THREE.Mesh(new THREE.BoxGeometry(wallT + 0.14, wallH + 0.12, wallT + 0.14), timberMat);
+      post.position.set(px, floorY + wallH * 0.5, pz);
+      post.castShadow = true;
+      root.add(post);
+    }
+  }
+
+  // Paned Windows on Front, Left, and Right Walls
+  const addWindow = (wx: number, wy: number, wz: number, rotY: number, winW = 1.45, winH = 1.18) => {
+    const winGroup = new THREE.Group();
+    winGroup.position.set(wx, wy, wz);
+    winGroup.rotation.y = rotY;
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(winW + 0.18, winH + 0.18, wallT + 0.12), timberMat);
+    const pane = new THREE.Mesh(new THREE.BoxGeometry(winW, winH, wallT + 0.16), windowGlassMat);
+    const mullionV = new THREE.Mesh(new THREE.BoxGeometry(0.07, winH, wallT + 0.18), timberMat);
+    const mullionH = new THREE.Mesh(new THREE.BoxGeometry(winW, 0.07, wallT + 0.18), timberMat);
+    const sill = new THREE.Mesh(new THREE.BoxGeometry(winW + 0.34, 0.1, wallT + 0.32), stoneMat);
+    sill.position.y = -winH * 0.5 - 0.06;
+    winGroup.add(frame, pane, mullionV, mullionH, sill);
+    root.add(winGroup);
+  };
+  addWindow(-frontSegCenter, floorY + wallH * 0.52, halfD, 0);
+  addWindow(frontSegCenter, floorY + wallH * 0.52, halfD, 0);
+  addWindow(-halfW, floorY + wallH * 0.52, -halfD * 0.32, Math.PI / 2);
+  addWindow(-halfW, floorY + wallH * 0.52, halfD * 0.34, Math.PI / 2);
+  addWindow(halfW, floorY + wallH * 0.52, -halfD * 0.32, Math.PI / 2);
+  addWindow(halfW, floorY + wallH * 0.52, halfD * 0.34, Math.PI / 2);
+
+  // 3. Hinged Interactive Front Door (swings open when player presses E / Use)
+  const frontDoorPivot = new THREE.Group();
+  frontDoorPivot.position.set(-doorHalfW, floorY, halfD);
+  const doorW = doorHalfW * 2;
+  const doorLeaf = new THREE.Mesh(
+    new THREE.BoxGeometry(doorW, doorH, 0.16),
+    new THREE.MeshStandardMaterial({
+      color: isScifi ? '#0284C7' : '#5C371C',
+      roughness: 0.75,
+      metalness: isScifi ? 0.5 : 0.08,
+    })
+  );
+  doorLeaf.position.set(doorW * 0.5, doorH * 0.5, 0);
+  doorLeaf.castShadow = true;
+  frontDoorPivot.add(doorLeaf);
+
+  // Iron hinge straps & brass door ring handle on both faces of door
+  for (const hy of [0.55, doorH - 0.55]) {
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(doorW * 0.72, 0.1, 0.2), ironMat);
+    strap.position.set(doorW * 0.38, hy, 0);
+    frontDoorPivot.add(strap);
+  }
+  const doorHandle = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 8, 14), goldMat);
+  doorHandle.position.set(doorW - 0.32, doorH * 0.48, 0.12);
+  const doorHandleBack = doorHandle.clone();
+  doorHandleBack.position.z = -0.12;
+  frontDoorPivot.add(doorHandle, doorHandleBack);
+  root.add(frontDoorPivot);
+
+  // 4. Interior Wall Lanterns & Framed Wall Pictures (for ALL walk-in buildings)
+  const coneMat = new THREE.MeshBasicMaterial({
+    color: isScifi ? '#38BDF8' : '#FFCC66',
+    transparent: true,
+    opacity: 0.11,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const addWallLantern = (lx: number, ly: number, lz: number) => {
+    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.24), ironMat);
+    bracket.position.set(lx, ly + 0.14, lz);
+    const lantern = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.1, 0.28, 6), lanternGlowMat);
+    lantern.position.set(lx, ly, lz);
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.12, 6), ironMat);
+    cap.position.set(lx, ly + 0.18, lz);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(1.55, 2.2, 14, 1, true), coneMat);
+    cone.position.set(lx, ly - 1.05, lz);
+    root.add(bracket, lantern, cap, cone);
+  };
+  addWallLantern(-halfW + 0.32, floorY + wallH * 0.68, -halfD * 0.45);
+  addWallLantern(-halfW + 0.32, floorY + wallH * 0.68, halfD * 0.45);
+  addWallLantern(halfW - 0.32, floorY + wallH * 0.68, -halfD * 0.45);
+  addWallLantern(halfW - 0.32, floorY + wallH * 0.68, halfD * 0.45);
+  addWallLantern(-doorHalfW - 0.45, floorY + 2.15, halfD + 0.28);
+  addWallLantern(doorHalfW + 0.45, floorY + 2.15, halfD + 0.28);
+
+  // Framed Wall Pictures / Paintings hanging on interior walls
+  const pictureColors = ['#1D4ED8', '#15803D', '#B45309', '#7E22CE', '#BE123C'];
+  const addFramedPicture = (px: number, py: number, pz: number, rotY: number, colorIdx: number) => {
+    const picGroup = new THREE.Group();
+    picGroup.position.set(px, py, pz);
+    picGroup.rotation.y = rotY;
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.82, 0.08), goldMat);
+    const canvas = new THREE.Mesh(
+      new THREE.BoxGeometry(0.98, 0.66, 0.1),
+      new THREE.MeshStandardMaterial({
+        color: pictureColors[colorIdx % pictureColors.length],
+        roughness: 0.55,
+      })
+    );
+    const sunMotif = new THREE.Mesh(new THREE.CircleGeometry(0.14, 12), lanternGlowMat);
+    sunMotif.position.set(0.18, 0.1, 0.06);
+    picGroup.add(frame, canvas, sunMotif);
+    root.add(picGroup);
+  };
+  addFramedPicture(0.2, floorY + wallH * 0.58, -halfD + 0.22, 0, 0);
+  addFramedPicture(-halfW + 0.22, floorY + wallH * 0.58, 0, Math.PI / 2, 1);
+  addFramedPicture(halfW - 0.22, floorY + wallH * 0.58, 0, -Math.PI / 2, 2);
+
+  // Helper to build a dining table with benches
+  const addTableWithBenches = (tx: number, tz: number, tableW = 2.1, tableD = 1.05, withCandles = true) => {
+    const tGroup = new THREE.Group();
+    tGroup.position.set(tx, floorY, tz);
+    const top = new THREE.Mesh(new THREE.BoxGeometry(tableW, 0.11, tableD), furnitureWoodMat);
+    top.position.y = 0.78;
+    top.castShadow = true;
+    top.receiveShadow = true;
+    tGroup.add(top);
+    for (const [lx, lz] of [
+      [-tableW * 0.42, -tableD * 0.38],
+      [tableW * 0.42, -tableD * 0.38],
+      [-tableW * 0.42, tableD * 0.38],
+      [tableW * 0.42, tableD * 0.38],
+    ]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.76, 6), timberMat);
+      leg.position.set(lx, 0.38, lz);
+      tGroup.add(leg);
+    }
+    for (const bz of [-tableD * 0.76, tableD * 0.76]) {
+      const bench = new THREE.Mesh(new THREE.BoxGeometry(tableW * 0.92, 0.08, 0.36), furnitureWoodMat);
+      bench.position.set(0, 0.44, bz);
+      bench.castShadow = true;
+      tGroup.add(bench);
+    }
+    if (withCandles) {
+      const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.18, 8), lanternGlowMat);
+      candle.position.set(0, 0.92, 0);
+      const mug1 = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.08, 0.17, 8), timberMat);
+      mug1.position.set(-0.48, 0.91, 0.22);
+      const mug2 = mug1.clone();
+      mug2.position.set(0.52, 0.91, -0.2);
+      tGroup.add(candle, mug1, mug2);
+    }
+    root.add(tGroup);
+  };
+
+  // 5. Building-Specific Detailed Interiors & Animated NPCs
+  if (spec.buildingType === 'tavern') {
+    // A. Roaring Stone Fireplace on Back-Left Wall
+    const hearth = new THREE.Mesh(new THREE.BoxGeometry(2.7, 2.6, 1.3), stoneMat);
+    hearth.position.set(-3.2, floorY + 1.3, -halfD + 0.72);
+    hearth.castShadow = true;
+    const firebox = new THREE.Mesh(
+      new THREE.BoxGeometry(1.55, 1.15, 0.65),
+      new THREE.MeshBasicMaterial({ color: '#1A0F0A' })
+    );
+    firebox.position.set(-3.2, floorY + 0.62, -halfD + 1.12);
+    const embers = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.42, 1),
+      new THREE.MeshStandardMaterial({ color: '#FF6D00', emissive: '#FF3D00', emissiveIntensity: 2.1 })
+    );
+    embers.position.set(-3.2, floorY + 0.42, -halfD + 1.18);
+    const mantleBeam = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.22, 1.5), timberMat);
+    mantleBeam.position.set(-3.2, floorY + 1.65, -halfD + 0.75);
+    root.add(hearth, firebox, embers, mantleBeam);
+
+    // B. Long Oak Bar Counter + Stacked Kegs + Bartender Behind the Bar
+    const barCounter = new THREE.Mesh(new THREE.BoxGeometry(4.8, 1.12, 0.95), furnitureWoodMat);
+    barCounter.position.set(2.2, floorY + 0.56, -2.9);
+    barCounter.castShadow = true;
+    const barTop = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.12, 1.12), timberMat);
+    barTop.position.set(2.2, floorY + 1.14, -2.9);
+    root.add(barCounter, barTop);
+
+    // Back bar kegs & bottle shelves
+    for (const kx of [0.6, 2.2, 3.8]) {
+      const keg = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.32, 0.78, 10), furnitureWoodMat);
+      keg.rotation.x = Math.PI / 2;
+      keg.position.set(kx, floorY + 1.35, -halfD + 0.62);
+      keg.castShadow = true;
+      root.add(keg);
+    }
+
+    // Bartender NPC standing behind the bar counter
+    const bartender = buildMiniVillagerFigure({
+      tunicColor: '#7C2D12',
+      hairColor: '#451A03',
+      apronColor: '#F5F5F4',
+    });
+    bartender.root.position.set(2.2, floorY, -4.15);
+    bartender.armR.rotation.x = -0.75;
+    root.add(bartender.root);
+
+    // C. Multiple Dining Tables & Benches with Seated Patrons Chatting & Raising Mugs
+    const tableCoords: [number, number][] = [
+      [-3.7, -0.3],
+      [-3.7, 2.7],
+      [3.1, 0.2],
+      [3.1, 2.9],
+    ];
+    const patronColors = ['#1E40AF', '#166534', '#9A3412', '#6B21A8', '#0F766E', '#991B1B'];
+    const tavernPatrons: { head: THREE.Group; armR: THREE.Group; phase: number }[] = [];
+    tableCoords.forEach(([tx, tz], idx) => {
+      addTableWithBenches(tx, tz, 2.2, 1.08, true);
+      // 1-2 seated patrons per table
+      for (const side of idx % 2 === 0 ? [-1, 1] : [1]) {
+        const pIdx = tavernPatrons.length;
+        const patron = buildMiniVillagerFigure({
+          tunicColor: patronColors[pIdx % patronColors.length],
+          hairColor: pIdx % 2 === 0 ? '#3B2314' : '#D97706',
+          seated: true,
+        });
+        patron.root.position.set(tx + (side > 0 ? -0.35 : 0.35), floorY, tz + side * 0.82);
+        patron.root.rotation.y = side > 0 ? Math.PI : 0;
+        patron.armR.rotation.x = -0.85;
+        const mug = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.075, 0.16, 8), goldMat);
+        mug.position.set(0, -0.44, 0.08);
+        patron.armR.add(mug);
+        root.add(patron.root);
+        tavernPatrons.push({ head: patron.head, armR: patron.armR, phase: pIdx * 1.3 });
+      }
+    });
+    root.userData.tavernPatrons = tavernPatrons;
+    root.userData.bartenderNpc = bartender;
+
+    // D. Wooden Staircase & Upstairs Inn Mezzanine Loft with Beds
+    const loftY = floorY + 2.55;
+    const loftDeck = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.16, 3.8), furnitureWoodMat);
+    loftDeck.position.set(-halfW + 2.3, loftY, -halfD + 2.0);
+    loftDeck.castShadow = true;
+    loftDeck.receiveShadow = true;
+    const loftRailing = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.72, 0.12), timberMat);
+    loftRailing.position.set(-halfW + 2.3, loftY + 0.42, -halfD + 3.85);
+    root.add(loftDeck, loftRailing);
+
+    // Stairs leading up to the Upstairs Inn Loft along left wall
+    const stepCount = 8;
+    for (let sIdx = 0; sIdx < stepCount; sIdx++) {
+      const stepT = (sIdx + 1) / stepCount;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.14, 0.38), furnitureWoodMat);
+      step.position.set(-halfW + 0.75, floorY + stepT * 2.45, 2.2 - sIdx * 0.42);
+      step.castShadow = true;
+      root.add(step);
+    }
+
+    // Two Cozy Upstairs Inn Beds on the Loft
+    const quiltMat1 = new THREE.MeshStandardMaterial({ color: '#B91C1C', roughness: 0.8 });
+    const quiltMat2 = new THREE.MeshStandardMaterial({ color: '#1D4ED8', roughness: 0.8 });
+    const pillowMat = new THREE.MeshStandardMaterial({ color: '#F8FAFC', roughness: 0.75 });
+    for (let b = 0; b < 2; b++) {
+      const bx = -halfW + 1.25 + b * 1.85;
+      const bz = -halfD + 1.45;
+      const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.34, 1.95), timberMat);
+      bedFrame.position.set(bx, loftY + 0.22, bz);
+      const mattress = new THREE.Mesh(
+        new THREE.BoxGeometry(1.04, 0.18, 1.82),
+        b === 0 ? quiltMat1 : quiltMat2
+      );
+      mattress.position.set(bx, loftY + 0.42, bz);
+      const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.12, 0.38), pillowMat);
+      pillow.position.set(bx, loftY + 0.54, bz - 0.64);
+      root.add(bedFrame, mattress, pillow);
+    }
+  } else if (spec.buildingType === 'blacksmith') {
+    // A. Roaring Red-Hot Coal Forge with Chimney Hood & Bellows
+    const forgeHearth = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.25, 2.2), darkStoneMat);
+    forgeHearth.position.set(-2.3, floorY + 0.62, -2.5);
+    forgeHearth.castShadow = true;
+    const forgeHood = new THREE.Mesh(new THREE.ConeGeometry(1.65, 1.85, 4), stoneMat);
+    forgeHood.position.set(-2.3, floorY + 2.65, -2.5);
+    forgeHood.rotation.y = Math.PI / 4;
+    const redHotCoals = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.75, 1),
+      new THREE.MeshStandardMaterial({
+        color: '#FF5722',
+        emissive: '#FF2A00',
+        emissiveIntensity: 2.4,
+        roughness: 0.3,
+      })
+    );
+    redHotCoals.scale.set(1.2, 0.45, 1.1);
+    redHotCoals.position.set(-2.3, floorY + 1.28, -2.45);
+    root.add(forgeHearth, forgeHood, redHotCoals);
+
+    // B. Heavy Iron Anvil on Oak Stump with Glowing Red-Hot Metal Blade
+    const anvilStump = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.52, 0.64, 10), timberMat);
+    anvilStump.position.set(-0.4, floorY + 0.32, -0.8);
+    const anvilBody = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.38, 0.42), ironMat);
+    anvilBody.position.set(-0.4, floorY + 0.82, -0.8);
+    anvilBody.castShadow = true;
+    const anvilHorn = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.45, 6), ironMat);
+    anvilHorn.rotation.z = -Math.PI / 2;
+    anvilHorn.position.set(0.22, floorY + 0.85, -0.8);
+
+    const hotMetalMat = new THREE.MeshStandardMaterial({
+      color: '#FFAB40',
+      emissive: '#FF3D00',
+      emissiveIntensity: 2.6,
+      roughness: 0.25,
+    });
+    const hotBlade = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.06, 0.14), hotMetalMat);
+    hotBlade.position.set(-0.35, floorY + 1.04, -0.8);
+    root.add(anvilStump, anvilBody, anvilHorn, hotBlade);
+
+    // C. Animated Blacksmith Forging with a Large Hammer & Flying Sparks!
+    const smith = buildMiniVillagerFigure({
+      tunicColor: '#44403C',
+      hairColor: '#1C1917',
+      skinColor: '#E0AC8B',
+      apronColor: '#5C3419',
+    });
+    smith.root.position.set(-0.4, floorY, -1.62);
+    smith.root.rotation.y = 0; // faces +Z toward the anvil
+
+    // Large Two-Pound Forging Hammer attached to smith's right arm
+    const hammerGroup = new THREE.Group();
+    hammerGroup.position.set(0, -0.4, 0.08);
+    const hShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.036, 0.68, 8), timberMat);
+    hShaft.rotation.x = Math.PI / 2;
+    hShaft.position.z = 0.26;
+    const hHead = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.34, 0.22), ironMat);
+    hHead.position.set(0, 0, 0.56);
+    hammerGroup.add(hShaft, hHead);
+    smith.armR.add(hammerGroup);
+
+    // Tongs in smith's left hand gripping the glowing metal
+    const tongs = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.58, 6), ironMat);
+    tongs.rotation.x = Math.PI / 2;
+    tongs.position.set(0, -0.38, 0.28);
+    smith.armL.rotation.x = -0.95;
+    smith.armL.add(tongs);
+    root.add(smith.root);
+
+    // Flying Spark Particles bursting from the anvil impact point
+    const sparksGroup = new THREE.Group();
+    sparksGroup.position.set(-0.35, floorY + 1.06, -0.8);
+    const sparkMat = new THREE.MeshBasicMaterial({ color: '#FDE047' });
+    const sparkDirections: [number, number, number][] = [];
+    for (let sp = 0; sp < 14; sp++) {
+      const ang = (sp / 14) * Math.PI * 2;
+      const spMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.045, 0), sparkMat);
+      sparksGroup.add(spMesh);
+      sparkDirections.push([
+        Math.cos(ang) * (0.45 + (sp % 3) * 0.22),
+        0.55 + (sp % 4) * 0.25,
+        Math.sin(ang) * (0.45 + ((sp + 1) % 3) * 0.22),
+      ]);
+    }
+    root.add(sparksGroup);
+
+    root.userData.blacksmithHammerer = {
+      armR: smith.armR,
+      torso: smith.torso,
+      head: smith.head,
+      hotBlade,
+      sparksGroup,
+      sparkDirections,
+    };
+
+    // D. Weapon Racks, Quenching Barrel & Workbenches
+    const quenchBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.4, 0.88, 10), furnitureWoodMat);
+    quenchBarrel.position.set(1.1, floorY + 0.44, -1.2);
+    const weaponRack = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.55, 0.45), timberMat);
+    weaponRack.position.set(2.8, floorY + 0.78, -halfD + 0.55);
+    root.add(quenchBarrel, weaponRack);
+    addTableWithBenches(2.9, 1.4, 2.2, 1.0, true);
+  } else {
+    // Cottage, Stone Temple, Sci-Fi Outpost, or Modern Lodge Interior Furnishings
+    addTableWithBenches(-2.1, -0.6, 2.2, 1.05, true);
+    addTableWithBenches(2.2, 1.2, 2.0, 0.95, true);
+
+    if (isTemple) {
+      // Glowing Rune Altar in back center
+      const altar = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.35, 0.92, 8), stoneMat);
+      altar.position.set(0, floorY + 0.46, -2.4);
+      const crystal = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.45, 0),
+        new THREE.MeshStandardMaterial({ color: '#34D399', emissive: '#10B981', emissiveIntensity: 1.5 })
+      );
+      crystal.position.set(0, floorY + 1.45, -2.4);
+      crystal.userData.floatSpin = true;
+      root.add(altar, crystal);
+    } else if (isScifi) {
+      // Holographic Command Projector Table
+      const holoBase = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.35, 0.85, 12), stoneMat);
+      holoBase.position.set(0, floorY + 0.42, -1.8);
+      const holoGlobe = new THREE.Mesh(
+        new THREE.SphereGeometry(0.62, 14, 12),
+        new THREE.MeshStandardMaterial({
+          color: '#38BDF8',
+          emissive: '#0284C7',
+          emissiveIntensity: 1.4,
+          wireframe: true,
+        })
+      );
+      holoGlobe.position.set(0, floorY + 1.38, -1.8);
+      holoGlobe.userData.floatSpin = true;
+      root.add(holoBase, holoGlobe);
+    } else {
+      // Cozy Fireplace & Bookshelf for Cottage / Modern Lodge
+      const hearth = new THREE.Mesh(new THREE.BoxGeometry(2.1, 2.2, 1.05), stoneMat);
+      hearth.position.set(0, floorY + 1.1, -halfD + 0.62);
+      const embers = new THREE.Mesh(new THREE.DodecahedronGeometry(0.32, 0), lanternGlowMat);
+      embers.position.set(0, floorY + 0.38, -halfD + 0.96);
+      root.add(hearth, embers);
+    }
+  }
+
+  // 6. Cutaway Roof Group (automatically hides when the hero walks inside!)
+  const cutawayRoofGroup = new THREE.Group();
+  const roofPeakH = spec.buildingType === 'tavern' ? 3.2 : 2.6;
+  const roofCone = new THREE.Mesh(
+    new THREE.ConeGeometry(Math.max(halfW, halfD) * 1.46, roofPeakH, 4),
+    roofMat
+  );
+  roofCone.position.y = floorY + wallH + roofPeakH * 0.48;
+  roofCone.rotation.y = Math.PI / 4;
+  roofCone.scale.set((halfW + 0.55) / Math.max(halfW, halfD), 1, (halfD + 0.55) / Math.max(halfW, halfD));
+  roofCone.castShadow = true;
+  cutawayRoofGroup.add(roofCone);
+
+  const chimney = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.4, 1.1), stoneMat);
+  chimney.position.set(-halfW * 0.52, floorY + wallH + 1.45, -halfD * 0.52);
+  chimney.castShadow = true;
+  cutawayRoofGroup.add(chimney);
+
+  // Hanging Building Signboard above Front Entrance
+  const signBoard = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.62, 0.14), goldMat);
+  signBoard.position.set(0, floorY + wallH - 0.15, halfD + 0.32);
+  root.add(signBoard, cutawayRoofGroup);
+
+  root.userData.walkInBuilding = true;
+  root.userData.walkInSpec = spec;
+  root.userData.cutawayRoofGroup = cutawayRoofGroup;
+  root.userData.frontDoorPivot = frontDoorPivot;
+  return root;
+}
+
+export function updateRpgLivingVillageAnimations(mesh: THREE.Object3D, elapsed: number): void {
+  const ud = mesh.userData;
+  if (!ud) return;
+
+  // 1. Blacksmith hammering red-hot metal over the forge with flying sparks bursting on impact
+  if (ud.blacksmithHammerer) {
+    const bh = ud.blacksmithHammerer as {
+      armR: THREE.Group;
+      torso: THREE.Group;
+      head: THREE.Group;
+      hotBlade: THREE.Mesh;
+      sparksGroup: THREE.Group;
+      sparkDirections: [number, number, number][];
+    };
+    const cyclePeriod = 1.15;
+    const phase = (elapsed % cyclePeriod) / cyclePeriod; // 0 -> 1
+    // Wind up from 0..0.55, rapid downward hammer strike 0.55..0.72, rebound 0.72..1.0
+    let armAngle = -0.95;
+    let torsoLean = 0;
+    if (phase < 0.55) {
+      const u = phase / 0.55;
+      armAngle = -0.95 - Math.sin(u * Math.PI * 0.5) * 1.15; // raise hammer high
+      torsoLean = -u * 0.14;
+    } else if (phase < 0.72) {
+      const u = (phase - 0.55) / 0.17;
+      armAngle = -2.1 + u * 1.55; // slam down onto anvil
+      torsoLean = -0.14 + u * 0.34;
+    } else {
+      const u = (phase - 0.72) / 0.28;
+      armAngle = -0.55 - u * 0.4;
+      torsoLean = 0.2 * (1 - u);
+    }
+    bh.armR.rotation.x = armAngle;
+    bh.torso.rotation.x = torsoLean;
+
+    // Spark burst starts at phase = 0.70 when hammer strikes the glowing blade
+    const sparksVisible = phase >= 0.68 || phase < 0.18;
+    bh.sparksGroup.visible = sparksVisible;
+    if (sparksVisible) {
+      const burstT = phase >= 0.68 ? (phase - 0.68) / 0.32 : 0.6 + phase * 2.0;
+      const children = bh.sparksGroup.children;
+      for (let i = 0; i < children.length; i++) {
+        const sp = children[i];
+        const dir = bh.sparkDirections[i] ?? [0.4, 0.6, 0.4];
+        sp.position.set(
+          dir[0] * burstT * 1.35,
+          dir[1] * burstT * 1.1 - burstT * burstT * 1.45,
+          dir[2] * burstT * 1.35
+        );
+        const sc = Math.max(0.05, 1.25 - burstT * 0.95);
+        sp.scale.setScalar(sc);
+      }
+    }
+    // Pulse red-hot blade emissive glow on strike
+    const mat = bh.hotBlade.material as THREE.MeshStandardMaterial;
+    if (mat && 'emissiveIntensity' in mat) {
+      mat.emissiveIntensity = phase >= 0.68 && phase <= 0.85 ? 3.8 : 2.3 + Math.sin(elapsed * 8) * 0.3;
+    }
+  }
+
+  // 2. Tavern seated patrons chatting & toasting mugs + Bartender behind the bar
+  if (ud.tavernPatrons) {
+    const patrons = ud.tavernPatrons as { head: THREE.Group; armR: THREE.Group; phase: number }[];
+    for (let i = 0; i < patrons.length; i++) {
+      const p = patrons[i];
+      p.head.rotation.y = Math.sin(elapsed * 1.7 + p.phase) * 0.28;
+      p.head.rotation.x = Math.cos(elapsed * 2.3 + p.phase) * 0.08;
+      const toastWave = Math.max(0, Math.sin(elapsed * 1.4 + p.phase));
+      p.armR.rotation.x = -0.85 - toastWave * 0.52;
+    }
+  }
+  if (ud.bartenderNpc) {
+    const bt = ud.bartenderNpc as { root: THREE.Group; head: THREE.Group; armR: THREE.Group };
+    bt.root.rotation.y = Math.sin(elapsed * 0.9) * 0.35;
+    bt.head.rotation.y = Math.cos(elapsed * 1.5) * 0.25;
+    bt.armR.rotation.z = Math.sin(elapsed * 4.5) * 0.22;
+  }
+
+  // 3. Villager raking their yard
+  if (ud.rakingVillager) {
+    const rv = ud.rakingVillager as {
+      torso: THREE.Group;
+      armL: THREE.Group;
+      armR: THREE.Group;
+      rakePivot: THREE.Group;
+    };
+    const sweep = Math.sin(elapsed * 2.8);
+    rv.torso.rotation.y = sweep * 0.24;
+    rv.torso.rotation.x = 0.12 + Math.abs(sweep) * 0.08;
+    rv.rakePivot.rotation.x = sweep * 0.28;
+    rv.rakePivot.rotation.z = Math.cos(elapsed * 2.8) * 0.16;
+  }
+
+  // 4. Tethered saddle horses outside the tavern
+  if (ud.tetheredHorses) {
+    const horses = ud.tetheredHorses as {
+      headPivot: THREE.Group;
+      tailPivot: THREE.Group;
+      phase: number;
+    }[];
+    for (let i = 0; i < horses.length; i++) {
+      const h = horses[i];
+      h.headPivot.rotation.x = Math.sin(elapsed * 1.6 + h.phase) * 0.14;
+      h.headPivot.rotation.y = Math.cos(elapsed * 1.1 + h.phase) * 0.1;
+      h.tailPivot.rotation.z = Math.sin(elapsed * 3.2 + h.phase) * 0.26;
+    }
+  }
+}
+
+
 function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | null {
   const lowerName = entity.name.toLowerCase();
   const lowerNotes = (entity.notes ?? '').toLowerCase();
+
+  // Check if this prop is a Full-Sized Walk-In Building (Medieval, Modern, or Sci-Fi)
+  const walkInSpec = getWalkInBuildingSpec(entity);
+  if (walkInSpec) {
+    return buildWalkInBuildingMesh(entity, walkInSpec);
+  }
+
   const isRpg =
     lowerNotes.includes('rpg') ||
-    lowerName.includes('tavern') ||
-    lowerName.includes('blacksmith') ||
-    lowerName.includes('cottage') ||
+    isRopeBridgeEntity(entity) ||
     lowerName.includes('cutaway') ||
     lowerName.includes('weathered stone') ||
-    lowerName.includes('rope bridge') ||
-    lowerName.includes('broken slat') ||
+    lowerName.includes('stone path') ||
     lowerName.includes('wandering chicken') ||
+    lowerName.includes('chicken') ||
     lowerName.includes('village well') ||
     lowerName.includes('stone well') ||
     lowerName.includes('hollow magic tree') ||
     lowerName.includes('tropical') ||
-    lowerName.includes('distressed');
+    lowerName.includes('distressed') ||
+    lowerName.includes('fence') ||
+    lowerName.includes('hanging lamp') ||
+    lowerName.includes('lamp post') ||
+    lowerNotes.includes('hanginglamppost') ||
+    lowerName.includes('horse') ||
+    lowerNotes.includes('tetheredhorses') ||
+    lowerName.includes('raking') ||
+    lowerNotes.includes('rakingvillager');
 
   if (!isRpg) return null;
 
@@ -2717,11 +3527,11 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
   const warmGlowMat = new THREE.MeshStandardMaterial({
     color: '#FFB74D',
     emissive: '#FF8F00',
-    emissiveIntensity: 1.35,
+    emissiveIntensity: 1.45,
     roughness: 0.25,
   });
 
-  // 1. Cutaway Isometric Interior (Cottage / Tavern / Cave Chamber)
+  // 1. Cutaway Isometric Interior Diorama
   if (
     lowerNotes.includes('interior') ||
     lowerName.includes('cutaway') ||
@@ -2733,250 +3543,307 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
       ? new THREE.MeshStandardMaterial({ color: '#3D4047', roughness: 0.92 })
       : weatheredWoodMat;
 
-    // Diorama floor slab with flagged border
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.18, 5.6), floorMat);
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(7.6, 0.18, 7.6), floorMat);
     floor.position.y = 0.09;
     floor.receiveShadow = true;
     root.add(floor);
 
-    // L-shaped cutaway back-left walls so isometric camera sees clearly inside
-    const backWall = new THREE.Mesh(new THREE.BoxGeometry(5.6, 2.5, 0.28), wallMat);
-    backWall.position.set(0, 1.34, -2.66);
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(7.6, 2.8, 0.28), wallMat);
+    backWall.position.set(0, 1.48, -3.66);
     backWall.castShadow = true;
     backWall.receiveShadow = true;
-    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.5, 5.6), wallMat);
-    leftWall.position.set(-2.66, 1.34, 0);
+    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.8, 7.6), wallMat);
+    leftWall.position.set(-3.66, 1.48, 0);
     leftWall.castShadow = true;
     leftWall.receiveShadow = true;
     root.add(backWall, leftWall);
 
-    // Exposed timber wall beams
-    for (let i = -2.2; i <= 2.2; i += 1.1) {
-      const beamBack = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.55, 0.34), timberMat);
-      beamBack.position.set(i, 1.35, -2.66);
-      const beamLeft = new THREE.Mesh(new THREE.BoxGeometry(0.34, 2.55, 0.14), timberMat);
-      beamLeft.position.set(-2.66, 1.35, i);
-      root.add(beamBack, beamLeft);
-    }
-
-    // Stone Hearth Fireplace against back wall
-    const hearth = new THREE.Mesh(new THREE.BoxGeometry(1.45, 1.65, 0.72), stoneMat);
-    hearth.position.set(-0.8, 0.9, -2.25);
+    const hearth = new THREE.Mesh(new THREE.BoxGeometry(1.65, 1.85, 0.82), stoneMat);
+    hearth.position.set(-1.1, 0.98, -3.15);
     hearth.castShadow = true;
-    const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.48, 1.3, 6), stoneMat);
-    chimney.position.set(-0.8, 2.3, -2.28);
-    const fireEmbers = new THREE.Mesh(new THREE.DodecahedronGeometry(0.26, 0), warmGlowMat);
-    fireEmbers.position.set(-0.8, 0.38, -2.02);
-    root.add(hearth, chimney, fireEmbers);
+    const fireEmbers = new THREE.Mesh(new THREE.DodecahedronGeometry(0.32, 0), warmGlowMat);
+    fireEmbers.position.set(-1.1, 0.42, -2.85);
+    root.add(hearth, fireEmbers);
 
-    // Handcrafted Oak Table & Benches inside room
-    const tableTop = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.12, 1.05), timberMat);
-    tableTop.position.set(0.65, 0.72, 0.35);
+    const tableTop = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.12, 1.15), timberMat);
+    tableTop.position.set(0.85, 0.76, 0.45);
     tableTop.castShadow = true;
     root.add(tableTop);
-    for (const [lx, lz] of [
-      [-0.72, -0.4],
-      [0.72, -0.4],
-      [-0.72, 0.4],
-      [0.72, 0.4],
-    ]) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.68, 6), timberMat);
-      leg.position.set(0.65 + lx, 0.36, 0.35 + lz);
-      root.add(leg);
-    }
-    // Glowing potion bottle & scroll on table
-    const potion = new THREE.Mesh(
-      new THREE.SphereGeometry(0.11, 10, 10),
-      new THREE.MeshStandardMaterial({ color: '#10B981', emissive: '#059669', emissiveIntensity: 0.9 })
-    );
-    potion.position.set(0.45, 0.86, 0.32);
-    const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.18, 8), warmGlowMat);
-    candle.position.set(0.95, 0.87, 0.25);
-    root.add(potion, candle);
+    return root;
+  }
 
-    // Interior volumetric lantern beam
+  // 2. River-Spanning Wooden Slat & Rope Bridge (13.6m span along Z axis across the water gorge)
+  if (isRopeBridgeEntity(entity)) {
+    const ropeMat = new THREE.MeshStandardMaterial({ color: '#A38655', roughness: 0.92 });
+    const halfSpan = 6.8;
+    const halfWidth = 1.82;
+
+    // 4 heavy timber anchor bents on the north and south cliff banks + mid-span posts
+    for (const pz of [-halfSpan + 0.3, -halfSpan * 0.48, 0, halfSpan * 0.48, halfSpan - 0.3]) {
+      const u = Math.min(1, Math.abs(pz) / halfSpan);
+      const camberY = (1 - u * u) * 0.28;
+      for (const px of [-halfWidth, halfWidth]) {
+        const isEndPost = Math.abs(pz) > halfSpan - 0.8;
+        const postH = isEndPost ? 1.75 : 1.18;
+        const post = new THREE.Mesh(
+          new THREE.CylinderGeometry(isEndPost ? 0.15 : 0.09, isEndPost ? 0.18 : 0.11, postH, 8),
+          timberMat
+        );
+        post.position.set(px, camberY + postH * 0.48, pz);
+        post.rotation.z = px > 0 ? -0.04 : 0.04;
+        post.castShadow = true;
+        root.add(post);
+      }
+    }
+
+    // Arched bottom deck cables & upper rope handrails running along both sides
+    const segs = 14;
+    for (const sideX of [-halfWidth, halfWidth]) {
+      for (let i = 0; i < segs; i++) {
+        const z0 = -halfSpan + (i / segs) * (halfSpan * 2);
+        const z1 = -halfSpan + ((i + 1) / segs) * (halfSpan * 2);
+        const zm = (z0 + z1) * 0.5;
+        const u = Math.min(1, Math.abs(zm) / halfSpan);
+        const camberY = (1 - u * u) * 0.28;
+        const segLen = (halfSpan * 2) / segs + 0.06;
+
+        const deckCable = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, segLen, 7), ropeMat);
+        deckCable.rotation.x = Math.PI / 2;
+        deckCable.position.set(sideX, camberY + 0.1, zm);
+
+        const handrail = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, segLen, 7), ropeMat);
+        handrail.rotation.x = Math.PI / 2;
+        handrail.position.set(sideX, camberY + 1.05, zm);
+        root.add(deckCable, handrail);
+      }
+    }
+
+    // 26 Weathered Wooden Slats across the 13.6m bridge span (with broken/splintered slats for realism)
+    const slatCount = 26;
+    for (let i = 0; i < slatCount; i++) {
+      const sz = -halfSpan + 0.35 + (i / (slatCount - 1)) * (halfSpan * 2 - 0.7);
+      const u = Math.min(1, Math.abs(sz) / halfSpan);
+      const deckY = (1 - u * u) * 0.28 + 0.14;
+      const mat = i % 2 === 0 ? weatheredWoodMat : timberMat;
+
+      if (i === 9 || i === 17) {
+        // Broken / splintered wooden slat with a gap in the middle showing the rushing water below
+        const leftPiece = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.1, 0.42), mat);
+        leftPiece.position.set(-1.02, deckY - 0.01, sz);
+        leftPiece.rotation.set(0.05, 0.08, -0.07);
+        leftPiece.castShadow = true;
+        const rightPiece = new THREE.Mesh(new THREE.BoxGeometry(1.38, 0.1, 0.4), mat);
+        rightPiece.position.set(1.06, deckY - 0.02, sz);
+        rightPiece.rotation.set(-0.06, -0.09, 0.08);
+        rightPiece.castShadow = true;
+        root.add(leftPiece, rightPiece);
+      } else {
+        const slat = new THREE.Mesh(new THREE.BoxGeometry(halfWidth * 2 + 0.15, 0.11, 0.44), mat);
+        slat.position.set(0, deckY, sz);
+        slat.rotation.set((i % 3 - 1) * 0.018, (i % 2 === 0 ? 1 : -1) * 0.022, (i % 5 - 2) * 0.01);
+        slat.castShadow = true;
+        slat.receiveShadow = true;
+        root.add(slat);
+      }
+    }
+    return root;
+  }
+
+  // 3. Village Hanging Lamp on Curved Timber & Iron Post
+  if (
+    lowerName.includes('hanging lamp') ||
+    lowerName.includes('lamp post') ||
+    lowerName.includes('streetlamp') ||
+    lowerNotes.includes('hanginglamppost')
+  ) {
+    const ironMat = new THREE.MeshStandardMaterial({ color: '#27272A', roughness: 0.4, metalness: 0.78 });
+    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.36, 0.38, 8), stoneMat);
+    plinth.position.y = 0.19;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 3.1, 8), timberMat);
+    post.position.y = 1.72;
+    post.castShadow = true;
+    const crossArm = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.11, 0.11), timberMat);
+    crossArm.position.set(0.42, 3.12, 0);
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.09, 0.09), timberMat);
+    brace.position.set(0.26, 2.86, 0);
+    brace.rotation.z = Math.PI / 4;
+
+    const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.34, 6), ironMat);
+    chain.position.set(0.84, 2.92, 0);
+    const lanternCage = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.14, 0.36, 6), warmGlowMat);
+    lanternCage.position.set(0.84, 2.62, 0);
+    const lanternCap = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.16, 6), ironMat);
+    lanternCap.position.set(0.84, 2.86, 0);
+
     const coneMat = new THREE.MeshBasicMaterial({
       color: '#FFCC66',
       transparent: true,
-      opacity: 0.14,
+      opacity: 0.13,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    const lightCone = new THREE.Mesh(new THREE.ConeGeometry(1.85, 2.3, 18, 1, true), coneMat);
-    lightCone.position.set(0.65, 1.32, 0.35);
-    root.add(lightCone);
+    const lightCone = new THREE.Mesh(new THREE.ConeGeometry(1.65, 2.6, 16, 1, true), coneMat);
+    lightCone.position.set(0.84, 1.3, 0);
+
+    root.add(plinth, post, crossArm, brace, chain, lanternCage, lanternCap, lightCone);
     return root;
   }
 
-  // 2. Medieval Timber Tavern / Blacksmith / Forest Cottage / Stone Shrine
-  if (
-    lowerNotes.includes('rpg building') ||
-    lowerName.includes('tavern') ||
-    lowerName.includes('blacksmith') ||
-    lowerName.includes('cottage') ||
-    lowerName.includes('temple') ||
-    lowerName.includes('shrine')
-  ) {
-    if (lowerName.includes('shrine') || lowerName.includes('temple') || lowerNotes.includes('shrine') || lowerNotes.includes('temple')) {
-      // Organic Weathered Stone Temple / Shrine with hanging vines & glowing altar
-      const dais1 = new THREE.Mesh(new THREE.CylinderGeometry(1.75, 1.98, 0.32, 9), stoneMat);
-      dais1.position.y = 0.16;
-      dais1.receiveShadow = true;
-      const dais2 = new THREE.Mesh(new THREE.CylinderGeometry(1.32, 1.52, 0.28, 8), darkStoneMat);
-      dais2.position.y = 0.44;
-      dais2.rotation.y = 0.24;
-      root.add(dais1, dais2);
-
-      // 4 weathered crooked stone columns with hanging vines
-      for (let i = 0; i < 4; i++) {
-        const ang = (i * Math.PI) / 2 + 0.38;
-        const px = Math.cos(ang) * 1.12;
-        const pz = Math.sin(ang) * 1.12;
-        const col = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.18, 0.23, i === 2 ? 1.35 : 1.95, 7),
-          stoneMat
-        );
-        col.position.set(px, (i === 2 ? 1.35 : 1.95) * 0.5 + 0.52, pz);
-        col.rotation.z = (i % 2 === 0 ? 1 : -1) * 0.04;
-        col.castShadow = true;
-        root.add(col);
-
-        const vine = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.045, 6, 12), mossMat);
-        vine.position.set(px, 1.35, pz);
-        vine.rotation.x = Math.PI / 2 + 0.3;
-        root.add(vine);
-      }
-
-      // Mossy lintel arch & glowing rune monolith
-      const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.28, 0.42), darkStoneMat);
-      lintel.position.set(0, 2.52, -0.78);
-      lintel.rotation.z = 0.03;
-      const runeCrystal = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.32, 0),
-        new THREE.MeshStandardMaterial({
-          color: '#34D399',
-          emissive: '#10B981',
-          emissiveIntensity: 1.1,
-          roughness: 0.2,
-        })
-      );
-      runeCrystal.position.set(0, 1.18, 0);
-      runeCrystal.userData.floatSpin = true;
-      root.add(lintel, runeCrystal);
-      return root;
+  // 4. Tethered Saddle Horses at Hitching Post & Water Trough (Outside Tavern)
+  if (lowerName.includes('horse') || lowerNotes.includes('tetheredhorses')) {
+    const ropeMat = new THREE.MeshStandardMaterial({ color: '#A38655', roughness: 0.9 });
+    // Hitching rail & water trough
+    for (const px of [-1.35, 1.35]) {
+      const hPost = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.095, 1.15, 7), timberMat);
+      hPost.position.set(px, 0.57, -0.78);
+      hPost.castShadow = true;
+      root.add(hPost);
     }
+    const hRail = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 2.9, 7), weatheredWoodMat);
+    hRail.rotation.z = Math.PI / 2;
+    hRail.position.set(0, 1.02, -0.78);
+    const trough = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.42, 0.54), timberMat);
+    trough.position.set(0, 0.21, -1.18);
+    const troughWater = new THREE.Mesh(
+      new THREE.BoxGeometry(1.12, 0.06, 0.42),
+      new THREE.MeshStandardMaterial({ color: '#0284C7', roughness: 0.18 })
+    );
+    troughWater.position.set(0, 0.39, -1.18);
+    root.add(hRail, trough, troughWater);
 
-    if (lowerName.includes('blacksmith') || lowerNotes.includes('blacksmith')) {
-      // Blacksmith Forge with stone hearth, glowing coals, timber shelter & anvil
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(1.65, 1.8, 0.22, 9), stoneMat);
-      base.position.y = 0.11;
-      base.receiveShadow = true;
-      const forgeBody = new THREE.Mesh(new THREE.BoxGeometry(1.35, 1.25, 1.15), darkStoneMat);
-      forgeBody.position.set(-0.42, 0.72, -0.35);
-      forgeBody.castShadow = true;
-      const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.52, 1.45, 7), stoneMat);
-      chimney.position.set(-0.42, 1.98, -0.35);
-      const coals = new THREE.Mesh(new THREE.DodecahedronGeometry(0.28, 1), warmGlowMat);
-      coals.position.set(-0.42, 0.92, 0.12);
-      // Anvil on oak stump
-      const stump = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.46, 8), timberMat);
-      stump.position.set(0.62, 0.34, 0.35);
-      const anvil = new THREE.Mesh(
-        new THREE.BoxGeometry(0.46, 0.24, 0.22),
-        new THREE.MeshStandardMaterial({ color: '#374151', metalness: 0.85, roughness: 0.3 })
-      );
-      anvil.position.set(0.62, 0.66, 0.35);
-      // Slanted timber canopy roof
-      const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.55, 0.85, 4), roofMat);
-      canopy.position.set(0.15, 2.15, 0.1);
-      canopy.rotation.y = Math.PI / 4;
-      canopy.castShadow = true;
-      for (const [px, pz] of [
-        [1.05, 0.95],
-        [-0.85, 0.95],
+    // Build two sculpted horses (Bay & Chestnut) with saddle, bridle, mane & tail
+    const horseAnims: { headPivot: THREE.Group; tailPivot: THREE.Group; phase: number }[] = [];
+    const horseSpecs = [
+      { x: -0.78, coat: '#6B3410', mane: '#1F1209', saddle: '#3F2312', phase: 0 },
+      { x: 0.78, coat: '#9A5B2C', mane: '#F3E5AB', saddle: '#4A2511', phase: 1.9 },
+    ];
+    for (const hs of horseSpecs) {
+      const hGroup = new THREE.Group();
+      hGroup.position.set(hs.x, 0, 0.15);
+      const coatMat = new THREE.MeshStandardMaterial({ color: hs.coat, roughness: 0.74 });
+      const maneMat = new THREE.MeshStandardMaterial({ color: hs.mane, roughness: 0.85 });
+      const saddleMat = new THREE.MeshStandardMaterial({ color: hs.saddle, roughness: 0.65 });
+      const hoofMat = new THREE.MeshStandardMaterial({ color: '#1C1917', roughness: 0.6 });
+
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.36, 1.28, 10), coatMat);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 1.05, 0);
+      barrel.castShadow = true;
+      const chest = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 10), coatMat);
+      chest.position.set(0, 1.06, -0.52);
+      const rump = new THREE.Mesh(new THREE.SphereGeometry(0.36, 10, 10), coatMat);
+      rump.position.set(0, 1.07, 0.52);
+
+      const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.18, 0.56), saddleMat);
+      saddle.position.set(0, 1.36, -0.04);
+      hGroup.add(barrel, chest, rump, saddle);
+
+      // Four horse legs & hooves
+      for (const [lx, lz] of [
+        [-0.19, -0.48],
+        [0.19, -0.48],
+        [-0.2, 0.48],
+        [0.2, 0.48],
       ]) {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 1.65, 7), timberMat);
-        post.position.set(px, 0.92, pz);
-        root.add(post);
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.055, 0.88, 8), coatMat);
+        leg.position.set(lx, 0.48, lz);
+        leg.castShadow = true;
+        const hoof = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.12, 8), hoofMat);
+        hoof.position.set(lx, 0.06, lz);
+        hGroup.add(leg, hoof);
       }
-      root.add(base, forgeBody, chimney, coals, stump, anvil, canopy);
-      return root;
+
+      // Neck & Head Pivot (facing -Z toward the hitching rail)
+      const headPivot = new THREE.Group();
+      headPivot.position.set(0, 1.24, -0.62);
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.24, 0.68, 8), coatMat);
+      neck.position.set(0, 0.26, -0.18);
+      neck.rotation.x = -0.55;
+      const mane = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.58, 0.16), maneMat);
+      mane.position.set(0, 0.3, -0.05);
+      mane.rotation.x = -0.55;
+      const skull = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 0.48), coatMat);
+      skull.position.set(0, 0.52, -0.44);
+      skull.rotation.x = 0.35;
+      for (const ex of [-0.09, 0.09]) {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.15, 5), coatMat);
+        ear.position.set(ex, 0.69, -0.28);
+        headPivot.add(ear);
+      }
+      headPivot.add(neck, mane, skull);
+      hGroup.add(headPivot);
+
+      // Swishing Tail Pivot
+      const tailPivot = new THREE.Group();
+      tailPivot.position.set(0, 1.18, 0.82);
+      const tailMesh = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.68, 7), maneMat);
+      tailMesh.position.set(0, -0.28, 0.14);
+      tailMesh.rotation.x = 2.65;
+      tailPivot.add(tailMesh);
+      hGroup.add(tailPivot);
+
+      // Rope lead tying horse to hitching rail
+      const ropeLead = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.72, 6), ropeMat);
+      ropeLead.position.set(hs.x, 1.22, -0.68);
+      ropeLead.rotation.x = 0.75;
+      root.add(hGroup, ropeLead);
+
+      horseAnims.push({ headPivot, tailPivot, phase: hs.phase });
     }
-
-    // Medieval Timber Tavern or Forest Cottage (non-blocky organic stonework + steep pitched roof + dormers)
-    const isTavern = lowerName.includes('tavern') || lowerNotes.includes('tavern');
-    const w = isTavern ? 2.55 : 1.95;
-    const d = isTavern ? 2.05 : 1.65;
-    const h = isTavern ? 1.55 : 1.28;
-
-    // Irregular fieldstone foundation plinth
-    const foundation = new THREE.Mesh(new THREE.CylinderGeometry(w * 0.66, w * 0.72, 0.34, 9), stoneMat);
-    foundation.position.y = 0.17;
-    foundation.receiveShadow = true;
-    root.add(foundation);
-
-    // Main plaster-and-timber body
-    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), plasterMat);
-    body.position.y = 0.34 + h * 0.5;
-    body.castShadow = true;
-    body.receiveShadow = true;
-    root.add(body);
-
-    // Organic crooked timber framing beams
-    for (const sx of [-w * 0.5, 0, w * 0.5]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, h + 0.06, 6), timberMat);
-      post.position.set(sx, 0.34 + h * 0.5, d * 0.5);
-      post.rotation.z = sx * 0.02;
-      const postBack = post.clone();
-      postBack.position.z = -d * 0.5;
-      root.add(post, postBack);
-    }
-    const crossBeam = new THREE.Mesh(new THREE.BoxGeometry(w + 0.14, 0.12, d + 0.14), timberMat);
-    crossBeam.position.y = 0.34 + h;
-    root.add(crossBeam);
-
-    // Steeply pitched multi-tier roof with ridge beam & moss patches
-    const roofCone = new THREE.Mesh(new THREE.ConeGeometry(w * 0.82, isTavern ? 1.48 : 1.22, 4), roofMat);
-    roofCone.position.y = 0.34 + h + (isTavern ? 0.72 : 0.58);
-    roofCone.rotation.y = Math.PI / 4;
-    roofCone.scale.set(1.08, 1, d / w);
-    roofCone.castShadow = true;
-    root.add(roofCone);
-
-    // Stone chimney stack
-    const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.28, 1.15, 7), stoneMat);
-    chimney.position.set(-w * 0.32, 0.34 + h + 0.68, -d * 0.22);
-    chimney.rotation.z = -0.05;
-    chimney.castShadow = true;
-    root.add(chimney);
-
-    // Arched wooden door & glowing warm tavern/cottage windows
-    const door = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.78, 0.1), timberMat);
-    door.position.set(0, 0.73, d * 0.5 + 0.03);
-    root.add(door);
-
-    for (const wx of isTavern ? [-0.74, 0.74] : [0.56]) {
-      const win = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.38, 0.09), warmGlowMat);
-      win.position.set(wx, 0.34 + h * 0.56, d * 0.5 + 0.02);
-      root.add(win);
-    }
-
-    if (isTavern) {
-      // Hanging swinging tavern signboard & porch barrel
-      const signArm = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.65, 6), timberMat);
-      signArm.rotation.z = Math.PI / 2;
-      signArm.position.set(w * 0.5 + 0.25, 0.34 + h * 0.78, d * 0.35);
-      const signBoard = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, 0.32, 0.06),
-        new THREE.MeshStandardMaterial({ color: '#D97706', roughness: 0.6 })
-      );
-      signBoard.position.set(w * 0.5 + 0.36, 0.34 + h * 0.6, d * 0.35);
-      root.add(signArm, signBoard);
-    }
+    root.userData.tetheredHorses = horseAnims;
     return root;
   }
 
-  // 3. Weathered Broken Organic Stone Path
+  // 5. Villager Raking Their Yard (with animated wooden rake & leaf pile)
+  if (lowerName.includes('raking') || lowerNotes.includes('rakingvillager')) {
+    const villager = buildMiniVillagerFigure({
+      tunicColor: '#3F6212',
+      hairColor: '#713F12',
+      apronColor: '#D6D3D1',
+      hatColor: '#EAB308',
+    });
+    root.add(villager.root);
+
+    // Long wooden yard rake held across hands
+    const rakePivot = new THREE.Group();
+    rakePivot.position.set(0.12, 1.05, 0.22);
+    const rakeHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.48, 7), weatheredWoodMat);
+    rakeHandle.position.set(0, -0.35, 0.25);
+    rakeHandle.rotation.x = 0.45;
+    const rakeBar = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.06, 0.06), timberMat);
+    rakeBar.position.set(0, -0.96, 0.56);
+    rakePivot.add(rakeHandle, rakeBar);
+    for (let t = -3; t <= 3; t++) {
+      const tine = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.008, 0.14, 5), timberMat);
+      tine.position.set(t * 0.085, -1.02, 0.56);
+      rakePivot.add(tine);
+    }
+    villager.armL.rotation.x = -0.75;
+    villager.armR.rotation.x = -0.85;
+    root.add(rakePivot);
+
+    // Small pile of raked golden-autumn leaves in front of villager
+    const leafColors = ['#D97706', '#B45309', '#65A30D', '#CA8A04'];
+    for (let i = 0; i < 7; i++) {
+      const leaf = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.15 + (i % 3) * 0.04, 0),
+        new THREE.MeshStandardMaterial({ color: leafColors[i % leafColors.length], roughness: 0.9 })
+      );
+      leaf.scale.set(1.3, 0.35, 1.2);
+      leaf.position.set(-0.25 + (i % 3) * 0.24, 0.05, 0.72 + Math.floor(i / 3) * 0.18);
+      root.add(leaf);
+    }
+
+    root.userData.rakingVillager = {
+      torso: villager.torso,
+      armL: villager.armL,
+      armR: villager.armR,
+      rakePivot,
+    };
+    return root;
+  }
+
+  // 6. Weathered Broken Organic Stone Path
   if (lowerName.includes('weathered stone') || lowerNotes.includes('weatheredstone') || lowerName.includes('stone path')) {
     const offsets = [
       { x: -0.78, z: -0.15, r: 0.44, sides: 6, rot: 0.2, y: 0.05 },
@@ -2998,7 +3865,6 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
       slab.castShadow = true;
       root.add(slab);
     }
-    // Moss tufts between cracked flagstones
     for (const [mx, mz] of [
       [-0.48, 0.02],
       [0.08, 0.05],
@@ -3012,73 +3878,20 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     return root;
   }
 
-  // 4. Mountain Rope Bridge with Wooden Slats & Broken Slat Gap
-  if (lowerName.includes('rope bridge') || lowerName.includes('broken slat') || lowerNotes.includes('ropebridge')) {
-    const ropeMat = new THREE.MeshStandardMaterial({ color: '#A38655', roughness: 0.92 });
-    // 4 weathered corner posts
-    for (const [px, pz] of [
-      [-1.7, -0.62],
-      [-1.7, 0.62],
-      [1.7, -0.62],
-      [1.7, 0.62],
-    ]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.95, 7), timberMat);
-      post.position.set(px, 0.48, pz);
-      post.rotation.z = px > 0 ? -0.05 : 0.05;
-      post.castShadow = true;
-      root.add(post);
-    }
-    // Twin support ropes & handrail ropes
-    for (const rz of [-0.62, 0.62]) {
-      const bottomCable = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 3.55, 8), ropeMat);
-      bottomCable.rotation.z = Math.PI / 2;
-      bottomCable.position.set(0, 0.14, rz);
-      const topRope = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 3.55, 8), ropeMat);
-      topRope.rotation.z = Math.PI / 2;
-      topRope.position.set(0, 0.78, rz);
-      root.add(bottomCable, topRope);
-    }
-    // Wooden plank slats with slat #4 broken in two uneven splintered halves
-    const slatCount = 8;
-    for (let i = 0; i < slatCount; i++) {
-      const sx = -1.4 + i * 0.4;
-      const sagY = 0.17 - Math.sin((i / (slatCount - 1)) * Math.PI) * 0.05;
-      if (i === 4) {
-        // Broken slat gap! Left stub & right tilted splinter
-        const leftStub = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.42), weatheredWoodMat);
-        leftStub.position.set(sx - 0.03, sagY - 0.02, -0.42);
-        leftStub.rotation.set(0.14, 0.08, -0.18);
-        const rightStub = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.34), weatheredWoodMat);
-        rightStub.position.set(sx + 0.04, sagY - 0.03, 0.46);
-        rightStub.rotation.set(-0.18, -0.12, 0.15);
-        root.add(leftStub, rightStub);
-      } else {
-        const slat = new THREE.Mesh(new THREE.BoxGeometry(0.31, 0.065, 1.32), i % 2 === 0 ? weatheredWoodMat : timberMat);
-        slat.position.set(sx, sagY, 0);
-        slat.rotation.set((i % 3 - 1) * 0.025, (i % 2 === 0 ? 1 : -1) * 0.03, 0);
-        slat.castShadow = true;
-        slat.receiveShadow = true;
-        root.add(slat);
-      }
-    }
-    return root;
-  }
-
-  // 5. Distressed Organic Split-Rail Wood Fence
+  // 7. Distressed Organic Split-Rail Wood Fence (Non-Cube Crooked Timber Logs)
   if (lowerName.includes('fence') || lowerNotes.includes('fence')) {
-    for (const px of [-0.95, 0, 0.95]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.085, 0.92, 6), timberMat);
-      post.position.set(px, 0.45, (px === 0 ? 1 : -1) * 0.03);
-      post.rotation.set((px % 2) * 0.06, px * 0.2, (px === 0 ? -1 : 1) * 0.07);
+    for (const px of [-1.05, 0, 1.05]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.098, 1.02, 6), timberMat);
+      post.position.set(px, 0.48, (px === 0 ? 1 : -1) * 0.04);
+      post.rotation.set((px % 2) * 0.08, px * 0.22, (px === 0 ? -1 : 1) * 0.08);
       post.castShadow = true;
       root.add(post);
     }
-    // Crooked organic split rails
     for (const [ry, tiltZ, tiltY] of [
-      [0.32, 0.04, 0.03],
-      [0.66, -0.05, -0.04],
+      [0.34, 0.05, 0.04],
+      [0.72, -0.06, -0.05],
     ]) {
-      const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.052, 2.15, 6), weatheredWoodMat);
+      const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.062, 2.35, 6), weatheredWoodMat);
       rail.rotation.set(tiltY, 0, Math.PI / 2 + tiltZ);
       rail.position.set(0, ry, 0.04);
       rail.castShadow = true;
@@ -3087,7 +3900,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     return root;
   }
 
-  // 6. Village Stone Well with Timber Roof & Hanging Bucket
+  // 8. Village Stone Well with Timber Roof & Hanging Bucket
   if (lowerName.includes('well') || lowerNotes.includes('well')) {
     const wellWall = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.68, 0.62, 12), stoneMat);
     wellWall.position.y = 0.31;
@@ -3119,7 +3932,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     return root;
   }
 
-  // 7. Wandering Village Chicken
+  // 9. Wandering Village Chicken
   if (lowerName.includes('chicken') || lowerNotes.includes('chicken')) {
     const featherMat = new THREE.MeshStandardMaterial({ color: entity.styleTint ?? '#FFFBEB', roughness: 0.8 });
     const combMat = new THREE.MeshStandardMaterial({ color: '#DC2626', roughness: 0.5 });
@@ -3150,7 +3963,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     return root;
   }
 
-  // 8. Hollow Magic Forest Tree with Inner Arcane Glow
+  // 10. Hollow Magic Forest Tree with Inner Arcane Glow
   if (lowerName.includes('hollow') || lowerNotes.includes('hollowmagictree')) {
     const barkMat = new THREE.MeshStandardMaterial({ color: '#3E2A1D', roughness: 0.94 });
     const leafMat = new THREE.MeshStandardMaterial({ color: '#1E4620', roughness: 0.86 });
@@ -3168,7 +3981,6 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
       barkMat
     );
     trunk.castShadow = true;
-    // Dark hollow portal cavity & floating arcane wisps inside
     const cavity = new THREE.Mesh(
       new THREE.CylinderGeometry(0.24, 0.28, 0.85, 8),
       new THREE.MeshBasicMaterial({ color: '#090D16' })
@@ -3196,7 +4008,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     return root;
   }
 
-  // 9. Tropical Jungle Vine Tree (Banyan / Palm with hanging liana vines — zero pine cones!)
+  // 11. Tropical Jungle Vine Tree (Banyan / Palm with hanging liana vines)
   if (lowerName.includes('tropical') || lowerNotes.includes('tropicaltree')) {
     const barkMat = new THREE.MeshStandardMaterial({ color: '#5C432C', roughness: 0.9 });
     const jungleLeafMat = new THREE.MeshStandardMaterial({ color: '#2D7A32', roughness: 0.78 });
@@ -3219,7 +4031,6 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     trunk.castShadow = true;
     root.add(trunk);
 
-    // Broad spreading tropical banyan canopy domes
     const domes = [
       { x: 0, y: 2.65, z: 0, r: 1.55 },
       { x: 0.85, y: 2.35, z: 0.42, r: 1.15 },
@@ -3235,7 +4046,6 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
       root.add(lobe);
     }
 
-    // Hanging liana vines draping from the tropical branches
     for (const [vx, vz, vh] of [
       [0.68, 0.35, 1.45],
       [-0.62, -0.28, 1.35],
@@ -3250,7 +4060,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     return root;
   }
 
-  // 10. Exotic Giant Jungle Plant / Monstera & Fern Cluster
+  // 12. Exotic Giant Jungle Plant / Monstera & Fern Cluster
   if (lowerName.includes('exotic') || lowerName.includes('fern') || lowerName.includes('monstera') || lowerNotes.includes('exoticplant')) {
     const frondMat = new THREE.MeshStandardMaterial({ color: '#16A34A', roughness: 0.72 });
     const bloomMat = new THREE.MeshStandardMaterial({
@@ -3276,7 +4086,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     return root;
   }
 
-  // 11. Vine-Wrapped Stone Ruin Pillar
+  // 13. Vine-Wrapped Stone Ruin Pillar
   if (lowerName.includes('pillar') || lowerNotes.includes('stonepillar')) {
     const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.54, 0.26, 7), darkStoneMat);
     plinth.position.y = 0.13;
@@ -3296,6 +4106,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
 
   return null;
 }
+
 
 export function buildEntityMesh(entity: LevelEntity): THREE.Group {
   const group = new THREE.Group();
@@ -3888,12 +4699,11 @@ export function buildEntityMesh(entity: LevelEntity): THREE.Group {
     case 'prop': {
       const rpgCustom = buildRpgCustomPropOrBuildingMesh(entity);
       if (rpgCustom) {
-        addShadow(0.75);
-        group.add(rpgCustom);
-        if (rpgCustom.userData.wanderingChicken) {
-          group.userData.wanderingChicken = true;
-          group.userData.wanderPhase = rpgCustom.userData.wanderPhase ?? 0;
+        if (!rpgCustom.userData.walkInBuilding && !isRopeBridgeEntity(entity)) {
+          addShadow(0.75);
         }
+        group.add(rpgCustom);
+        Object.assign(group.userData, rpgCustom.userData);
         break;
       }
       const preset = resolvePropPreset(entity.name, entity.propPreset);

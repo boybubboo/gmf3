@@ -1011,6 +1011,118 @@ function inferPropPresetForCollision(name?: string, explicit?: PropPresetId): Pr
   return undefined;
 }
 
+export interface WalkInBuildingSpec {
+  buildingType: 'tavern' | 'blacksmith' | 'cottage' | 'stoneShrine' | 'scifiBuilding' | 'modernBuilding';
+  halfW: number;
+  halfD: number;
+  doorHalfW: number;
+  floorOffset: number;
+  wallHeight: number;
+  wallThick: number;
+}
+
+export function getWalkInBuildingSpec(ent: {
+  kind?: string;
+  name?: string;
+  notes?: string;
+  propPreset?: PropPresetId;
+  scale?: number;
+}): WalkInBuildingSpec | null {
+  if (ent.kind && ent.kind !== 'prop') return null;
+  const lowerName = (ent.name ?? '').toLowerCase();
+  const lowerNotes = (ent.notes ?? '').toLowerCase();
+  const s = Math.max(0.65, ent.scale ?? 1);
+
+  if (lowerName.includes('tavern') || lowerName.includes('inn') || lowerNotes.includes('tavern') || ent.propPreset === 'tavern') {
+    return {
+      buildingType: 'tavern',
+      halfW: 7.2 * s,
+      halfD: 5.8 * s,
+      doorHalfW: 1.35 * s,
+      floorOffset: 0.16,
+      wallHeight: 6.4 * s,
+      wallThick: 0.36 * s,
+    };
+  }
+  if (lowerName.includes('blacksmith') || lowerName.includes('smithy') || lowerName.includes('forge') || lowerNotes.includes('blacksmith')) {
+    return {
+      buildingType: 'blacksmith',
+      halfW: 6.0 * s,
+      halfD: 4.8 * s,
+      doorHalfW: 1.35 * s,
+      floorOffset: 0.16,
+      wallHeight: 5.4 * s,
+      wallThick: 0.34 * s,
+    };
+  }
+  if (lowerName.includes('scifi') || lowerName.includes('sci-fi') || lowerName.includes('cyber') || lowerName.includes('outpost') || lowerName.includes('command center') || lowerNotes.includes('scifibuilding')) {
+    return {
+      buildingType: 'scifiBuilding',
+      halfW: 6.4 * s,
+      halfD: 5.2 * s,
+      doorHalfW: 1.4 * s,
+      floorOffset: 0.18,
+      wallHeight: 5.4 * s,
+      wallThick: 0.34 * s,
+    };
+  }
+  if (lowerName.includes('modern') || lowerName.includes('gallery') || lowerName.includes('penthouse') || lowerName.includes('lodge') || lowerNotes.includes('modernbuilding')) {
+    return {
+      buildingType: 'modernBuilding',
+      halfW: 6.4 * s,
+      halfD: 5.2 * s,
+      doorHalfW: 1.4 * s,
+      floorOffset: 0.16,
+      wallHeight: 5.4 * s,
+      wallThick: 0.34 * s,
+    };
+  }
+  if (lowerName.includes('temple') || lowerName.includes('shrine') || lowerName.includes('sanctum') || lowerNotes.includes('stoneshrine') || lowerNotes.includes('temple')) {
+    return {
+      buildingType: 'stoneShrine',
+      halfW: 5.6 * s,
+      halfD: 5.2 * s,
+      doorHalfW: 1.5 * s,
+      floorOffset: 0.24,
+      wallHeight: 5.6 * s,
+      wallThick: 0.38 * s,
+    };
+  }
+  if (
+    lowerName.includes('cottage') ||
+    lowerName.includes('cabin') ||
+    lowerName.includes('house') ||
+    lowerName.includes('manor') ||
+    lowerName.includes('hall') ||
+    lowerNotes.includes('cottage') ||
+    ent.propPreset === 'cottage'
+  ) {
+    return {
+      buildingType: 'cottage',
+      halfW: 5.2 * s,
+      halfD: 4.4 * s,
+      doorHalfW: 1.25 * s,
+      floorOffset: 0.16,
+      wallHeight: 4.8 * s,
+      wallThick: 0.32 * s,
+    };
+  }
+  return null;
+}
+
+export function isRopeBridgeEntity(ent: { kind?: string; name?: string; notes?: string }): boolean {
+  if (ent.kind && ent.kind !== 'prop') return false;
+  const lowerName = (ent.name ?? '').toLowerCase();
+  const lowerNotes = (ent.notes ?? '').toLowerCase();
+  return (
+    lowerName.includes('rope bridge') ||
+    lowerName.includes('slat bridge') ||
+    lowerName.includes('broken slat') ||
+    lowerNotes.includes('ropebridge')
+  );
+}
+
+
 function insertColliderIntoGrid(
   cells: Map<number, LevelCollider[]>,
   col: LevelCollider,
@@ -1232,6 +1344,97 @@ function buildLevelColliderGrid(level: GameLevel): CachedLevelColliderGrid {
           maxY: baseY + 2.2 * s,
         });
       } else if (ent.kind === 'prop') {
+        const lowerName = (ent.name ?? '').toLowerCase();
+        const lowerNotes = (ent.notes ?? '').toLowerCase();
+        const walkInSpec = getWalkInBuildingSpec(ent);
+        if (walkInSpec) {
+          const cos = Math.cos(yaw);
+          const sin = Math.sin(yaw);
+          const toWorld = (lx: number, lz: number): [number, number] => [
+            wx + lx * cos + lz * sin,
+            wz - lx * sin + lz * cos,
+          ];
+          const wt = walkInSpec.wallThick * 0.5;
+          const hw = walkInSpec.halfW;
+          const hd = walkInSpec.halfD;
+          const dhw = walkInSpec.doorHalfW;
+          const minY = baseY - 0.2;
+          const maxY = baseY + walkInSpec.wallHeight;
+
+          // 1. Back wall (lz = -hd)
+          const [bx, bz] = toWorld(0, -hd);
+          addObbCollider(cells, bx, bz, yaw, hw, wt, undefined, minY, maxY);
+          // 2. Left wall (lx = -hw)
+          const [lxW, lzW] = toWorld(-hw, 0);
+          addObbCollider(cells, lxW, lzW, yaw, wt, hd, undefined, minY, maxY);
+          // 3. Right wall (lx = +hw)
+          const [rxW, rzW] = toWorld(hw, 0);
+          addObbCollider(cells, rxW, rzW, yaw, wt, hd, undefined, minY, maxY);
+          // 4. Front-left wall segment (lx from -hw to -dhw at lz = +hd)
+          const segHalfW = Math.max(0.3, (hw - dhw) * 0.5);
+          const segCenter = dhw + segHalfW;
+          const [flx, flz] = toWorld(-segCenter, hd);
+          addObbCollider(cells, flx, flz, yaw, segHalfW, wt, undefined, minY, maxY);
+          // 5. Front-right wall segment (lx from +dhw to +hw at lz = +hd)
+          const [frx, frz] = toWorld(segCenter, hd);
+          addObbCollider(cells, frx, frz, yaw, segHalfW, wt, undefined, minY, maxY);
+          // 6. Hinged Front Door Leaf OBB (tagged with doorId: ent.id so opening with E unlocks the doorway)
+          const [dx, dz] = toWorld(0, hd);
+          addObbCollider(cells, dx, dz, yaw, dhw * 0.96, wt * 1.1, ent.id, minY, maxY);
+
+          // 7. Interior solid furniture colliders (leave spacious center floor walkable)
+          if (walkInSpec.buildingType === 'tavern') {
+            const [barX, barZ] = toWorld(2.2 * s, -2.9 * s);
+            addObbCollider(cells, barX, barZ, yaw, 2.5 * s, 0.58 * s, undefined, minY, baseY + 1.5 * s);
+            const [fpX, fpZ] = toWorld(-3.2 * s, -4.8 * s);
+            addObbCollider(cells, fpX, fpZ, yaw, 1.45 * s, 0.72 * s, undefined, minY, baseY + 3.2 * s);
+          } else if (walkInSpec.buildingType === 'blacksmith') {
+            const [fgX, fgZ] = toWorld(-2.3 * s, -2.5 * s);
+            addObbCollider(cells, fgX, fgZ, yaw, 1.35 * s, 1.15 * s, undefined, minY, baseY + 3.2 * s);
+            const [anX, anZ] = toWorld(-0.4 * s, -0.8 * s);
+            addCircleCollider(cells, anX, anZ, 0.58 * s);
+          }
+          continue;
+        }
+
+        if (isRopeBridgeEntity(ent)) {
+          // Walkable slat bridge deck: add left & right rope handrail colliders so player stays safely on the bridge
+          const cos = Math.cos(yaw);
+          const sin = Math.sin(yaw);
+          const railX = 1.88 * s;
+          const halfLen = 6.6 * s;
+          for (const side of [-1, 1]) {
+            const rx = wx + side * railX * cos;
+            const rz = wz - side * railX * sin;
+            addObbCollider(cells, rx, rz, yaw, 0.22 * s, halfLen, undefined, baseY - 2.5, baseY + 2.8 * s);
+          }
+          continue;
+        }
+
+        if (
+          lowerName.includes('weathered stone') ||
+          lowerName.includes('stone path') ||
+          lowerNotes.includes('weatheredstone') ||
+          lowerNotes.includes('stonepath') ||
+          lowerName.includes('chicken') ||
+          lowerNotes.includes('chicken') ||
+          lowerName.includes('exotic') ||
+          lowerName.includes('fern') ||
+          lowerNotes.includes('exoticplant')
+        ) {
+          continue; // Walkable flagstones, small chickens, and soft jungle ferns don't block movement
+        }
+
+        if (lowerName.includes('fence') || lowerNotes.includes('fence')) {
+          addObbCollider(cells, wx, wz, yaw, 1.15 * s, 0.22 * s, undefined, baseY, baseY + 1.2 * s);
+          continue;
+        }
+
+        if (lowerName.includes('horse') || lowerNotes.includes('tetheredhorses')) {
+          addObbCollider(cells, wx, wz, yaw, 1.45 * s, 0.95 * s, undefined, baseY, baseY + 1.8 * s);
+          continue;
+        }
+
         const preset = inferPropPresetForCollision(ent.name, ent.propPreset);
         if (
           preset === 'dock' ||
@@ -1242,14 +1445,6 @@ function buildLevelColliderGrid(level: GameLevel): CachedLevelColliderGrid {
           continue; // Walkable / drivable / collect-through surfaces
         } else if (preset === 'roadBarrier') {
           addObbCollider(cells, wx, wz, yaw, 1.45 * s, 0.34 * s, undefined, baseY, baseY + 1.25 * s);
-        } else if (preset === 'tavern') {
-          const cos = Math.cos(yaw);
-          const sin = Math.sin(yaw);
-          const cx = wx - 0.1 * s * sin;
-          const cz = wz - 0.1 * s * cos;
-          addObbCollider(cells, cx, cz, yaw, 3.35 * s, 2.65 * s);
-        } else if (preset === 'cottage') {
-          addObbCollider(cells, wx, wz, yaw, 1.72 * s, 1.56 * s);
         } else if (preset === 'checkpointArch') {
           const cos = Math.cos(yaw);
           const sin = Math.sin(yaw);
@@ -2374,6 +2569,50 @@ export function sampleLevelHeight(level: GameLevel, x: number, z: number): numbe
     const perp = -dx * RiverCrossing.tz + dz * RiverCrossing.tx;
     if (Math.abs(along) <= RiverCrossing.halfLength && Math.abs(perp) <= RiverCrossing.halfWidth) {
       h = Math.max(h, RiverCrossing.deckY);
+    }
+  }
+
+  // Check if standing on any placed Rope & Slat Bridge or inside a Walk-In Building
+  if (level.entities && level.entities.length > 0) {
+    for (const ent of level.entities) {
+      if (ent.kind !== 'prop') continue;
+      const [wx, wz] = levelBoardToWorld(level, ent.position);
+      const s = Math.max(0.5, ent.scale ?? 1);
+      const yaw = ((ent.rotation ?? 0) * Math.PI) / 180;
+      const cos = Math.cos(yaw);
+      const sin = Math.sin(yaw);
+      const dx = x - wx;
+      const dz = z - wz;
+      const lx = dx * cos - dz * sin;
+      const lz = dx * sin + dz * cos;
+
+      if (isRopeBridgeEntity(ent)) {
+        const halfW = 1.82 * s;
+        const halfL = 6.8 * s;
+        if (Math.abs(lx) <= halfW && Math.abs(lz) <= halfL) {
+          // Sample bank height at the two ends of the bridge so it spans over deep water gorges
+          const southEndX = wx + halfL * sin;
+          const southEndZ = wz + halfL * cos;
+          const northEndX = wx - halfL * sin;
+          const northEndZ = wz - halfL * cos;
+          const southBankY = sampleTerrainHeight(level.terrain, southEndX, southEndZ);
+          const northBankY = sampleTerrainHeight(level.terrain, northEndX, northEndZ);
+          const bankAnchorY = Math.max(southBankY, northBankY, IslandTerrain.waterLevel + 1.15) + (ent.elevationY ?? 0);
+          const u = Math.min(1, Math.abs(lz) / Math.max(0.01, halfL));
+          const archCamber = (1 - u * u) * 0.28 * s;
+          const deckY = bankAnchorY + 0.14 * s + archCamber;
+          h = Math.max(h, deckY);
+        }
+        continue;
+      }
+
+      const walkInSpec = getWalkInBuildingSpec(ent);
+      if (walkInSpec) {
+        if (Math.abs(lx) <= walkInSpec.halfW + 0.25 && Math.abs(lz) <= walkInSpec.halfD + 0.45) {
+          const buildingGroundY = sampleTerrainHeight(level.terrain, wx, wz) + (ent.elevationY ?? 0);
+          h = Math.max(h, buildingGroundY + walkInSpec.floorOffset);
+        }
+      }
     }
   }
 
@@ -3605,6 +3844,149 @@ export function carveWaterBodyIntoTerrain(
     ...terrain,
     heights,
     layers,
+    revision: terrain.revision + 1,
+  };
+}
+
+/**
+ * Carves a real water-filled river gorge between two higher pieces of land (South Village Plateau
+ * and North Highlands) so that the Rope & Wooden Slat Bridge placed at (bridgeX, bridgeZ)
+ * is the authentic crossing over deep flowing water.
+ */
+export function carveRpgRiverGorgeTerrain(
+  rawTerrain: TerrainData,
+  bridgeX = 0,
+  bridgeZ = -14
+): TerrainData {
+  const terrain = ensureUpgradedTerrain(rawTerrain);
+  const size = terrain.size;
+  const width = size + 1;
+  const worldRadius = getTerrainRadius(terrain);
+  const step = (2 * worldRadius) / size;
+  const heights = [...terrain.heights];
+  const layers = [...terrain.layers];
+
+  const riverWaterY = IslandTerrain.waterLevel + 0.15;
+  const riverBedY = riverWaterY - 2.35;
+  const southBankTargetY = Math.max(1.55, riverWaterY + 1.55);
+  const northBankTargetY = Math.max(1.75, riverWaterY + 1.75);
+
+  for (let row = 0; row < width; row++) {
+    for (let col = 0; col < width; col++) {
+      const vx = -worldRadius + col * step;
+      const vz = -worldRadius + row * step;
+      const idx = row * width + col;
+
+      // Keep outer island shoreline intact beyond radius 54
+      const radialDist = Math.hypot(vx, vz);
+      if (radialDist > worldRadius * 0.88) continue;
+
+      // Meandering river centerline passing directly under (bridgeX, bridgeZ)
+      const dxFromBridge = vx - bridgeX;
+      const meanderOffset =
+        Math.sin(dxFromBridge * 0.085) * 1.85 * Math.min(1, Math.abs(dxFromBridge) / 6.5);
+      const riverCenterZ = bridgeZ + meanderOffset;
+      const dzRiver = vz - riverCenterZ;
+      const absDz = Math.abs(dzRiver);
+
+      // Gorge channel half-width (~4.6m inner water bed, ~6.4m bank rim where bridge anchors sit)
+      const innerWaterHalfW = 4.4;
+      const bankRimHalfW = 6.5;
+      const plateauBlendHalfW = 14.0;
+
+      if (absDz <= innerWaterHalfW) {
+        // Deep river water channel between the two higher pieces of land
+        const depthFactor = 1 - Math.pow(absDz / innerWaterHalfW, 2) * 0.25;
+        heights[idx] = riverBedY * depthFactor + (riverWaterY - 0.65) * (1 - depthFactor);
+        layers[idx] = 1; // rocky riverbed / shore stone
+      } else if (absDz <= bankRimHalfW) {
+        // Steep gorge cliff banks rising up to the elevated north and south plateaus
+        const t = (absDz - innerWaterHalfW) / (bankRimHalfW - innerWaterHalfW);
+        const s = quinticSmooth(t);
+        const bankHighY = dzRiver >= 0 ? southBankTargetY : northBankTargetY;
+        heights[idx] = riverBedY * (1 - s) + bankHighY * s;
+        layers[idx] = t < 0.72 ? 2 : 0; // cliff rock edge into grass/path
+      } else if (absDz <= plateauBlendHalfW) {
+        // Elevated plateaus on both sides of the river gorge so the landmasses sit well above water
+        const t = (absDz - bankRimHalfW) / (plateauBlendHalfW - bankRimHalfW);
+        const s = quinticSmooth(t);
+        const bankHighY = dzRiver >= 0 ? southBankTargetY : northBankTargetY;
+        const naturalH = Math.max(heights[idx], bankHighY - 0.18);
+        heights[idx] = bankHighY * (1 - s) + naturalH * s;
+      } else {
+        // Ensure both the South Village Plateau and North Temple Highlands stay elevated above water
+        const minLandY = dzRiver >= 0 ? southBankTargetY - 0.2 : northBankTargetY - 0.1;
+        if (radialDist < worldRadius * 0.76 && heights[idx] < minLandY) {
+          heights[idx] = minLandY + (heights[idx] - minLandY) * 0.25;
+        }
+      }
+
+      // Flatten the main village building terraces & central road approach so walk-in buildings sit level
+      if (Math.abs(vx - bridgeX) < 3.4 && absDz >= bankRimHalfW - 0.6 && absDz <= 28) {
+        layers[idx] = 4; // cobblestone/dirt road path leading to bridge
+      }
+    }
+  }
+
+  // Add/update the flowing river water body across the gorge
+  const riverPoints: [number, number][] = [
+    [-worldRadius * 0.84, bridgeZ + Math.sin((-worldRadius * 0.84 - bridgeX) * 0.085) * 1.85],
+    [-22, bridgeZ + Math.sin((-22 - bridgeX) * 0.085) * 1.85],
+    [bridgeX - 7, bridgeZ],
+    [bridgeX, bridgeZ],
+    [bridgeX + 7, bridgeZ],
+    [22, bridgeZ + Math.sin((22 - bridgeX) * 0.085) * 1.85],
+    [worldRadius * 0.84, bridgeZ + Math.sin((worldRadius * 0.84 - bridgeX) * 0.085) * 1.85],
+  ];
+
+  const existingWater = (terrain.waterBodies ?? []).filter((w) => w.id !== 'wb-rpg-gorge-river');
+  const gorgeRiver: WaterBodyConfig = {
+    id: 'wb-rpg-gorge-river',
+    name: 'Emerald Gorge River',
+    kind: 'river',
+    center: [bridgeX, bridgeZ],
+    points: riverPoints,
+    radiusX: worldRadius * 1.65,
+    radiusZ: 5.4,
+    width: 9.2,
+    waterLevelOffset: 0.15,
+    waterColor: '#2A9D8F',
+    deepMurkColor: '#134E4A',
+    opacity: 0.86,
+    depth: 2.35,
+    foamAmount: 0.65,
+    waveSpeed: 0.9,
+    windRipple: 0.6,
+    flowSpeed: 0.85,
+    flowAngleDeg: 0,
+    bankSlope: 0.25,
+    bankSmoothness: 0.6,
+    shoreNoise: 0.08,
+  };
+
+  // Clear scatter trees/rocks from inside the river gorge, bridge approaches, and walk-in building lots
+  const filteredScatter = (terrain.scatter ?? []).filter((item) => {
+    const dxB = item.x - bridgeX;
+    const meanderZ =
+      bridgeZ + Math.sin(dxB * 0.085) * 1.85 * Math.min(1, Math.abs(dxB) / 6.5);
+    if (Math.abs(item.z - meanderZ) < 6.8) return false; // inside river gorge
+    if (Math.abs(item.x - bridgeX) < 4.5 && item.z >= bridgeZ - 14 && item.z <= bridgeZ + 40) {
+      return false; // main village road & bridge approach
+    }
+    // Keep tavern (-14, 12), blacksmith (14, 11), cottage (-15, -2), and chicken yard (12, 22) clear of wild trees
+    if (Math.hypot(item.x - -14, item.z - 12) < 9.2) return false;
+    if (Math.hypot(item.x - 14, item.z - 11) < 8.2) return false;
+    if (Math.hypot(item.x - -15, item.z - -2) < 7.2) return false;
+    if (Math.hypot(item.x - 12, item.z - 22) < 6.2) return false;
+    return true;
+  });
+
+  return {
+    ...terrain,
+    heights,
+    layers,
+    scatter: filteredScatter,
+    waterBodies: [...existingWater, gorgeRiver],
     revision: terrain.revision + 1,
   };
 }

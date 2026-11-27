@@ -188,6 +188,7 @@ import {
   IslandTerrain,
   applyMountainCaveToTerrain,
   applyRoadSplineToTerrain,
+  carveRpgRiverGorgeTerrain,
   carveWaterBodyIntoTerrain,
   createCustomDrivingTrackTerrain,
   createDefaultMountainConfig,
@@ -3978,6 +3979,10 @@ export function applyRpgAiToStore(
 
     // Filter background scatter so Jungle Ruins has zero pine/birch trees and Interior scenes have clear floorplans
     let updatedTerrain = prev.terrain;
+    if (updatedTerrain && !isInterior) {
+      // Carve a real water-filled river gorge between two higher pieces of land so the slat rope bridge crosses real water
+      updatedTerrain = carveRpgRiverGorgeTerrain(updatedTerrain, 0, -14);
+    }
     if (updatedTerrain?.scatter) {
       if (isInterior) {
         updatedTerrain = {
@@ -4017,6 +4022,7 @@ export function applyRpgAiToStore(
       },
     };
 
+    const atWorld = (wx: number, wz: number) => levelWorldToBoard(nextLevel, wx, wz);
     const newEntities: LevelEntity[] = modifyExisting
       ? [...prev.entities.filter((e) => e.kind !== 'checkpoint')]
       : [];
@@ -4033,8 +4039,9 @@ export function applyRpgAiToStore(
           : scenarioHint === 'interiorCave'
           ? 'interiorCave'
           : 'interiorCottage';
+      const pt = atWorld(0, 0);
       newEntities.push(
-        createEntity('prop', `Cutaway ${intKind.replace('interior', '')} Room`, 0.5, 0.48, {
+        createEntity('prop', `Cutaway ${intKind.replace('interior', '')} Room`, pt.x, pt.y, {
           notes: `RPG Building: ${intKind}`,
           scale: 1.15,
         })
@@ -4050,83 +4057,223 @@ export function applyRpgAiToStore(
       const cName = typeof c.name === 'string' && c.name.trim() ? c.name.trim() : `Companion ${idx + 1}`;
       const cClass = typeof c.class === 'string' ? c.class : idx === 0 ? 'warrior' : 'mage';
       const cWeapon = typeof c.weapon === 'string' ? c.weapon : cClass === 'mage' ? 'staff' : cClass === 'ranger' ? 'bow' : 'sword';
-      const bx = 0.46 + idx * 0.06;
-      const by = 0.56 + (idx % 2 === 0 ? 0.03 : -0.03);
-      const companionEnt = createEntity('npc', cName, bx, by, {
+      const pt = atWorld((idx - 1) * 2.8, 15.0 - (idx % 2) * 1.6);
+      const companionEnt = createEntity('npc', cName, pt.x, pt.y, {
         isBuddy: true,
-        dialogue: `Standing by your side with my ${cWeapon}! Let us strike together!`,
-        health: num(c.health, 30, 14, 65),
+        dialogue: `Standing by your side with my ${cWeapon}! Walk to any building door and press E to open and explore inside!`,
+        health: num(c.health, 32, 16, 65),
         notes: `RPG Companion: ${cClass}:${cWeapon}`,
       });
       newEntities.push(companionEnt);
     });
 
-    // 2. Buildings (taverns, blacksmith, cottages, shrines, temples, cutaway interiors)
-    rawBuildings.slice(0, 10).forEach((bRaw, idx) => {
+    // 2. Full-Sized Walk-In Buildings (taverns, blacksmith, cottages, shrines, temples, sci-fi & modern halls)
+    let placedTavernPos: [number, number] | null = null;
+    let placedCottagePos: [number, number] | null = null;
+    rawBuildings.slice(0, 8).forEach((bRaw, idx) => {
       if (!bRaw || typeof bRaw !== 'object') return;
       const b = bRaw as Record<string, unknown>;
-      const bName = typeof b.name === 'string' && b.name.trim() ? b.name.trim() : `Building ${idx + 1}`;
-      const bx = num(b.x, (idx % 3 - 1) * 16, -55, 55);
-      const bz = num(b.z, Math.floor(idx / 3) * 16 - 16, -55, 55);
-      const boardX = Math.min(0.9, Math.max(0.1, bx / 76 + 0.5));
-      const boardY = Math.min(0.9, Math.max(0.1, bz / 76 + 0.5));
       const bKind = typeof b.kind === 'string' ? b.kind : 'cottage';
-      const propEnt = createEntity('prop', bName, boardX, boardY, {
+      const defaultPos: [number, number] =
+        bKind === 'tavern'
+          ? [-14, 12]
+          : bKind === 'blacksmith'
+          ? [14, 11]
+          : bKind === 'temple' || bKind === 'shrine'
+          ? [0, -33]
+          : [-15, -2];
+      let bx = num(b.x, defaultPos[0], -45, 45);
+      let bz = num(b.z, defaultPos[1], -45, 36);
+      // Quality safeguard: keep buildings out of the river gorge channel (z in [-21, -7]) and central bridge road
+      if (!isInterior && bz > -22 && bz < -6) {
+        bz = bz >= -14 ? 10 : -32;
+      }
+      if (!isInterior && Math.abs(bx) < 8 && bz > -8) {
+        bx = idx % 2 === 0 ? -14 : 14;
+      }
+      if (bKind === 'tavern' && !placedTavernPos) placedTavernPos = [bx, bz];
+      if (bKind === 'cottage' && !placedCottagePos) placedCottagePos = [bx, bz];
+
+      const bName =
+        typeof b.name === 'string' && b.name.trim()
+          ? b.name.trim()
+          : bKind === 'tavern'
+          ? 'Golden Acorn Walk-In Tavern'
+          : bKind === 'blacksmith'
+          ? 'Ironhearth Walk-In Blacksmith Forge'
+          : bKind === 'scifiBuilding'
+          ? 'Walk-In Sci-Fi Command Outpost'
+          : bKind === 'modernBuilding'
+          ? 'Walk-In Modern Lodge Hall'
+          : `Walk-In ${bKind.charAt(0).toUpperCase() + bKind.slice(1)}`;
+      const pt = atWorld(bx, bz);
+      const propEnt = createEntity('prop', bName, pt.x, pt.y, {
         notes: `RPG Building: ${bKind}`,
-        rotation: num(b.rotationDeg, 0, -180, 180),
-        scale: num(b.scale, 1.0, 0.65, 1.65),
+        rotation: 0, // Keep front door (+Z) accessible and facing south toward the player approach
+        scale: Math.max(1.0, num(b.scale, 1.0, 1.0, 1.28)),
       });
       newEntities.push(propEnt);
     });
 
-    // 3. Props & Flora (fences, well, chickens, tropical trees, exotic plants, hollow magic trees, weathered stone paths, rope bridges, lanterns, rune puzzles)
+    // 3. Props & Flora (fences, well, chickens, tethered horses, hanging lamp posts, yard-raking villager, road villagers, tropical trees, exotic plants, hollow magic trees, weathered stone paths, rope bridges, lanterns, rune puzzles)
     const rawProps = Array.isArray(raw.propsAndFlora) ? raw.propsAndFlora : [];
-    rawProps.slice(0, 26).forEach((pRaw, idx) => {
+    let hasRopeBridge = false;
+    let hasTetheredHorses = false;
+    let hasRakingVillager = false;
+    let hasHangingLamps = false;
+    let fenceCount = 0;
+
+    rawProps.slice(0, 28).forEach((pRaw, idx) => {
       if (!pRaw || typeof pRaw !== 'object') return;
       const p = pRaw as Record<string, unknown>;
-      const pName = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Prop ${idx + 1}`;
-      const px = num(p.x, (idx % 5 - 2) * 11, -65, 65);
-      const pz = num(p.z, Math.floor(idx / 5) * 11 - 26, -65, 65);
-      const boardX = Math.min(0.92, Math.max(0.08, px / 76 + 0.5));
-      const boardY = Math.min(0.92, Math.max(0.08, pz / 76 + 0.5));
       const kind = typeof p.kind === 'string' ? p.kind : 'lantern';
+      const pName = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Prop ${idx + 1}`;
+      let px = num(p.x, (idx % 5 - 2) * 10, -55, 55);
+      let pz = num(p.z, Math.floor(idx / 5) * 10 - 20, -55, 55);
+
+      if (kind === 'ropeBridge') {
+        hasRopeBridge = true;
+        px = 0;
+        pz = -14;
+      }
+      if (kind === 'tetheredHorses') hasTetheredHorses = true;
+      if (kind === 'rakingVillager') hasRakingVillager = true;
+      if (kind === 'hangingLampPost') hasHangingLamps = true;
+      if (kind === 'fence') fenceCount++;
+
+      const pt = atWorld(px, pz);
+      if (kind === 'roadVillager') {
+        newEntities.push(
+          createEntity('npc', pName.includes('Prop') ? `Village Traveler ${idx + 1}` : pName, pt.x, pt.y, {
+            brain: 'wander',
+            speed: 1.3,
+            dialogue: 'Greetings traveler! You can open the Tavern and Blacksmith doors with E and walk right inside.',
+            notes: 'RPG Villager: roadWalker',
+          })
+        );
+        return;
+      }
+
       const isLight = kind === 'lantern';
       const isPuzzle = kind === 'runePuzzle';
-      const ent = createEntity(isLight ? 'light' : isPuzzle ? 'puzzle' : 'prop', pName, boardX, boardY, {
+      const ent = createEntity(isLight ? 'light' : isPuzzle ? 'puzzle' : 'prop', pName, pt.x, pt.y, {
         notes: isLight ? 'RPG Lantern: volumetric' : `RPG Prop: ${kind}`,
-        rotation: num(p.rotationDeg, 0, -180, 180),
-        scale: num(p.scale, 1.0, 0.65, 1.75),
+        rotation: kind === 'ropeBridge' ? 0 : num(p.rotationDeg, 0, -180, 180),
+        scale: kind === 'ropeBridge' ? 1.0 : num(p.scale, 1.0, 0.85, 1.5),
       });
       newEntities.push(ent);
     });
 
-    // Ensure signature organic paths & rope bridge exist if not explicitly placed
-    if (!modifyExisting) {
-      const hasPath = rawProps.some(
-        (p) => p && typeof p === 'object' && ['weatheredStonePath', 'ropeBridge'].includes(String((p as Record<string, unknown>).kind ?? ''))
+    // Under-the-hood Quality Control Safeguards:
+    // A. Always place the walkable Rope & Wooden Slat Bridge across the Emerald Gorge River at (0, -14)
+    if (!isInterior && !modifyExisting && !hasRopeBridge) {
+      const bridgePt = atWorld(0, -14);
+      newEntities.push(
+        createEntity('prop', 'Rope Bridge with Broken Slat', bridgePt.x, bridgePt.y, {
+          notes: 'RPG Prop: ropeBridge',
+          rotation: 0,
+          scale: 1.0,
+        })
       );
-      if (!hasPath) {
-        for (let step = 0; step < 5; step++) {
+    }
+
+    // B. For Medieval/Coastal Villages, automatically ensure realism props (tethered horses outside tavern, fenced chicken pen, hanging lamp posts, raking villager & strolling villagers)
+    if (
+      !isInterior &&
+      !modifyExisting &&
+      (scenarioHint === 'medievalVillage' || scenarioHint === 'coastalVillage' || placedTavernPos !== null)
+    ) {
+      if (!hasTetheredHorses) {
+        const [tx, tz] = placedTavernPos ?? [-14, 12];
+        const hPt = atWorld(tx + 5.8, tz + 6.8);
+        newEntities.push(
+          createEntity('prop', 'Tethered Tavern Horses & Hitching Post', hPt.x, hPt.y, {
+            notes: 'RPG Prop: tetheredHorses',
+            scale: 1.0,
+            rotation: 0,
+          })
+        );
+      }
+      if (!hasRakingVillager) {
+        const [cx, cz] = placedCottagePos ?? [-15, -2];
+        const rPt = atWorld(cx + 5.8, cz + 5.2);
+        newEntities.push(
+          createEntity('prop', 'Villager Raking Yard Leaves', rPt.x, rPt.y, {
+            notes: 'RPG Prop: rakingVillager',
+            scale: 1.0,
+            rotation: 24,
+          })
+        );
+      }
+      if (!hasHangingLamps) {
+        for (const [lx, lz, rot] of [
+          [-3.8, 22.0, 0],
+          [3.8, 22.0, 180],
+          [-3.8, 9.5, 0],
+          [3.8, 9.5, 180],
+          [-3.8, -5.0, 0],
+          [3.8, -5.0, 180],
+        ] as [number, number, number][]) {
+          const lPt = atWorld(lx, lz);
           newEntities.push(
-            createEntity(
-              'prop',
-              pathStyle === 'ropeBridgeSlats' && step === 2
-                ? 'Rope Bridge with Broken Slat'
-                : 'Weathered Broken Stone Path',
-              0.5 + Math.sin(step * 0.7) * 0.03,
-              0.56 - step * 0.075,
-              {
-                notes:
-                  pathStyle === 'ropeBridgeSlats' && step === 2
-                    ? 'RPG Prop: ropeBridge'
-                    : 'RPG Prop: weatheredStonePath',
-                rotation: (step % 2 === 0 ? 12 : -14),
-              }
-            )
+            createEntity('prop', 'Village Hanging Lamp Post', lPt.x, lPt.y, {
+              notes: 'RPG Prop: hangingLampPost',
+              scale: 1.0,
+              rotation: rot,
+            })
           );
         }
       }
+      if (fenceCount < 4) {
+        for (const [fx, fz, rot] of [
+          [10.8, 19.6, 4],
+          [13.2, 19.6, -5],
+          [10.8, 24.4, -4],
+          [13.2, 24.4, 5],
+          [9.5, 22.0, 92],
+          [14.5, 22.0, 88],
+        ] as [number, number, number][]) {
+          const fPt = atWorld(fx, fz);
+          newEntities.push(
+            createEntity('prop', 'Distressed Split-Rail Fence', fPt.x, fPt.y, {
+              notes: 'RPG Prop: fence',
+              scale: 1.0,
+              rotation: rot,
+            })
+          );
+        }
+        for (const [ckX, ckZ, tint] of [
+          [11.4, 21.5, '#FFFBEB'],
+          [12.6, 22.4, '#FDE68A'],
+          [11.8, 23.1, '#D97706'],
+        ] as [number, number, string][]) {
+          const cPt = atWorld(ckX, ckZ);
+          newEntities.push(
+            createEntity('prop', 'Wandering Village Chicken', cPt.x, cPt.y, {
+              notes: 'RPG Prop: chicken',
+              scale: 0.9,
+              styleTint: tint,
+            })
+          );
+        }
+      }
+      // Add strolling villagers on the road
+      for (const [vx, vz, vName, vLine] of [
+        [-1.6, 20.5, 'Miller Gareth (Village Peddler)', 'The tavern fireplace is roaring and horses are hitched out front!'],
+        [1.8, 7.0, 'Elspeth (Village Weaver)', 'Hear that hammer ringing? The blacksmith is forging a glowing blade with sparks flying!'],
+      ] as [number, number, string, string][]) {
+        const vPt = atWorld(vx, vz);
+        newEntities.push(
+          createEntity('npc', vName, vPt.x, vPt.y, {
+            brain: 'wander',
+            speed: 1.3,
+            dialogue: vLine,
+            notes: 'RPG Villager: roadWalker',
+          })
+        );
+      }
     }
+
 
     // 4. Enemies & Monsters (including Ogre Brutes with brute-force throw!)
     const rawEnemies = Array.isArray(raw.enemies) ? raw.enemies : [];

@@ -298,20 +298,20 @@ export function formatRpgGuideSection(guide?: RpgPromptGuide | null): string {
   const lines: string[] = [];
   if (guide.scenario && guide.scenario !== 'auto') {
     const scenarioMap: Record<RpgScenarioPreset, string> = {
-      auto: 'Detailed isometric RPG scene.',
-      medievalVillage: 'Medieval Village: rustic timber taverns, blacksmith forge, distressed organic wood rail fences, wandering chickens, stone well, weathered broken organic stone paths.',
-      jungleRuins: 'Overgrown Jungle Ruins: lush tropical banyan & palm trees with hanging vines (NO pine or oak trees!), exotic giant monstera & fern plants, mossy stone temple ruins, humid mist & fog, rope bridge with wooden slats across chasm.',
-      deepWoodedForest: 'Deep Wooded Forest: dense towering canopy hiding the sky, hidden magic glowing inside hollow trees & forest cottages, weathered stone & rope bridge slats.',
-      stoneTemple: 'Ancient Stone Temple: vine-draped columns, volumetric lantern lighting, rune puzzles, detailed stone altar & guardians.',
-      coastalVillage: 'Coastal Fishing Village: wooden docks, stone sea walls, weathered slat walkways, tavern & seaside shrines.',
-      interiorCottage: 'Isometric Cutaway Forest Cottage Interior: L-shaped cutaway stone & timber walls, glowing hearth fireplace, volumetric lantern & window shafts, alchemy table, bookshelves & cozy rug.',
-      interiorTavern: 'Isometric Cutaway Medieval Tavern Interior: timber-framed great hall cutaway, hearth fire, oak ale barrels, long banquet tables, lanterns & upstairs balcony.',
-      interiorCave: 'Isometric Cutaway Deep Cavern Interior: jagged rock cavern walls, glowing crystals, volumetric lantern god-rays, underground rope slat bridge & ancient shrine.',
+      auto: 'Detailed isometric RPG scene with full-sized walk-in enterable buildings, river gorge slat bridge, and living village cast.',
+      medievalVillage: 'Medieval Village: FULL-SIZED walk-in Tavern (with hinged front door, fireplace, bar, bartender, seated patrons at tables, upstairs inn loft, wall lanterns, framed wall pictures & wooden floors), FULL-SIZED walk-in Blacksmith (with red-hot forge, anvil, blacksmith hammering glowing metal with flying sparks), tethered horses outside the tavern, enclosed distressed organic wood fence pen keeping wandering chickens in, hanging lamp posts flanking the village entrance road, villagers walking the road, villager raking their yard, and a walkable wooden slat rope bridge spanning across a real water river gorge between two higher pieces of land.',
+      jungleRuins: 'Overgrown Jungle Ruins: lush tropical banyan & palm trees with hanging vines (NO pine or oak trees!), exotic giant monstera & fern plants, mossy walk-in stone temple sanctum, humid mist & fog, and a wooden slat rope bridge spanning across a deep water river gorge between two elevated jungle banks.',
+      deepWoodedForest: 'Deep Wooded Forest: dense towering canopy hiding the sky (with automatic camera zoom when foliage obscures view), hidden magic glowing inside hollow trees & full-sized walk-in forest cottages, weathered stone & river-spanning rope bridge slats.',
+      stoneTemple: 'Ancient Stone Temple: full-sized walk-in vine-draped stone temple sanctum with hinged sanctuary doors, wall lanterns, framed bas-relief murals, benches, rune puzzles, detailed stone altar & guardians.',
+      coastalVillage: 'Coastal Fishing Village: wooden docks, stone sea walls, weathered slat walkways, full-sized walk-in tavern with bartender & patrons, tethered horses & seaside shrines.',
+      interiorCottage: 'Isometric Cutaway Forest Cottage Interior: spacious walk-in stone & timber hall, glowing hearth fireplace, wall lanterns, framed wall pictures, windows, wooden plank floors, alchemy table, benches & bookshelves.',
+      interiorTavern: 'Isometric Cutaway Medieval Tavern Interior: full-sized walk-in great hall, roaring hearth fire, oak bar with bartender, multiple tables & benches with seated patrons, stairs to upstairs inn loft, wall lanterns, windows, framed wall pictures & wooden floors.',
+      interiorCave: 'Isometric Cutaway Deep Cavern Interior: jagged rock cavern walls, glowing crystals, volumetric lantern god-rays, underground river gorge with wooden slat rope bridge & ancient shrine.',
     };
     lines.push(`- RPG World Scenario: ${guide.scenario} (${scenarioMap[guide.scenario] ?? guide.scenario})`);
   }
   if (guide.pathStyle) {
-    lines.push(`- Terraformed Path & Bridge Style: ${guide.pathStyle} (weathered broken organic stones, wooden rope bridge slats with occasional broken slat, or mossy cobbles).`);
+    lines.push(`- Terraformed Path & Bridge Style: ${guide.pathStyle} (weathered broken organic stones, and a walkable wooden slat rope bridge with the odd broken slat spanning across a real water-filled river gorge between two higher pieces of land).`);
   }
   if (guide.lootStyle) {
     lines.push(`- Loot & Treasure System: ${guide.lootStyle} (support traditional chests/ground items AND fanned-out colorful card choices upon defeating enemies, opening shrines, or solving puzzles).`);
@@ -1026,14 +1026,26 @@ The engine supports ANY roguelike scenario (not just classic stone crypts!):
 }`;
       }
       if (snapshot?.gameplayMode === 'rpg') {
-        return `TARGET SCHEMA (Detailed Isometric RPG Director — Medieval Village, Jungle Ruins, Deep Wooded Forest, Stone Temples, Cutaway Interiors, Recruited Companions, Sword/Arrow/Magic Combat, Fanned Loot Cards & Volumetric Lantern Lighting):
-CRITICAL RULES FOR ISOMETRIC RPG WORLDS:
-1. NO MINECRAFT BLOCKY SHAPES: Everything must feel organic, distressed, weathered, and refined to fit the smaller isometric scale of the hero and party.
-2. BIOME-ACCURATE FLORA & ATMOSPHERE:
+        return `TARGET SCHEMA (Detailed Isometric RPG Director — Full-Sized Walk-In Enterable Buildings, River Gorge Slat Bridges, Living Medieval Villages, Jungle Ruins, Deep Wooded Forests, Recruited Companions, Sword/Arrow/Magic Combat & Fanned Loot Cards):
+CRITICAL QUALITY-CONTROL RULES FOR ISOMETRIC RPG WORLDS:
+1. FULL-SIZED WALK-IN ENTERABLE BUILDINGS (NEVER SMALL BOXES):
+   - Every building ("tavern", "blacksmith", "cottage", "shrine", "temple", "scifiBuilding", "modernBuilding") is a large, full-sized walk-in structure (always set "scale" between 1.0 and 1.25, NEVER < 1.0!) where the player can walk to the front door, press E (Use) to swing the door open, and walk inside while the roof cuts away and the camera moves closer.
+   - All walk-in buildings feature wooden/flagstone plank floors, glowing wall lanterns, paned windows, framed wall pictures/paintings, dining tables, and benches.
+   - "tavern" includes a roaring stone fireplace, long bar counter with a bartender behind the bar, multiple tables with seated patrons holding mugs, and stairs leading to an upstairs inn loft with beds.
+   - "blacksmith" includes a red-hot coal forge, iron anvil with glowing hot metal, and an animated blacksmith hammering the metal with flying sparks!
+   - If the user asks for a modern or sci-fi building, use "modernBuilding" or "scifiBuilding" at full walk-in scale (>= 1.0).
+2. REAL WATER RIVER GORGE & WALKABLE SLAT ROPE BRIDGE:
+   - Whenever a "ropeBridge" is placed, place it at (x: 0, z: -14) with "rotationDeg": 0 and "scale": 1.0 so it spans directly across the deep water-filled river gorge carved between the South Village Plateau (z > -7) and the North Highlands (z < -21). Keep buildings on the South Plateau (z between -3 and +24) or North Highlands (z < -26), never inside the river channel (z between -20 and -8).
+3. LIVING MEDIEVAL VILLAGE REALISM:
+   - For any village scene, always include:
+     * "tetheredHorses" right outside the tavern (e.g. x: -8.2, z: 18.8)
+     * An enclosed chicken yard built from 4 to 6 "fence" props (distressed organic split-rail wood, never cube blocks) surrounding 3 to 4 wandering "chicken" props
+     * "hangingLampPost" props lining both sides of the main village entrance road
+     * "rakingVillager" raking leaves in a cottage yard
+     * "roadVillager" friendly villagers strolling along the village road
+4. BIOME-ACCURATE FLORA & ATMOSPHERE:
    - If the user asks for "jungleRuins" (or tropical/jungle): use "biome": "swamp", "sky": "mist" (or "golden"), "weather": "fireflies" (or "rain"), "fogDensity": 0.045, and populate ONLY "tropicalTree" (with hanging vines), "exoticPlant", "fern", "stonePillar", "ropeBridge", and "weatheredStonePath" — NEVER pine or oak trees on a sunny blue-sky island!
-   - If the user asks for "deepWoodedForest": use "biome": "forest", "sky": "mist" or "night", "fogDensity": 0.055, and include "hollowMagicTree" (hidden magic in trees), "cottage", "lantern", "fern", and "weatheredStonePath".
-   - If the user asks for "medievalVillage": include "tavern", "blacksmith", "cottage", "fence" (distressed organic wood rails), "well", "chicken" (wandering chickens), "weatheredStonePath", and "lantern".
-   - If the user asks for an interior ("interiorCottage", "interiorTavern", "interiorCave"): set "isInterior": true and include an interior diorama building + lanterns with "volumetricLanterns": true.
+   - If the user asks for "deepWoodedForest": use "biome": "forest", "sky": "mist" or "night", "fogDensity": 0.055, and include "hollowMagicTree", "cottage", "hangingLampPost", "fern", and "weatheredStonePath".
 
 {
   "summary": string,
@@ -1059,24 +1071,24 @@ CRITICAL RULES FOR ISOMETRIC RPG WORLDS:
       }
     ]
   },
-  "buildings": [ (1 to 8 refined organic buildings: timber tavern, blacksmith forge, forest cottage, vine-draped shrine, stone temple, or cutaway interior)
+  "buildings": [ (1 to 6 FULL-SIZED walk-in enterable buildings: tavern with bartender/patrons/inn loft, blacksmith with hammering smith & flying sparks, cottage, shrine/temple, sci-fi command outpost, or modern lodge)
     {
       "name": string,
-      "kind": "tavern" | "blacksmith" | "cottage" | "shrine" | "temple" | "interiorCottage" | "interiorTavern" | "interiorCave",
+      "kind": "tavern" | "blacksmith" | "cottage" | "shrine" | "temple" | "scifiBuilding" | "modernBuilding" | "interiorCottage" | "interiorTavern" | "interiorCave",
+      "x": number (-45..45),
+      "z": number (-45..35),
+      "rotationDeg": number (-180..180),
+      "scale": number (1.0..1.25)
+    }
+  ],
+  "propsAndFlora": [ (10 to 28 detailed organic props: distressed wood rail fences enclosing chickens, tethered tavern horses, hanging lamp posts on road, villager raking yard, strolling road villagers, village stone well, weathered stone paths, river-spanning rope bridge with broken slats, tropical trees with vines, exotic plants, hollow magic trees, volumetric lanterns, rune puzzles)
+    {
+      "name": string,
+      "kind": "fence" | "well" | "chicken" | "tetheredHorses" | "hangingLampPost" | "rakingVillager" | "roadVillager" | "tropicalTree" | "exoticPlant" | "fern" | "hollowMagicTree" | "lantern" | "stonePillar" | "weatheredStonePath" | "ropeBridge" | "runePuzzle",
       "x": number (-55..55),
       "z": number (-55..55),
       "rotationDeg": number (-180..180),
-      "scale": number (0.75..1.35)
-    }
-  ],
-  "propsAndFlora": [ (6 to 24 detailed organic props: distressed wood rail fences, village stone well, wandering chickens, weathered stone paths, rope bridges with broken slats, tropical trees with vines, exotic plants, hollow magic trees, volumetric lanterns, rune puzzles)
-    {
-      "name": string,
-      "kind": "fence" | "well" | "chicken" | "tropicalTree" | "exoticPlant" | "fern" | "hollowMagicTree" | "lantern" | "stonePillar" | "weatheredStonePath" | "ropeBridge" | "runePuzzle",
-      "x": number (-65..65),
-      "z": number (-65..65),
-      "rotationDeg": number (-180..180),
-      "scale": number (0.75..1.5)
+      "scale": number (0.9..1.35)
     }
   ],
   "enemies": [ (2 to 10 RPG monsters or bandits with overhead evaporating health points & combat AI; include at least one "ogre" brute for brute-force throw attacks!)

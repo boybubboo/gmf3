@@ -48,6 +48,7 @@ import { createShowcaseTwinFlameDrakeBlueprint } from './baddieActionLibrary';
 import { DEFAULT_ROGUELIKE_CONFIG, generateRoguelikeFloor } from './roguelikeEngine';
 import {
   BuddiesLandmarks,
+  carveRpgRiverGorgeTerrain,
   createBuddiesTerrain,
   createDrivingTerrain,
   createFloatingIslandTerrain,
@@ -2885,134 +2886,275 @@ function buildRpgProject(name: string): GameProject {
     notes: 'Isometric fantasy RPG diorama with medieval village, weathered broken stone paths, mountain rope bridge with broken slat, companion party, sword/arrow/magic combat, evaporating overhead enemy HP & fanned-out loot cards.',
   };
 
-  const startPt = levelWorldToBoard(rpgLevel, 0, 14);
-  rpgLevel.startPoint = startPt;
-  rpgLevel.portalPoint = levelWorldToBoard(rpgLevel, 0, -34);
+  if (rpgLevel.terrain) {
+    rpgLevel.terrain = carveRpgRiverGorgeTerrain(rpgLevel.terrain, 0, -14);
+  }
+
+  const at = (wx: number, wz: number) => levelWorldToBoard(rpgLevel, wx, wz);
+  const place = (
+    kind: EntityKind,
+    label: string,
+    wx: number,
+    wz: number,
+    extra?: Partial<LevelEntity> & { rotation?: number }
+  ) => {
+    const pt = at(wx, wz);
+    return createEntity(kind, label, pt.x, pt.y, extra);
+  };
+
+  rpgLevel.startPoint = at(0, 18);
+  rpgLevel.portalPoint = at(0, -39);
 
   rpgLevel.entities = [
-    // Companion Party
-    createEntity('npc', 'Sir Alden (Companion Knight)', 0.46, 0.56, {
+    // Companion Party ready to recruit at the village square
+    place('npc', 'Sir Alden (Companion Knight)', -2.8, 15.2, {
       isBuddy: true,
-      dialogue: 'My blade is yours, hero! Press 1 for Sword, 2 for Bow, 3 for Magic!',
+      dialogue: 'My blade is yours, hero! Walk up to the Tavern or Blacksmith doors and press E to open them and explore inside!',
       health: 40,
       styleTint: '#3B82F6',
       notes: 'RPG Companion: knight',
     }),
-    createEntity('npc', 'Lyra (Companion Mage)', 0.54, 0.56, {
+    place('npc', 'Lyra (Companion Mage)', 2.8, 15.2, {
       isBuddy: true,
-      dialogue: 'Arcane lightning flows through my staff! Let us strike them down.',
+      dialogue: 'The wooden slat bridge ahead is the only way across the Emerald Gorge River!',
       health: 32,
       styleTint: '#A855F7',
       notes: 'RPG Companion: mage',
     }),
-    createEntity('npc', 'Rowan (Companion Ranger)', 0.5, 0.59, {
+    place('npc', 'Rowan (Companion Ranger)', 0, 13.0, {
       isBuddy: true,
-      dialogue: 'My bow covers the high path toward the temple ruins.',
+      dialogue: 'My bow covers the high path toward the North Temple Ruins across the river.',
       health: 34,
       styleTint: '#10B981',
       notes: 'RPG Companion: ranger',
     }),
-    // Medieval Village & Temple Buildings (non-blocky organic stonework & timber)
-    createEntity('prop', 'Timber Tavern', 0.36, 0.49, {
+
+    // Strolling Medieval Villagers walking the village road
+    place('npc', 'Miller Gareth (Village Peddler)', -1.6, 21.0, {
+      brain: 'wander',
+      speed: 1.35,
+      dialogue: 'Fine morning in Oakhollow! The tavern fireplace is warm and the horses are hitched out front.',
+      styleTint: '#B45309',
+      notes: 'RPG Villager: roadWalker',
+    }),
+    place('npc', 'Elspeth (Village Weaver)', 1.8, 7.5, {
+      brain: 'wander',
+      speed: 1.25,
+      dialogue: 'Hear that ringing? Master Brom is forging a red-hot blade over at the Blacksmith hall!',
+      styleTint: '#15803D',
+      notes: 'RPG Villager: roadWalker',
+    }),
+    place('npc', 'Old Toma (Bridge Watchman)', -1.4, -3.5, {
+      brain: 'wander',
+      speed: 1.15,
+      dialogue: 'Watch your step on the rope bridge across the river gorge—one of the old wooden slats is cracked!',
+      styleTint: '#475569',
+      notes: 'RPG Villager: roadWalker',
+    }),
+
+    // Full-Sized Walk-In Enterable Buildings (Press E at the front door to open & walk inside!)
+    place('prop', 'Golden Acorn Walk-In Tavern', -14, 12, {
       notes: 'RPG Building: tavern',
-      scale: 0.96,
-      rotation: 18,
-    }),
-    createEntity('prop', 'Blacksmith Forge', 0.64, 0.49, {
-      notes: 'RPG Building: blacksmith',
-      scale: 0.94,
-      rotation: -20,
-    }),
-    createEntity('prop', 'Forest Herbalist Cottage', 0.33, 0.37, {
-      notes: 'RPG Building: cottage',
-      scale: 0.9,
-      rotation: 28,
-    }),
-    createEntity('prop', 'Ancient Vine Stone Shrine', 0.5, 0.21, {
-      notes: 'RPG Building: shrine',
-      scale: 1.04,
+      scale: 1.0,
       rotation: 0,
     }),
-    // Weathered Broken Organic Stone Path & Mountain Rope Bridge with Broken Slat
-    createEntity('prop', 'Weathered Broken Stone Path', 0.5, 0.52, {
-      notes: 'RPG Prop: weatheredStonePath',
-      scale: 0.95,
-      rotation: 12,
+    place('prop', 'Ironhearth Walk-In Blacksmith Forge', 14, 11, {
+      notes: 'RPG Building: blacksmith',
+      scale: 1.0,
+      rotation: 0,
     }),
-    createEntity('prop', 'Weathered Broken Stone Path', 0.5, 0.45, {
-      notes: 'RPG Prop: weatheredStonePath',
-      scale: 0.98,
-      rotation: -8,
+    place('prop', 'Forest Herbalist Walk-In Cottage', -15, -2, {
+      notes: 'RPG Building: cottage',
+      scale: 1.0,
+      rotation: 0,
     }),
-    createEntity('prop', 'Weathered Broken Stone Path', 0.5, 0.38, {
-      notes: 'RPG Prop: weatheredStonePath',
-      scale: 0.94,
-      rotation: 15,
+    place('prop', 'Ancient Vine Stone Temple Sanctum', 0, -33, {
+      notes: 'RPG Building: stoneShrine',
+      scale: 1.0,
+      rotation: 0,
     }),
-    createEntity('prop', 'Rope Bridge with Broken Slat', 0.5, 0.31, {
+
+    // Tethered Saddle Horses outside the Tavern & Villager Raking Their Yard outside the Cottage
+    place('prop', 'Tethered Tavern Horses & Hitching Post', -8.2, 18.8, {
+      notes: 'RPG Prop: tetheredHorses',
+      scale: 1.0,
+      rotation: 0,
+    }),
+    place('prop', 'Villager Raking Yard Leaves', -9.2, 3.2, {
+      notes: 'RPG Prop: rakingVillager',
+      scale: 1.0,
+      rotation: 24,
+    }),
+
+    // Spanning Weathered Rope & Wooden Slat Bridge across the Emerald Gorge River (z = -14)
+    place('prop', 'Rope Bridge with Broken Slat', 0, -14, {
       notes: 'RPG Prop: ropeBridge',
-      scale: 0.95,
-      rotation: 90,
+      scale: 1.0,
+      rotation: 0,
     }),
-    // Village Organic Props, Hollow Magic Tree & Wandering Chickens
-    createEntity('prop', 'Village Stone Well', 0.44, 0.51, {
-      notes: 'RPG Prop: well',
-      scale: 0.88,
+
+    // Hanging Lamps on Posts flanking the village entrance & main road
+    place('prop', 'Village Hanging Lamp Post', -3.8, 22.5, {
+      notes: 'RPG Prop: hangingLampPost',
+      scale: 1.0,
+      rotation: 0,
     }),
-    createEntity('prop', 'Hollow Magic Forest Tree', 0.67, 0.36, {
-      notes: 'RPG Prop: hollowMagicTree',
-      scale: 0.98,
+    place('prop', 'Village Hanging Lamp Post', 3.8, 22.5, {
+      notes: 'RPG Prop: hangingLampPost',
+      scale: 1.0,
+      rotation: 180,
     }),
-    createEntity('prop', 'Distressed Split-Rail Fence', 0.38, 0.55, {
-      notes: 'RPG Prop: fence',
-      scale: 0.86,
+    place('prop', 'Village Hanging Lamp Post', -3.8, 10.5, {
+      notes: 'RPG Prop: hangingLampPost',
+      scale: 1.0,
+      rotation: 0,
+    }),
+    place('prop', 'Village Hanging Lamp Post', 3.8, 10.5, {
+      notes: 'RPG Prop: hangingLampPost',
+      scale: 1.0,
+      rotation: 180,
+    }),
+    place('prop', 'Village Hanging Lamp Post', -3.8, -5.0, {
+      notes: 'RPG Prop: hangingLampPost',
+      scale: 1.0,
+      rotation: 0,
+    }),
+    place('prop', 'Village Hanging Lamp Post', 3.8, -5.0, {
+      notes: 'RPG Prop: hangingLampPost',
+      scale: 1.0,
+      rotation: 180,
+    }),
+
+    // Weathered Broken Organic Stone Path Slabs along the village road & bridge approaches
+    place('prop', 'Weathered Broken Stone Path', 0, 22, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.15,
+      rotation: 8,
+    }),
+    place('prop', 'Weathered Broken Stone Path', 0, 16, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.15,
+      rotation: -6,
+    }),
+    place('prop', 'Weathered Broken Stone Path', -6.5, 18.2, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.1,
+      rotation: 22,
+    }),
+    place('prop', 'Weathered Broken Stone Path', 6.5, 16.5, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.1,
+      rotation: -18,
+    }),
+    place('prop', 'Weathered Broken Stone Path', 0, 9.5, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.15,
       rotation: 14,
     }),
-    createEntity('prop', 'Distressed Split-Rail Fence', 0.62, 0.55, {
-      notes: 'RPG Prop: fence',
-      scale: 0.86,
-      rotation: -16,
+    place('prop', 'Weathered Broken Stone Path', 0, 3.0, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.15,
+      rotation: -10,
     }),
-    createEntity('prop', 'Wandering Chicken', 0.47, 0.48, {
+    place('prop', 'Weathered Broken Stone Path', 0, -4.5, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.15,
+      rotation: 6,
+    }),
+    place('prop', 'Weathered Broken Stone Path', 0, -23.0, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.15,
+      rotation: -12,
+    }),
+
+    // Enclosed Distressed Organic Split-Rail Wood Fence Chicken Yard around (12, 22)
+    place('prop', 'Distressed Split-Rail Fence', 10.8, 19.6, {
+      notes: 'RPG Prop: fence',
+      scale: 1.0,
+      rotation: 4,
+    }),
+    place('prop', 'Distressed Split-Rail Fence', 13.2, 19.6, {
+      notes: 'RPG Prop: fence',
+      scale: 1.0,
+      rotation: -5,
+    }),
+    place('prop', 'Distressed Split-Rail Fence', 10.8, 24.4, {
+      notes: 'RPG Prop: fence',
+      scale: 1.0,
+      rotation: -4,
+    }),
+    place('prop', 'Distressed Split-Rail Fence', 13.2, 24.4, {
+      notes: 'RPG Prop: fence',
+      scale: 1.0,
+      rotation: 5,
+    }),
+    place('prop', 'Distressed Split-Rail Fence', 9.5, 22.0, {
+      notes: 'RPG Prop: fence',
+      scale: 1.0,
+      rotation: 92,
+    }),
+    place('prop', 'Distressed Split-Rail Fence', 14.5, 22.0, {
+      notes: 'RPG Prop: fence',
+      scale: 1.0,
+      rotation: 88,
+    }),
+    place('prop', 'Wandering White Chicken', 11.4, 21.5, {
       notes: 'RPG Prop: chicken',
-      scale: 0.82,
+      scale: 0.9,
       styleTint: '#FFFBEB',
     }),
-    createEntity('prop', 'Wandering Speckled Hen', 0.53, 0.51, {
+    place('prop', 'Wandering Speckled Hen', 12.6, 22.4, {
       notes: 'RPG Prop: chicken',
-      scale: 0.78,
+      scale: 0.86,
       styleTint: '#FDE68A',
     }),
-    createEntity('prop', 'Wandering Brown Hen', 0.42, 0.54, {
+    place('prop', 'Wandering Brown Hen', 11.7, 23.1, {
       notes: 'RPG Prop: chicken',
-      scale: 0.8,
+      scale: 0.88,
       styleTint: '#D97706',
     }),
+    place('prop', 'Wandering Copper Rooster', 12.9, 21.2, {
+      notes: 'RPG Prop: chicken',
+      scale: 0.94,
+      styleTint: '#B45309',
+    }),
+
+    // Village Well & Hollow Magic Forest Tree
+    place('prop', 'Village Stone Well', -5.2, 8.2, {
+      notes: 'RPG Prop: well',
+      scale: 1.0,
+    }),
+    place('prop', 'Hollow Magic Forest Tree', 15.5, -3.5, {
+      notes: 'RPG Prop: hollowMagicTree',
+      scale: 1.08,
+    }),
+
     // Volumetric Lanterns
-    createEntity('light', 'Courtyard Volumetric Lantern', 0.47, 0.46, {
+    place('light', 'Courtyard Volumetric Lantern', -4.2, 16.5, {
       notes: 'RPG Volumetric Lantern',
       styleTint: '#FFAE34',
     }),
-    createEntity('light', 'Temple Volumetric Lantern', 0.53, 0.26, {
+    place('light', 'Temple Volumetric Lantern', 0, -25.5, {
       notes: 'RPG Volumetric Lantern',
       styleTint: '#FFAE34',
     }),
-    // Enemies & Ogre Brute Boss
-    createEntity('baddie', 'Bandit Raider', 0.45, 0.34, {
+
+    // Enemies & Ogre Brute Boss guarding the North Temple Highlands across the River Bridge
+    place('baddie', 'Bandit Raider', -5.5, -23.5, {
       brain: 'Chaser',
       health: 24,
       speed: 2.7,
       damage: 1,
       styleTint: '#EF4444',
     }),
-    createEntity('baddie', 'Dark Forest Cultist', 0.56, 0.33, {
+    place('baddie', 'Dark Forest Cultist', 5.8, -24.0, {
       brain: 'patrol',
       health: 22,
       speed: 2.5,
       damage: 1,
       styleTint: '#8B5CF6',
     }),
-    createEntity('baddie', 'Ogre Brute Warlord', 0.5, 0.24, {
+    place('baddie', 'Ogre Brute Warlord', 0, -25.8, {
       brain: 'Chaser',
       health: 48,
       speed: 2.2,
@@ -3022,15 +3164,16 @@ function buildRpgProject(name: string): GameProject {
       styleTint: '#991B1B',
       notes: 'RPG Boss: ogre',
     }),
+
     // Dual Treasure: Traditional Chest + Fanned-Out Colorful Reward Cards Shrine
-    createEntity('treasure', 'Adventurer Loot Chest', 0.44, 0.22, {
+    place('treasure', 'Adventurer Loot Chest', -4.5, -26.5, {
       loot: 'Health',
       pickupable: true,
       pickupItemId: 'health_potion',
       pickupQty: 2,
       notes: 'RPG Traditional Chest',
     }),
-    createEntity('treasure', 'Fanned Skill & Loot Cards Shrine', 0.56, 0.22, {
+    place('treasure', 'Fanned Skill & Loot Cards Shrine', 4.5, -26.5, {
       loot: 'Coins',
       notes: 'RPG Card Choice: Fanned-out colorful reward cards (Crimson Sunblade, Emerald Elixir & Herb Bundle, Arcane Storm Tome)',
       cards: [makeCard('playerTouches', ['giveTreasure', 'playSound', 'destroySelf'], 'Choose Skill Reward')],
@@ -3038,8 +3181,8 @@ function buildRpgProject(name: string): GameProject {
   ];
 
   rpgLevel.objectives = [
-    { id: uid(), text: 'Explore Oakhollow Village & recruit your companion party (Knight, Mage, Ranger)', isOptional: false },
-    { id: uid(), text: 'Cross the weathered stone path & rope bridge to battle the Bandits and Ogre Brute using Sword (1), Bow (2) & Magic (3)', isOptional: false },
+    { id: uid(), text: 'Walk to the Tavern or Blacksmith doors, press E to open them, and explore the full-sized interiors', isOptional: false },
+    { id: uid(), text: 'Cross the wooden slat rope bridge over the Emerald Gorge River to battle the Bandits and Ogre Brute', isOptional: false },
     { id: uid(), text: 'Loot the traditional chest OR pick from the 3 fanned-out colorful reward cards', isOptional: true },
   ];
 
