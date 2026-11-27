@@ -5339,7 +5339,15 @@ function createScatterBuildPlan(
   const activeOriginX = worldMapContext?.activeRegionOrigin?.[0] ?? 0;
   const activeOriginZ = worldMapContext?.activeRegionOrigin?.[1] ?? 0;
 
+  const isRpgJungle =
+    level.rpgConfig?.scenario === 'jungleRuins' ||
+    (level.gameplayMode === 'rpg' && level.biome === 'swamp');
+  const isRpgInterior = Boolean(level.rpgConfig?.isInterior);
+
   for (const item of scatter) {
+    if (isRpgInterior && Math.hypot(item.x, item.z) < 34) {
+      continue;
+    }
     if (filterOtherLand && worldMapContext?.worldMap) {
       const wmSample = sampleWorldMapAtWorld(
         worldMapContext.worldMap,
@@ -5356,6 +5364,15 @@ function createScatterBuildPlan(
         ? IslandTerrain.waterLevel - 0.85
         : IslandTerrain.waterLevel + 0.15;
     if (y < minY) continue;
+
+    if (isRpgJungle && (item.kind === 'pine' || item.kind === 'birch')) {
+      if (item.kind === 'pine') {
+        ferns.push({ ...item, kind: 'fern', size: Math.min(1.65, item.size * 1.25) });
+      } else {
+        broadleafs.push({ ...item, kind: 'broadleaf', size: Math.min(1.65, item.size * 1.25) });
+      }
+      continue;
+    }
 
     if (item.kind === 'pine' || item.kind === 'tree') {
       if (canopyActive && canopyCfg && (canopyCfg.targetTrees === 'all' || canopyCfg.targetTrees === 'matching')) {
@@ -6774,7 +6791,13 @@ function buildDistantVista(
           const rot = (i * 1.13) % (Math.PI * 2);
           const scale = 1.65 + (i % 5) * 0.35;
 
-          if (i % 3 === 0) {
+          const isVistaJungle =
+            level.rpgConfig?.scenario === 'jungleRuins' ||
+            (level.gameplayMode === 'rpg' && level.biome === 'swamp');
+
+          if (isVistaJungle) {
+            oakPts.push({ x: vx, y: baseY, z: vz, s: scale * 1.18, rot });
+          } else if (i % 3 === 0) {
             pinePts.push({ x: vx, y: baseY, z: vz, s: scale * 1.15, rot });
           } else if (i % 3 === 1) {
             oakPts.push({ x: vx, y: baseY, z: vz, s: scale * 1.1, rot });

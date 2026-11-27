@@ -10,6 +10,7 @@ import type {
   GameLevel,
   LevelEntity,
   RoguelikeConfig,
+  RoguelikeScenarioKind,
   RoguelikeTorchAnchor,
   WallColliderBox,
 } from '../types/maker';
@@ -85,6 +86,66 @@ export const DUNGEON_WALL_STYLE_META: Record<
     metalness: 0.1,
     textureKind: 'brick',
   },
+  cyberPanels: {
+    label: 'Cyber Panels',
+    primaryHex: '#0F172A',
+    trimHex: '#06B6D4',
+    mossHex: '#0891B2',
+    showMoss: false,
+    roughness: 0.32,
+    metalness: 0.65,
+    textureKind: 'castle',
+  },
+  overgrownStone: {
+    label: 'Overgrown Stone',
+    primaryHex: '#3F4F3D',
+    trimHex: '#273826',
+    mossHex: '#4ADE80',
+    showMoss: true,
+    roughness: 0.85,
+    metalness: 0.04,
+    textureKind: 'brick',
+  },
+  glacialIce: {
+    label: 'Glacial Ice',
+    primaryHex: '#93C5FD',
+    trimHex: '#38BDF8',
+    mossHex: '#67E8F9',
+    showMoss: false,
+    roughness: 0.22,
+    metalness: 0.42,
+    textureKind: 'cave',
+  },
+  sunkenCoral: {
+    label: 'Sunken Coral',
+    primaryHex: '#0E7490',
+    trimHex: '#0891B2',
+    mossHex: '#2DD4BF',
+    showMoss: true,
+    roughness: 0.62,
+    metalness: 0.12,
+    textureKind: 'cave',
+  },
+  sandstoneHieroglyphs: {
+    label: 'Sandstone Hieroglyphs',
+    primaryHex: '#D97706',
+    trimHex: '#92400E',
+    mossHex: '#B45309',
+    showMoss: false,
+    roughness: 0.74,
+    metalness: 0.08,
+    textureKind: 'castle',
+  },
+  astralVoid: {
+    label: 'Astral Void',
+    primaryHex: '#1E1B4B',
+    trimHex: '#818CF8',
+    mossHex: '#A855F7',
+    showMoss: false,
+    roughness: 0.28,
+    metalness: 0.55,
+    textureKind: 'castle',
+  },
 };
 
 export const DUNGEON_FLOOR_STYLE_META: Record<
@@ -142,6 +203,62 @@ export const DUNGEON_FLOOR_STYLE_META: Record<
     metalness: 0.04,
     textureKind: 'cobble',
   },
+  cyberGrid: {
+    label: 'Cyber Grid',
+    colorHex: '#0B0F19',
+    puddleHex: '#06B6D4',
+    roughness: 0.35,
+    metalness: 0.5,
+    emissiveHex: '#0284C7',
+    emissiveIntensity: 0.25,
+    textureKind: 'castleFloor',
+  },
+  jungleEarth: {
+    label: 'Jungle Earth',
+    colorHex: '#42281D',
+    puddleHex: '#166534',
+    roughness: 0.88,
+    metalness: 0.02,
+    textureKind: 'cobble',
+  },
+  frozenPermafrost: {
+    label: 'Frozen Permafrost',
+    colorHex: '#BAE6FD',
+    puddleHex: '#0284C7',
+    roughness: 0.18,
+    metalness: 0.28,
+    emissiveHex: '#38BDF8',
+    emissiveIntensity: 0.18,
+    textureKind: 'flagstone',
+  },
+  abyssalSand: {
+    label: 'Abyssal Sand',
+    colorHex: '#134E4A',
+    puddleHex: '#0F766E',
+    roughness: 0.7,
+    metalness: 0.1,
+    emissiveHex: '#06B6D4',
+    emissiveIntensity: 0.12,
+    textureKind: 'rock',
+  },
+  desertSandstone: {
+    label: 'Desert Sandstone',
+    colorHex: '#FDE68A',
+    puddleHex: '#B45309',
+    roughness: 0.8,
+    metalness: 0.05,
+    textureKind: 'flagstone',
+  },
+  cosmicTiles: {
+    label: 'Cosmic Tiles',
+    colorHex: '#18182E',
+    puddleHex: '#9333EA',
+    roughness: 0.24,
+    metalness: 0.6,
+    emissiveHex: '#A855F7',
+    emissiveIntensity: 0.28,
+    textureKind: 'castleFloor',
+  },
 };
 
 export const DUNGEON_PROP_STYLE_META: Record<
@@ -166,6 +283,30 @@ export const DUNGEON_PROP_STYLE_META: Record<
   gildedUrns: {
     label: 'Gilded Urns',
     names: ['Gilded Urn', 'Royal Pedestal'],
+  },
+  cyberTerminals: {
+    label: 'Cyber Terminals',
+    names: ['Server Rack', 'Holo Terminal'],
+  },
+  jungleMonoliths: {
+    label: 'Jungle Monoliths',
+    names: ['Mayan Stele', 'Idol Altar'],
+  },
+  glacialCrystals: {
+    label: 'Glacial Crystals',
+    names: ['Frost Spire', 'Ice Obelisk'],
+  },
+  coralRelics: {
+    label: 'Coral Relics',
+    names: ['Giant Clam', 'Sunken Trident'],
+  },
+  desertSarcophagi: {
+    label: 'Desert Sarcophagi',
+    names: ['Gold Sarcophagus', 'Canopic Urn'],
+  },
+  astralPylons: {
+    label: 'Astral Pylons',
+    names: ['Void Conduit', 'Cosmic Monolith'],
   },
 };
 
@@ -200,6 +341,42 @@ export const DUNGEON_TRAP_STYLE_META: Record<
     baseHex: '#52463A',
     hazardHex: '#CBD5E1',
   },
+  laserTripwires: {
+    label: 'Laser Tripwires',
+    baseHex: '#0F172A',
+    hazardHex: '#06B6D4',
+    emissiveHex: '#00F0FF',
+  },
+  poisonDartPillars: {
+    label: 'Poison Dart Pillars',
+    baseHex: '#273826',
+    hazardHex: '#22C55E',
+    emissiveHex: '#15803D',
+  },
+  fireGeysers: {
+    label: 'Fire Geysers',
+    baseHex: '#451A03',
+    hazardHex: '#EF4444',
+    emissiveHex: '#FF3B00',
+  },
+  frostSpikes: {
+    label: 'Frost Spikes',
+    baseHex: '#0C4A6E',
+    hazardHex: '#38BDF8',
+    emissiveHex: '#7DD3FC',
+  },
+  acidPuddles: {
+    label: 'Acid Puddles',
+    baseHex: '#14532D',
+    hazardHex: '#84CC16',
+    emissiveHex: '#A3E635',
+  },
+  whirlpoolVortex: {
+    label: 'Whirlpool Vortex',
+    baseHex: '#164E63',
+    hazardHex: '#06B6D4',
+    emissiveHex: '#0891B2',
+  },
 };
 
 export interface DungeonThemePreset {
@@ -215,6 +392,7 @@ export const DUNGEON_THEME_PRESETS: DungeonThemePreset[] = [
     name: 'Torchlit Crypt',
     accentHex: '#F97316',
     style: {
+      scenarioKind: 'ancientCrypt',
       wallStyle: 'dampMasonry',
       floorStyle: 'flagstone',
       propStyle: 'cryptBarrels',
@@ -222,10 +400,95 @@ export const DUNGEON_THEME_PRESETS: DungeonThemePreset[] = [
     },
   },
   {
+    id: 'cyberpunkLab',
+    name: 'Cyberpunk Lab',
+    accentHex: '#06B6D4',
+    style: {
+      scenarioKind: 'cyberpunkLab',
+      wallStyle: 'cyberPanels',
+      floorStyle: 'cyberGrid',
+      propStyle: 'cyberTerminals',
+      trapStyle: 'laserTripwires',
+    },
+  },
+  {
+    id: 'overgrownJungle',
+    name: 'Jungle Ruins',
+    accentHex: '#22C55E',
+    style: {
+      scenarioKind: 'overgrownJungle',
+      wallStyle: 'overgrownStone',
+      floorStyle: 'jungleEarth',
+      propStyle: 'jungleMonoliths',
+      trapStyle: 'poisonDartPillars',
+    },
+  },
+  {
+    id: 'volcanicAbyss',
+    name: 'Volcanic Abyss',
+    accentHex: '#EF4444',
+    style: {
+      scenarioKind: 'volcanicAbyss',
+      wallStyle: 'obsidianBasalt',
+      floorStyle: 'emberBasalt',
+      propStyle: 'arcaneBraziers',
+      trapStyle: 'fireGeysers',
+    },
+  },
+  {
+    id: 'frostCitadel',
+    name: 'Frost Citadel',
+    accentHex: '#38BDF8',
+    style: {
+      scenarioKind: 'frostCitadel',
+      wallStyle: 'glacialIce',
+      floorStyle: 'frozenPermafrost',
+      propStyle: 'glacialCrystals',
+      trapStyle: 'frostSpikes',
+    },
+  },
+  {
+    id: 'sunkenTemple',
+    name: 'Sunken Temple',
+    accentHex: '#14B8A6',
+    style: {
+      scenarioKind: 'sunkenTemple',
+      wallStyle: 'sunkenCoral',
+      floorStyle: 'abyssalSand',
+      propStyle: 'coralRelics',
+      trapStyle: 'whirlpoolVortex',
+    },
+  },
+  {
+    id: 'desertPyramid',
+    name: 'Desert Pyramid',
+    accentHex: '#EAB308',
+    style: {
+      scenarioKind: 'desertPyramid',
+      wallStyle: 'sandstoneHieroglyphs',
+      floorStyle: 'desertSandstone',
+      propStyle: 'desertSarcophagi',
+      trapStyle: 'poisonDartPillars',
+    },
+  },
+  {
+    id: 'astralVoid',
+    name: 'Astral Void',
+    accentHex: '#A855F7',
+    style: {
+      scenarioKind: 'astralVoid',
+      wallStyle: 'astralVoid',
+      floorStyle: 'cosmicTiles',
+      propStyle: 'astralPylons',
+      trapStyle: 'cursedRunes',
+    },
+  },
+  {
     id: 'obsidianForge',
     name: 'Obsidian Forge',
     accentHex: '#EA580C',
     style: {
+      scenarioKind: 'volcanicAbyss',
       wallStyle: 'obsidianBasalt',
       floorStyle: 'emberBasalt',
       propStyle: 'arcaneBraziers',
@@ -237,6 +500,7 @@ export const DUNGEON_THEME_PRESETS: DungeonThemePreset[] = [
     name: 'Mossy Ruins',
     accentHex: '#20B46A',
     style: {
+      scenarioKind: 'overgrownJungle',
       wallStyle: 'mossyRuins',
       floorStyle: 'mossyCobble',
       propStyle: 'boneRelics',
@@ -248,6 +512,7 @@ export const DUNGEON_THEME_PRESETS: DungeonThemePreset[] = [
     name: 'Gilded Vault',
     accentHex: '#EAB308',
     style: {
+      scenarioKind: 'ancientCrypt',
       wallStyle: 'gildedCrypt',
       floorStyle: 'checkerMarble',
       propStyle: 'gildedUrns',
@@ -264,6 +529,7 @@ export function resolveDungeonStyle(
     floorStyle: style?.floorStyle ?? DEFAULT_DUNGEON_STYLE.floorStyle,
     propStyle: style?.propStyle ?? DEFAULT_DUNGEON_STYLE.propStyle,
     trapStyle: style?.trapStyle ?? DEFAULT_DUNGEON_STYLE.trapStyle,
+    ...(style?.scenarioKind ? { scenarioKind: style.scenarioKind } : {}),
     ...(style?.wallTint ? { wallTint: style.wallTint } : {}),
     ...(style?.floorTint ? { floorTint: style.floorTint } : {}),
     ...(style?.propTint ? { propTint: style.propTint } : {}),
@@ -343,7 +609,7 @@ export interface GeneratedDungeonLayout {
   propZones: { x: number; z: number; yaw: number }[];
 }
 
-const BOSS_NAMES = [
+export const BOSS_NAMES = [
   'Crypt Warden',
   'Bone Sovereign',
   'Ashen Executioner',
@@ -351,7 +617,66 @@ const BOSS_NAMES = [
   'Vault Dreadlord',
 ];
 
-const ENEMY_ARCHETYPES: {
+export const SCENARIO_BOSS_NAMES: Record<RoguelikeScenarioKind, string[]> = {
+  ancientCrypt: [
+    'Crypt Warden',
+    'Bone Sovereign',
+    'Ashen Executioner',
+    'Abyssal Knight',
+    'Vault Dreadlord',
+  ],
+  cyberpunkLab: [
+    'Rogue Overseer AI',
+    'Apex Mech Prime',
+    'Nanotech Colossus',
+    'Core Mainframe Titan',
+    'Cybernetic Dreadnought',
+  ],
+  overgrownJungle: [
+    'Jungle Behemoth',
+    'Mayan Serpent God',
+    'Canopy Devourer',
+    'Ancient Titanus',
+    'Primeval Colossus',
+  ],
+  volcanicAbyss: [
+    'Infernal Dreadlord',
+    'Magma Leviathan',
+    'Molten Sovereign',
+    'Volcano Behemoth',
+    'Pyroclastic Tyrant',
+  ],
+  frostCitadel: [
+    'Glacial Sovereign',
+    'Frost Lich Lord',
+    'Boreal Behemoth',
+    'Frozen Archon',
+    'Winter Drake',
+  ],
+  sunkenTemple: [
+    'Leviathan Sovereign',
+    'Abyssal Kraken',
+    'Tidal Colossus',
+    'Deep Sea Archon',
+    'Oceanic Dreadlord',
+  ],
+  desertPyramid: [
+    'Pharaoh Guardian',
+    'Solar Sun God',
+    'Cursed Sphinx',
+    'Anubis Sovereign',
+    'Tomb Monarch',
+  ],
+  astralVoid: [
+    'Void Dreadlord',
+    'Cosmic Devourer',
+    'Singularity Archon',
+    'Astral Leviathan',
+    'Eclipse Primordial',
+  ],
+};
+
+export const ENEMY_ARCHETYPES: {
   name: string;
   brain: string;
   baseHp: number;
@@ -365,6 +690,68 @@ const ENEMY_ARCHETYPES: {
   { name: 'Vault Stalker', brain: 'Charger', baseHp: 4, baseSpeed: 3.4, damage: 1, scale: 1.05, minFloor: 2 },
   { name: 'Iron Sentinel', brain: 'Patroller', baseHp: 5, baseSpeed: 2.7, damage: 1, scale: 1.15, minFloor: 3 },
 ];
+
+export const SCENARIO_ENEMY_ARCHETYPES: Record<
+  RoguelikeScenarioKind,
+  {
+    name: string;
+    brain: string;
+    baseHp: number;
+    baseSpeed: number;
+    damage: number;
+    scale: number;
+    minFloor: number;
+  }[]
+> = {
+  ancientCrypt: [
+    { name: 'Crypt Skeleton', brain: 'Chaser', baseHp: 3, baseSpeed: 3.0, damage: 1, scale: 1.0, minFloor: 1 },
+    { name: 'Shadow Bat', brain: 'Flyer', baseHp: 2, baseSpeed: 3.8, damage: 1, scale: 0.95, minFloor: 1 },
+    { name: 'Vault Stalker', brain: 'Charger', baseHp: 4, baseSpeed: 3.4, damage: 1, scale: 1.05, minFloor: 2 },
+    { name: 'Iron Sentinel', brain: 'Patroller', baseHp: 5, baseSpeed: 2.7, damage: 1, scale: 1.15, minFloor: 3 },
+  ],
+  cyberpunkLab: [
+    { name: 'Laser Drone', brain: 'Flyer', baseHp: 2, baseSpeed: 4.2, damage: 1, scale: 0.9, minFloor: 1 },
+    { name: 'Cyber Hound', brain: 'Chaser', baseHp: 3, baseSpeed: 3.6, damage: 1, scale: 1.0, minFloor: 1 },
+    { name: 'Mech Enforcer', brain: 'Charger', baseHp: 5, baseSpeed: 3.1, damage: 1, scale: 1.2, minFloor: 2 },
+    { name: 'Shield Turret', brain: 'Patroller', baseHp: 6, baseSpeed: 2.4, damage: 1, scale: 1.1, minFloor: 3 },
+  ],
+  overgrownJungle: [
+    { name: 'Jungle Viper', brain: 'Chaser', baseHp: 2, baseSpeed: 3.8, damage: 1, scale: 0.9, minFloor: 1 },
+    { name: 'Spore Hornet', brain: 'Flyer', baseHp: 2, baseSpeed: 4.0, damage: 1, scale: 0.85, minFloor: 1 },
+    { name: 'Mayan Guardian', brain: 'Patroller', baseHp: 5, baseSpeed: 2.8, damage: 1, scale: 1.15, minFloor: 2 },
+    { name: 'Predator Stalker', brain: 'Charger', baseHp: 4, baseSpeed: 3.5, damage: 1, scale: 1.1, minFloor: 3 },
+  ],
+  volcanicAbyss: [
+    { name: 'Magma Imp', brain: 'Chaser', baseHp: 3, baseSpeed: 3.2, damage: 1, scale: 0.95, minFloor: 1 },
+    { name: 'Cinder Bat', brain: 'Flyer', baseHp: 2, baseSpeed: 3.9, damage: 1, scale: 0.9, minFloor: 1 },
+    { name: 'Obsidian Brute', brain: 'Charger', baseHp: 5, baseSpeed: 3.0, damage: 1, scale: 1.25, minFloor: 2 },
+    { name: 'Flame Golem', brain: 'Patroller', baseHp: 6, baseSpeed: 2.5, damage: 1, scale: 1.3, minFloor: 3 },
+  ],
+  frostCitadel: [
+    { name: 'Frost Wraith', brain: 'Flyer', baseHp: 2, baseSpeed: 3.7, damage: 1, scale: 0.95, minFloor: 1 },
+    { name: 'Ice Wight', brain: 'Chaser', baseHp: 3, baseSpeed: 3.1, damage: 1, scale: 1.0, minFloor: 1 },
+    { name: 'Glacial Sentry', brain: 'Patroller', baseHp: 5, baseSpeed: 2.6, damage: 1, scale: 1.2, minFloor: 2 },
+    { name: 'Blizzard Charger', brain: 'Charger', baseHp: 4, baseSpeed: 3.6, damage: 1, scale: 1.1, minFloor: 3 },
+  ],
+  sunkenTemple: [
+    { name: 'Abyssal Skimmer', brain: 'Flyer', baseHp: 2, baseSpeed: 3.9, damage: 1, scale: 0.9, minFloor: 1 },
+    { name: 'Coral Lurker', brain: 'Chaser', baseHp: 3, baseSpeed: 3.2, damage: 1, scale: 1.0, minFloor: 1 },
+    { name: 'Deepsea Crab', brain: 'Patroller', baseHp: 5, baseSpeed: 2.6, damage: 1, scale: 1.15, minFloor: 2 },
+    { name: 'Tide Strider', brain: 'Charger', baseHp: 4, baseSpeed: 3.5, damage: 1, scale: 1.1, minFloor: 3 },
+  ],
+  desertPyramid: [
+    { name: 'Scorpion Scout', brain: 'Chaser', baseHp: 2, baseSpeed: 3.7, damage: 1, scale: 0.9, minFloor: 1 },
+    { name: 'Tomb Scarab', brain: 'Flyer', baseHp: 2, baseSpeed: 4.1, damage: 1, scale: 0.85, minFloor: 1 },
+    { name: 'Mummy Guard', brain: 'Patroller', baseHp: 5, baseSpeed: 2.5, damage: 1, scale: 1.1, minFloor: 2 },
+    { name: 'Anubis Stalker', brain: 'Charger', baseHp: 4, baseSpeed: 3.6, damage: 1, scale: 1.15, minFloor: 3 },
+  ],
+  astralVoid: [
+    { name: 'Void Wisp', brain: 'Flyer', baseHp: 2, baseSpeed: 4.2, damage: 1, scale: 0.85, minFloor: 1 },
+    { name: 'Star Phantom', brain: 'Chaser', baseHp: 3, baseSpeed: 3.4, damage: 1, scale: 1.0, minFloor: 1 },
+    { name: 'Cosmic Horror', brain: 'Charger', baseHp: 5, baseSpeed: 3.2, damage: 1, scale: 1.2, minFloor: 2 },
+    { name: 'Nebula Sentinel', brain: 'Patroller', baseHp: 6, baseSpeed: 2.5, damage: 1, scale: 1.25, minFloor: 3 },
+  ],
+};
 
 export function worldToDungeonBoard(wx: number, wz: number): BoardPoint {
   return {
@@ -1323,10 +1710,15 @@ export class DungeonGeneratorService {
       ...opts,
     });
 
+    const scenarioKind: RoguelikeScenarioKind =
+      cfg.scenarioKind ?? style.scenarioKind ?? 'ancientCrypt';
+    const scenarioBossPool = SCENARIO_BOSS_NAMES[scenarioKind] ?? BOSS_NAMES;
+    const scenarioEnemyPool = SCENARIO_ENEMY_ARCHETYPES[scenarioKind] ?? ENEMY_ARCHETYPES;
+
     // 1. Floor Boss on boss floors
     if (isBossFloor) {
       const bossTier = Math.max(0, Math.floor(safeFloor / bossInterval) - 1);
-      const bossName = BOSS_NAMES[bossTier % BOSS_NAMES.length];
+      const bossName = scenarioBossPool[bossTier % scenarioBossPool.length];
       const bossHp = Math.round((10 + safeFloor * 2.5) * (0.85 + cfg.difficultyScale * 0.5));
       const [bx, bz] = layout.bossWorld;
       entities.push(
@@ -1340,7 +1732,7 @@ export class DungeonGeneratorService {
           dialogue: `None shall pass Floor ${safeFloor}!`,
           conversation: [
             { id: uid(), isHero: false, words: `None shall pass Floor ${safeFloor}!`, replies: [] },
-            { id: uid(), isHero: false, words: 'The crypt itself obeys my blade!', replies: [] },
+            { id: uid(), isHero: false, words: 'This sanctum belongs to me!', replies: [] },
           ],
         })
       );
@@ -1351,7 +1743,9 @@ export class DungeonGeneratorService {
       ? Math.min(4, 2 + Math.floor(safeFloor / 4))
       : Math.min(8, 3 + Math.floor((safeFloor + 1) * 0.7));
 
-    const availableArchetypes = ENEMY_ARCHETYPES.filter((a) => safeFloor >= a.minFloor);
+    const availableArchetypes = (scenarioEnemyPool.filter((a) => safeFloor >= a.minFloor).length > 0)
+      ? scenarioEnemyPool.filter((a) => safeFloor >= a.minFloor)
+      : scenarioEnemyPool;
     const shuffledEnemySpots = [...layout.enemyZones].sort(() => rng() - 0.5);
 
     let placedEnemies = 0;
@@ -1386,9 +1780,10 @@ export class DungeonGeneratorService {
     // Guarantee at least 1 enemy on regular floors if room spots were tight
     if (!isBossFloor && placedEnemies === 0) {
       const [fx, fz] = [layout.exitRoom.centerX, layout.exitRoom.centerZ];
+      const fallbackArch = scenarioEnemyPool[0];
       entities.push(
-        makeEntity('baddie', 'Crypt Skeleton', fx, fz, {
-          brain: 'Chaser',
+        makeEntity('baddie', fallbackArch?.name ?? 'Crypt Skeleton', fx, fz, {
+          brain: fallbackArch?.brain ?? 'Chaser',
           health: Math.max(3, Math.round(3 * scaleFactor)),
           speed: 3.1,
         })

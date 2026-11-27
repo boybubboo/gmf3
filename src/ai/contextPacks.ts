@@ -2,7 +2,15 @@ import type { SkeletonInspection } from '../three/proceduralRigAnimator';
 import type {
   AiStudioContextId,
   CharacterPromptGuide,
+  DrivingGuideMod,
+  DrivingGuideVehicleStyle,
+  DrivingPromptGuide,
   PlatformerPromptGuide,
+  RoguelikeGuideTrap,
+  RoguelikePromptGuide,
+  RoguelikeScenarioPreset,
+  RpgPromptGuide,
+  RpgScenarioPreset,
 } from './studioBridge';
 
 export const PLATFORMER_WORLD_STARTER_PROMPTS: string[] = [
@@ -10,6 +18,30 @@ export const PLATFORMER_WORLD_STARTER_PROMPTS: string[] = [
   'Donkey Kong Country layered jungle floor with elevated wooden canopy branches, climbable vines, baddies patrolling limbs and a secret bonus room',
   'Classic flat 2D sunny cliff run with moving platforms, spinning saw trap, giant bounce spring and hidden cavern treasure vault',
   'Deep coral underwater platformer with low-gravity swim feel, rising bubble streams, glowing kelp ledges, coral arches and sunken pearl vault',
+];
+
+export const DRIVING_WORLD_STARTER_PROMPTS: string[] = [
+  'Winding tropical island road across volcanic cliffs with giant chasm gaps, timber stunt ramps, Mario Kart-style flight bonus cubes and glowing boost pads',
+  'Flintstones prehistoric stone-age roller car with twin granite cylinder wheels, rustic log chassis, bone roll cage and dinosaur rib arches along a winding canyon dirt trail',
+  'Formula 1 red sleek missile racer with low ground effect aero wings, thick mag slicks, neon boost pads and high-speed banked apex turns across a coastline circuit',
+  'Porsche-style sport coupe with tinted sunroof, thick mag wheels, chasm glider wings and stunt jumps over island ocean inlets',
+];
+
+export const ROGUELIKE_WORLD_STARTER_PROMPTS: string[] = [
+  'High-tech Cyberpunk Lab with neon cyan panels, holographic grid floors, laser tripwires, acid puddles, patrolling mech enforcers and Rogue Overseer AI boss',
+  'Overgrown Mayan Jungle Ruins with ancient mossy stone walls, jungle earth, poison dart pillars, saw blades, jungle serpents and Jungle Behemoth boss',
+  'Glacial Frost Citadel with translucent crystalline ice walls, permafrost floors, frost spike traps, frost wraiths and Glacial Sovereign boss',
+  'Volcanic Abyss Caverns with obsidian basalt walls, ember basalt floors, fire geysers, lava plates, magma brutes and Infernal Dreadlord boss',
+  'Sunken Coral Temple with abyssal coral walls, sea sand floors, whirlpool vortex traps, coral relics, abyssal lurkers and Leviathan Sovereign boss',
+  'Desert Sandstone Pyramid with ancient hieroglyphs, desert sand, gold sarcophagi, poison dart pillars, mummy guards and Pharaoh Guardian boss',
+  'Astral Cosmic Void with starry nebula tiles, void conduits, gravity saw vortexes, astral phantoms and Void Dreadlord boss',
+];
+
+export const RPG_WORLD_STARTER_PROMPTS: string[] = [
+  'Detailed medieval village with rustic timber tavern, blacksmith forge, distressed organic wood fences, wandering chickens, stone village well, weathered broken stone paths, and recruited knight & mage companions',
+  'Overgrown jungle temple ruins with lush tropical banyan & palm trees with hanging liana vines, giant exotic monstera plants, humid mist, rope bridge with wooden slats & broken slat across a chasm, and fanned-out reward cards',
+  'Deep dark wooded forest so lush the sky is hidden, hidden magic glowing inside an ancient hollow tree and forest cottage, weathered stepping stones, and an ogre brute guarding a rune shrine',
+  'Isometric cutaway cottage & tavern interior with warm hearth fireplace, volumetric lantern light beams, alchemy shelves, wooden tables, secret cave cellar, and both traditional chest loot & fanned card choices',
 ];
 
 export interface AiContextMeta {
@@ -192,6 +224,108 @@ function formatPlatformerGuideSection(
   return `USER PLATFORMER PROMPT HELPER SELECTIONS (HIGHEST PRIORITY — MUST OBEY):\n${lines.join('\n')}`;
 }
 
+export function formatDrivingGuideSection(guide?: DrivingPromptGuide | null): string {
+  if (!guide) return '';
+  const lines: string[] = [];
+  if (guide.vehicleStyle && guide.vehicleStyle !== 'auto') {
+    const styleDescriptions: Record<Exclude<DrivingGuideVehicleStyle, 'auto'>, string> = {
+      flintstones: 'Flintstones stone-age vehicle: twin heavy granite log rollers, rustic lashed wood log chassis, bone roll cage, stone slab seating, prehistoric horn.',
+      f1Racer: 'Formula 1 high-speed racecar: low aerodynamic monocoque chassis, prominent front/rear aero wing downforce, slick low-profile tires, halo cockpit guard.',
+      sportCoupe: 'Sport Coupe / Porsche-style fastback: curved aerodynamic canopy, tinted sunroof, frog-eye headlamps, quad tail exhaust, thick alloy mag wheels.',
+      motorbike: 'Two-wheeled scrambler motorbike: front suspension fork, exposed engine block, dual spoke wheels, high rise handlebars, agile lean physics.',
+      trailBuggy: 'All-terrain tube chassis crawler buggy with long travel suspension and knobby off-road tires.',
+      rallyCoupe: 'Lightweight rally sprint coupe tuned for dirt slides and apex drifts.',
+      forestTruck: 'Heavy 4x4 pickup truck with high ground clearance, bullbar and roll bar lights.',
+      vintageRoadster: 'Open-top classic roadster with rounded sweeping fenders and chrome wire rims.',
+    };
+    lines.push(`- Requested Vehicle Archetype: ${guide.vehicleStyle} (${styleDescriptions[guide.vehicleStyle] ?? ''})`);
+  }
+  if (guide.trackStyle && guide.trackStyle !== 'auto') {
+    lines.push(`- Track Architecture Style: ${guide.trackStyle}`);
+  }
+  if (guide.mods && guide.mods.length > 0) {
+    const modMap: Record<DrivingGuideMod, string> = {
+      thickMagWheels: 'Equip "thickMag" wide alloy wheels with deep-dish rims.',
+      stoneRollerWheels: 'Equip "stoneRoller" heavy prehistoric cylindrical granite wheels.',
+      slickWheels: 'Equip "slick" smooth high-grip racing slicks.',
+      tintedSunroof: 'Equip "sunroof" dark tinted glass canopy on the vehicle roof.',
+      openRoadster: 'Equip "openTop" roadster canopy without roof pillars.',
+      chasmGliderWings: 'Equip "gliderWings" aerodynamic wings (glides through the air across deep island gorges when holding Space).',
+      turboJetWings: 'Equip "jetWing" turbo jet thrusters and aerodynamic wings.',
+      neonBoostPads: 'Place glowing "boostPad" entities along straights and leading into launch ramps.',
+      flightBonusCubes: 'Place floating Mario Kart-style "flightCube" bonus pickups granting 9.5s temporary flight over chasms.',
+      stuntRamps: 'Place angled "ramp" timber stunt ramps right before gorges and chasm gaps.',
+      carvedChasms: 'Carve deep chasm/canyon gaps in the terrain with steep cliffs down to the ocean.',
+    };
+    lines.push(`- Active Vehicle Mods & Course Mechanics (MUST INCLUDE):\n${guide.mods.map((m: DrivingGuideMod) => `  * ${modMap[m] ?? m}`).join('\n')}`);
+  }
+  if (lines.length === 0) return '';
+  return `USER DRIVING COURSE & VEHICLE HELPER SELECTIONS (HIGHEST PRIORITY — MUST OBEY):\n${lines.join('\n')}`;
+}
+
+export function formatRoguelikeGuideSection(guide?: RoguelikePromptGuide | null): string {
+  if (!guide) return '';
+  const lines: string[] = [];
+  if (guide.scenario && guide.scenario !== 'auto') {
+    const scenarioMap: Record<RoguelikeScenarioPreset, string> = {
+      auto: 'Adaptive roguelike scenario.',
+      ancientCrypt: 'Ancient Torchlit Crypt: dark damp stone masonry, flagstone/slate floors, bone plinths, torches, iron spikes, skeletons & Crypt Warden boss.',
+      cyberpunkLab: 'High-Tech Cyberpunk Lab: glowing neon cyber panels, holographic grid floors, server terminals, laser tripwires, acid puddles, cyber mechs & Rogue Overseer AI boss.',
+      overgrownJungle: 'Overgrown Jungle / Mayan Ruins: mossy ancient stone, jungle earth, monolith steles, poison dart pillars, saw blades, serpents & Jungle Behemoth boss.',
+      volcanicAbyss: 'Volcanic Abyss Caverns: obsidian basalt walls, ember basalt floors, arcane braziers, fire geysers, ember plates, magma brutes & Infernal Dreadlord boss.',
+      frostCitadel: 'Glacial Ice Citadel: crystalline ice walls, frozen permafrost floors, glacial spires, frost spikes, chilling wights & Glacial Sovereign boss.',
+      sunkenTemple: 'Sunken Coral Temple: abyssal coral walls, sea sand floors, coral relics, whirlpool vortex traps, deepsea lurkers & Leviathan Sovereign boss.',
+      desertPyramid: 'Desert Sandstone Pyramid: warm hieroglyphic sandstone, desert sand floors, gold sarcophagi, poison dart pillars, cursed runes, mummy guards & Pharaoh Guardian boss.',
+      astralVoid: 'Astral Cosmic Void: starry void walls, cosmic tiles, astral pylons, gravity saw vortexes, void phantoms & Void Dreadlord boss.',
+    };
+    lines.push(`- Scenario Theme: ${guide.scenario} (${scenarioMap[guide.scenario] ?? guide.scenario})`);
+  }
+  if (guide.traps && guide.traps.length > 0) {
+    lines.push(`- Traps & Hazards (MUST INCLUDE): ${guide.traps.join(', ')}`);
+  }
+  if (guide.enemyDensity) {
+    lines.push(`- Enemy Encounter Density: ${guide.enemyDensity}`);
+  }
+  if (guide.bossTheme && guide.bossTheme !== 'auto') {
+    lines.push(`- Boss Encounter Theme: ${guide.bossTheme}`);
+  }
+  if (lines.length === 0) return '';
+  return `USER ROGUELIKE SCENARIO & DUNGEON HELPER SELECTIONS (HIGHEST PRIORITY — MUST OBEY):\n${lines.join('\n')}`;
+}
+
+export function formatRpgGuideSection(guide?: RpgPromptGuide | null): string {
+  if (!guide) return '';
+  const lines: string[] = [];
+  if (guide.scenario && guide.scenario !== 'auto') {
+    const scenarioMap: Record<RpgScenarioPreset, string> = {
+      auto: 'Detailed isometric RPG scene.',
+      medievalVillage: 'Medieval Village: rustic timber taverns, blacksmith forge, distressed organic wood rail fences, wandering chickens, stone well, weathered broken organic stone paths.',
+      jungleRuins: 'Overgrown Jungle Ruins: lush tropical banyan & palm trees with hanging vines (NO pine or oak trees!), exotic giant monstera & fern plants, mossy stone temple ruins, humid mist & fog, rope bridge with wooden slats across chasm.',
+      deepWoodedForest: 'Deep Wooded Forest: dense towering canopy hiding the sky, hidden magic glowing inside hollow trees & forest cottages, weathered stone & rope bridge slats.',
+      stoneTemple: 'Ancient Stone Temple: vine-draped columns, volumetric lantern lighting, rune puzzles, detailed stone altar & guardians.',
+      coastalVillage: 'Coastal Fishing Village: wooden docks, stone sea walls, weathered slat walkways, tavern & seaside shrines.',
+      interiorCottage: 'Isometric Cutaway Forest Cottage Interior: L-shaped cutaway stone & timber walls, glowing hearth fireplace, volumetric lantern & window shafts, alchemy table, bookshelves & cozy rug.',
+      interiorTavern: 'Isometric Cutaway Medieval Tavern Interior: timber-framed great hall cutaway, hearth fire, oak ale barrels, long banquet tables, lanterns & upstairs balcony.',
+      interiorCave: 'Isometric Cutaway Deep Cavern Interior: jagged rock cavern walls, glowing crystals, volumetric lantern god-rays, underground rope slat bridge & ancient shrine.',
+    };
+    lines.push(`- RPG World Scenario: ${guide.scenario} (${scenarioMap[guide.scenario] ?? guide.scenario})`);
+  }
+  if (guide.pathStyle) {
+    lines.push(`- Terraformed Path & Bridge Style: ${guide.pathStyle} (weathered broken organic stones, wooden rope bridge slats with occasional broken slat, or mossy cobbles).`);
+  }
+  if (guide.lootStyle) {
+    lines.push(`- Loot & Treasure System: ${guide.lootStyle} (support traditional chests/ground items AND fanned-out colorful card choices upon defeating enemies, opening shrines, or solving puzzles).`);
+  }
+  if (guide.companionRecruits) {
+    lines.push(`- Recruited Companions: ${guide.companionRecruits} (player + recruited allies fighting alongside with sword, bow & magic).`);
+  }
+  if (guide.worldAtmosphere) {
+    lines.push(`- Atmosphere & Flora: ${guide.worldAtmosphere} (refined smaller-scale organic landscaping, atmospheric fog/mist, non-blocky shapes, volumetric lantern lighting).`);
+  }
+  if (lines.length === 0) return '';
+  return `USER ISOMETRIC RPG SCENARIO & DETAILS HELPER SELECTIONS (HIGHEST PRIORITY — MUST OBEY):\n${lines.join('\n')}`;
+}
+
 export function buildContextualAiPrompts(params: {
   context: AiStudioContextId;
   userRequest: string;
@@ -200,6 +334,9 @@ export function buildContextualAiPrompts(params: {
   modifyExisting?: boolean;
   characterGuide?: CharacterPromptGuide | null;
   platformerGuide?: PlatformerPromptGuide | null;
+  drivingGuide?: DrivingPromptGuide | null;
+  roguelikeGuide?: RoguelikePromptGuide | null;
+  rpgGuide?: RpgPromptGuide | null;
   hasReferenceImage?: boolean;
 }): { systemPrompt: string; userPrompt: string } {
   const {
@@ -210,6 +347,9 @@ export function buildContextualAiPrompts(params: {
     modifyExisting,
     characterGuide,
     platformerGuide,
+    drivingGuide,
+    roguelikeGuide,
+    rpgGuide,
     hasReferenceImage,
   } = params;
 
@@ -228,6 +368,12 @@ Use exact bone names from boneNames / autoBoneMap whenever targeting bones!\n`
       ? formatCharacterGuideSection(characterGuide)
       : context === 'world' && snapshot?.environmentType === 'sideScroller'
       ? formatPlatformerGuideSection(platformerGuide)
+      : context === 'world' && snapshot?.gameplayMode === 'driving'
+      ? formatDrivingGuideSection(drivingGuide)
+      : context === 'world' && snapshot?.gameplayMode === 'roguelike'
+      ? formatRoguelikeGuideSection(roguelikeGuide)
+      : context === 'world' && snapshot?.gameplayMode === 'rpg'
+      ? formatRpgGuideSection(rpgGuide)
       : '';
 
   const refImageSection = hasReferenceImage
@@ -743,6 +889,216 @@ COORDINATE SPACE:
   ],
   "startPoint": { "x": number (-44..44), "y": number (-2..24) },
   "portalPoint": { "x": number (-44..44), "y": number (-2..24) }
+}`;
+      }
+      if (snapshot?.gameplayMode === 'driving') {
+        return `TARGET SCHEMA (High-Speed Driving Course, Island Circuit & Custom Vehicle Director):
+Coordinate space: x and z range within [-120, 120] meters on the island (0,0 is island center).
+The AI can build custom vehicles, create winding roads across island cliffs with carved chasms/gorges, and place Mario Kart-style flight bonus cubes, neon boost pads, timber stunt ramps, road barriers, and rally arches!
+
+{
+  "summary": string,
+  "biome": "meadow" | "island" | "forest" | "snow" | "desert" | "cave" | "swamp" | "night",
+  "sky": "sunny" | "golden" | "night" | "mist" | "storm" | "cave",
+  "weather": "none" | "fireflies" | "leaves" | "rain" | "snow",
+  "vehicle": {
+    "carId": "flintstones" | "f1Racer" | "sportCoupe" | "motorbike" | "trailBuggy" | "rallyCoupe" | "forestTruck" | "vintageRoadster",
+    "physicsId": "arcadeDrift" | "grippyRally" | "offroadCrawler",
+    "driverId": "stunt" | "ranger" | "skunk" | "bot",
+    "cameraView": "closeChase" | "driverPov" | "farChase",
+    "custom": {
+      "bodyColor": "#RRGGBB",
+      "accentColor": "#RRGGBB",
+      "rimColor": "#RRGGBB",
+      "wheelStyle": "standard" | "thickMag" | "offroadKnobby" | "stoneRoller" | "slick",
+      "roofStyle": "standard" | "sunroof" | "openTop" | "rollCage",
+      "wingStyle": "none" | "gliderWings" | "aeroFins" | "jetWing",
+      "hasSpoiler": boolean,
+      "hasBullbar": boolean,
+      "hasTwinExhaust": boolean
+    }
+  },
+  "track": {
+    "waypoints": [ [x, z], ... (5 to 16 waypoints forming a continuous winding island road or circuit) ],
+    "trackHalfWidth": number (4.0..8.0, default 5.2),
+    "surfaceLayer": "sand" | "rock" | "cliff" | "snow",
+    "chasmGaps": [
+      {
+        "centerWaypointIndex": number (index along waypoints list where a deep gorge / chasm is carved into the terrain),
+        "gapRadius": number (12..28 meters wide chasm that vehicles leap over with ramps/boost/flight wings)
+      }
+    ]
+  },
+  "stuntRamps": [ (1 to 6 stunt launch ramps placed right before chasms or jumps)
+    { "x": number (-110..110), "z": number (-110..110), "yaw": number (radians) }
+  ],
+  "flightCubes": [ (1 to 6 glowing winged bonus cubes that grant Mario Kart-style temporary flight over chasms)
+    { "x": number (-110..110), "z": number (-110..110) }
+  ],
+  "boostPads": [ (2 to 8 neon chevron boost pads on straights and before ramps)
+    { "x": number (-110..110), "z": number (-110..110), "yaw": number (radians) }
+  ],
+  "roadBarriers": [ (0 to 8 hazard barriers creating slalom chicanes or marking cliff edges)
+    { "x": number (-110..110), "z": number (-110..110), "yaw": number (radians) }
+  ],
+  "checkpointArches": [ (2 to 8 rally checkpoint arches along the course)
+    { "x": number (-110..110), "z": number (-110..110), "yaw": number (radians) }
+  ],
+  "playerSpawn": [x (-110..110), z (-110..110)]
+}`;
+      }
+      if (snapshot?.gameplayMode === 'roguelike') {
+        return `TARGET SCHEMA (Multi-Scenario Roguelike Director — Any Theme, Traps, Themed Enemies & Bosses):
+The engine supports ANY roguelike scenario (not just classic stone crypts!):
+- "cyberpunkLab": High-tech lab, cyberPanels walls, cyberGrid floors, cyberTerminals, laserTripwires, acidPuddles, Laser Drones, Mech Enforcers, Rogue Overseer AI boss.
+- "overgrownJungle": Mayan ruins, overgrownStone walls, jungleEarth floors, jungleMonoliths, poisonDartPillars, sawBlades, Jungle Vipers, Mayan Guardians, Jungle Behemoth boss.
+- "volcanicAbyss": Magma cavern, obsidianBasalt walls, emberBasalt floors, arcaneBraziers, fireGeysers, emberPlates, Magma Imps, Flame Golems, Infernal Dreadlord boss.
+- "frostCitadel": Crystalline citadel, glacialIce walls, frozenPermafrost floors, glacialCrystals, frostSpikes, Frost Wraiths, Ice Wights, Glacial Sovereign boss.
+- "sunkenTemple": Coral ruins, sunkenCoral walls, abyssalSand floors, coralRelics, whirlpoolVortex, Abyssal Skimmers, Coral Lurkers, Leviathan Sovereign boss.
+- "desertPyramid": Sandstone pyramid, sandstoneHieroglyphs walls, desertSandstone floors, desertSarcophagi, poisonDartPillars, cursedRunes, Mummy Guards, Pharaoh Guardian boss.
+- "astralVoid": Cosmic void, astralVoid walls, cosmicTiles floors, astralPylons, cursedRunes, sawBlades, Star Phantoms, Cosmic Horrors, Void Dreadlord boss.
+- "ancientCrypt": Damp masonry, dampMasonry walls, flagstone floors, cryptBarrels, ironSpikes, cursedRunes, Skeletons, Bats, Crypt Warden boss.
+
+{
+  "summary": string,
+  "scenarioKind": "ancientCrypt" | "cyberpunkLab" | "overgrownJungle" | "volcanicAbyss" | "frostCitadel" | "sunkenTemple" | "desertPyramid" | "astralVoid",
+  "dungeonStyle": {
+    "wallStyle": "dampMasonry" | "obsidianBasalt" | "mossyRuins" | "gildedCrypt" | "crimsonCatacombs" | "cyberPanels" | "overgrownStone" | "glacialIce" | "sunkenCoral" | "sandstoneHieroglyphs" | "astralVoid",
+    "floorStyle": "flagstone" | "checkerMarble" | "crackedSlate" | "emberBasalt" | "mossyCobble" | "cyberGrid" | "jungleEarth" | "frozenPermafrost" | "abyssalSand" | "desertSandstone" | "cosmicTiles",
+    "propStyle": "cryptBarrels" | "arcaneBraziers" | "boneRelics" | "gildedUrns" | "cyberTerminals" | "jungleMonoliths" | "glacialCrystals" | "coralRelics" | "desertSarcophagi" | "astralPylons",
+    "trapStyle": "laserTripwires" | "poisonDartPillars" | "fireGeysers" | "frostSpikes" | "acidPuddles" | "whirlpoolVortex" | "ironSpikes" | "emberPlates" | "cursedRunes" | "sawBlades",
+    "wallTint": "#RRGGBB" (optional),
+    "floorTint": "#RRGGBB" (optional),
+    "propTint": "#RRGGBB" (optional),
+    "trapTint": "#RRGGBB" (optional)
+  },
+  "roguelikeConfig": {
+    "bossInterval": number (2..5, default 3),
+    "difficultyScale": number (0.15..0.6, default 0.28),
+    "trapDensity": number (0.5..2.5, default 1.2),
+    "startingMaxHealth": number (4..12, default 6)
+  },
+  "atmosphere": {
+    "sky": "night" | "cave" | "storm" | "mist" | "golden" | "sunny",
+    "weather": "none" | "fireflies" | "leaves" | "rain" | "snow"
+  },
+  "traps": [ (2 to 8 placed hazards across dungeon rooms)
+    {
+      "name": string,
+      "trapStyle": "laserTripwires" | "poisonDartPillars" | "fireGeysers" | "frostSpikes" | "acidPuddles" | "whirlpoolVortex" | "ironSpikes" | "emberPlates" | "cursedRunes" | "sawBlades",
+      "x": number (-34..34),
+      "z": number (-34..34),
+      "tint": "#RRGGBB"
+    }
+  ],
+  "enemies": [ (3 to 10 scenario-specific enemies)
+    {
+      "name": string,
+      "brain": "Chaser" | "Flyer" | "Charger" | "Patroller",
+      "health": number (2..12),
+      "speed": number (2.2..4.8),
+      "damage": number (1..2),
+      "scale": number (0.8..1.5),
+      "x": number (-34..34),
+      "z": number (-34..34),
+      "tint": "#RRGGBB"
+    }
+  ],
+  "boss": {
+    "name": string,
+    "health": number (12..45),
+    "speed": number (2.8..4.4),
+    "scale": number (1.4..2.2),
+    "x": number (-28..28),
+    "z": number (-28..28),
+    "dialogue": string,
+    "tint": "#RRGGBB"
+  },
+  "treasures": [ (2 to 5 chests / relic urns)
+    {
+      "name": string,
+      "x": number (-34..34),
+      "z": number (-34..34),
+      "loot": "Health" | "Coins"
+    }
+  ],
+  "regenerateRooms": boolean
+}`;
+      }
+      if (snapshot?.gameplayMode === 'rpg') {
+        return `TARGET SCHEMA (Detailed Isometric RPG Director — Medieval Village, Jungle Ruins, Deep Wooded Forest, Stone Temples, Cutaway Interiors, Recruited Companions, Sword/Arrow/Magic Combat, Fanned Loot Cards & Volumetric Lantern Lighting):
+CRITICAL RULES FOR ISOMETRIC RPG WORLDS:
+1. NO MINECRAFT BLOCKY SHAPES: Everything must feel organic, distressed, weathered, and refined to fit the smaller isometric scale of the hero and party.
+2. BIOME-ACCURATE FLORA & ATMOSPHERE:
+   - If the user asks for "jungleRuins" (or tropical/jungle): use "biome": "swamp", "sky": "mist" (or "golden"), "weather": "fireflies" (or "rain"), "fogDensity": 0.045, and populate ONLY "tropicalTree" (with hanging vines), "exoticPlant", "fern", "stonePillar", "ropeBridge", and "weatheredStonePath" — NEVER pine or oak trees on a sunny blue-sky island!
+   - If the user asks for "deepWoodedForest": use "biome": "forest", "sky": "mist" or "night", "fogDensity": 0.055, and include "hollowMagicTree" (hidden magic in trees), "cottage", "lantern", "fern", and "weatheredStonePath".
+   - If the user asks for "medievalVillage": include "tavern", "blacksmith", "cottage", "fence" (distressed organic wood rails), "well", "chicken" (wandering chickens), "weatheredStonePath", and "lantern".
+   - If the user asks for an interior ("interiorCottage", "interiorTavern", "interiorCave"): set "isInterior": true and include an interior diorama building + lanterns with "volumetricLanterns": true.
+
+{
+  "summary": string,
+  "scenarioKind": "medievalVillage" | "jungleRuins" | "deepWoodedForest" | "stoneTemple" | "coastalVillage" | "interiorCottage" | "interiorTavern" | "interiorCave",
+  "pathStyle": "weatheredStone" | "ropeBridgeSlats" | "mossyCobble" | "woodPlankWalkway",
+  "lootMode": "both" | "traditional" | "fannedCards",
+  "isInterior": boolean,
+  "atmosphere": {
+    "biome": "forest" | "island" | "meadow" | "cave" | "swamp" | "night",
+    "sky": "golden" | "sunny" | "night" | "mist" | "storm" | "cave",
+    "weather": "none" | "fireflies" | "leaves" | "rain" | "snow",
+    "fogDensity": number (0.015..0.08),
+    "volumetricLanterns": boolean
+  },
+  "party": {
+    "heroClass": "warrior" | "ranger" | "mage" | "paladin",
+    "companions": [ (1 to 3 recruited allies fighting alongside hero: knight, mage, ranger, cleric)
+      {
+        "name": string,
+        "class": "warrior" | "mage" | "ranger" | "cleric",
+        "health": number (18..45),
+        "weapon": "sword" | "staff" | "bow"
+      }
+    ]
+  },
+  "buildings": [ (1 to 8 refined organic buildings: timber tavern, blacksmith forge, forest cottage, vine-draped shrine, stone temple, or cutaway interior)
+    {
+      "name": string,
+      "kind": "tavern" | "blacksmith" | "cottage" | "shrine" | "temple" | "interiorCottage" | "interiorTavern" | "interiorCave",
+      "x": number (-55..55),
+      "z": number (-55..55),
+      "rotationDeg": number (-180..180),
+      "scale": number (0.75..1.35)
+    }
+  ],
+  "propsAndFlora": [ (6 to 24 detailed organic props: distressed wood rail fences, village stone well, wandering chickens, weathered stone paths, rope bridges with broken slats, tropical trees with vines, exotic plants, hollow magic trees, volumetric lanterns, rune puzzles)
+    {
+      "name": string,
+      "kind": "fence" | "well" | "chicken" | "tropicalTree" | "exoticPlant" | "fern" | "hollowMagicTree" | "lantern" | "stonePillar" | "weatheredStonePath" | "ropeBridge" | "runePuzzle",
+      "x": number (-65..65),
+      "z": number (-65..65),
+      "rotationDeg": number (-180..180),
+      "scale": number (0.75..1.5)
+    }
+  ],
+  "enemies": [ (2 to 10 RPG monsters or bandits with overhead evaporating health points & combat AI; include at least one "ogre" brute for brute-force throw attacks!)
+    {
+      "name": string,
+      "archetype": "bandit" | "ogre" | "skeleton" | "goblin" | "darkMage",
+      "health": number (14..55),
+      "attackPower": number (2..8),
+      "x": number (-55..55),
+      "z": number (-55..55)
+    }
+  ],
+  "lootsAndCards": [ (2 to 6 traditional treasure chests OR fanned-out reward card shrines for acquiring weapons, potions, herbs & skills)
+    {
+      "name": string,
+      "kind": "chest" | "cardChoice",
+      "rewardItem": "health_potion" | "healing_herb" | "mana_elixir" | "steel_sword" | "elven_bow" | "magic_scroll" | "gold_pouch",
+      "x": number (-48..48),
+      "z": number (-48..48)
+    }
+  ],
+  "playerSpawn": [x (-50..50), z (-50..50)]
 }`;
       }
       return `TARGET SCHEMA (World Maker Terraform, Caves, Spiral Paths & Landmarks):

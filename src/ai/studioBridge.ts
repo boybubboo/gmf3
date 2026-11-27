@@ -69,6 +69,85 @@ export interface PlatformerPromptGuide {
   mechanics: PlatformerGuideMechanic[];
 }
 
+export type DrivingGuideVehicleStyle =
+  | 'auto'
+  | 'flintstones'
+  | 'f1Racer'
+  | 'sportCoupe'
+  | 'motorbike'
+  | 'trailBuggy'
+  | 'rallyCoupe'
+  | 'forestTruck'
+  | 'vintageRoadster';
+
+export type DrivingGuideMod =
+  | 'thickMagWheels'
+  | 'stoneRollerWheels'
+  | 'slickWheels'
+  | 'tintedSunroof'
+  | 'openRoadster'
+  | 'chasmGliderWings'
+  | 'turboJetWings'
+  | 'neonBoostPads'
+  | 'flightBonusCubes'
+  | 'stuntRamps'
+  | 'carvedChasms';
+
+export interface DrivingPromptGuide {
+  vehicleStyle: DrivingGuideVehicleStyle;
+  trackStyle: 'auto' | 'windingIsland' | 'stuntChasm' | 'rallyCircuit' | 'coastalSprint';
+  mods: DrivingGuideMod[];
+}
+
+export type RoguelikeScenarioPreset =
+  | 'auto'
+  | 'ancientCrypt'
+  | 'cyberpunkLab'
+  | 'overgrownJungle'
+  | 'volcanicAbyss'
+  | 'frostCitadel'
+  | 'sunkenTemple'
+  | 'desertPyramid'
+  | 'astralVoid';
+
+export type RoguelikeGuideTrap =
+  | 'laserTripwires'
+  | 'poisonDartPillars'
+  | 'fireGeysers'
+  | 'frostSpikes'
+  | 'acidPuddles'
+  | 'whirlpoolVortex'
+  | 'ironSpikes'
+  | 'emberPlates'
+  | 'cursedRunes'
+  | 'sawBlades';
+
+export interface RoguelikePromptGuide {
+  scenario: RoguelikeScenarioPreset;
+  traps: RoguelikeGuideTrap[];
+  enemyDensity: 'light' | 'balanced' | 'intense' | 'nightmare';
+  bossTheme: 'auto' | 'cyberMecha' | 'jungleTitan' | 'magmaLord' | 'frostLich' | 'abyssalGod' | 'pharaoh' | 'voidHorror';
+}
+
+export type RpgScenarioPreset =
+  | 'auto'
+  | 'medievalVillage'
+  | 'jungleRuins'
+  | 'deepWoodedForest'
+  | 'stoneTemple'
+  | 'coastalVillage'
+  | 'interiorCottage'
+  | 'interiorTavern'
+  | 'interiorCave';
+
+export interface RpgPromptGuide {
+  scenario: RpgScenarioPreset;
+  lootStyle: 'traditionalChests' | 'cardChoice' | 'mixed';
+  companionRecruits: 'knightAndMage' | 'rangerAndThief' | 'clericAndWarrior' | 'soloHero';
+  worldAtmosphere: 'lushFoggy' | 'sunnyMeadow' | 'deepCanopyDark' | 'mysticVolcanic';
+  pathStyle?: 'weatheredStone' | 'ropeBridgeSlats' | 'mossyCobble' | 'woodPlankWalkway';
+}
+
 export interface CharacterPromptGuide {
   archetype: CharacterGuideArchetype;
   extremities: CharacterGuideExtremity;
@@ -80,6 +159,9 @@ export interface AiApplyOptions {
   modifyExisting?: boolean;
   characterGuide?: CharacterPromptGuide;
   platformerGuide?: PlatformerPromptGuide;
+  drivingGuide?: DrivingPromptGuide;
+  roguelikeGuide?: RoguelikePromptGuide;
+  rpgGuide?: RpgPromptGuide;
 }
 
 export interface StudioAiBridge {

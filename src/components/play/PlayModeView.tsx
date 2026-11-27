@@ -278,12 +278,27 @@ import {
 } from './StorybookFrameOverlay';
 import {
   EnemyHealthBar,
+  EvaporatingDamageNumber,
+  RpgVisualFxItem,
   hexLuminance,
   resolveBaddieHealthBarColors,
   drawRoundedRectPath,
   redrawEnemyHealthBar,
   createEnemyHealthBar,
+  spawnEvaporatingDamageNumber,
+  updateEvaporatingDamageNumbers,
+  spawnRpgSwordSlashArc,
+  spawnRpgMagicZapBeam,
+  spawnRpgOgreThrowWave,
+  buildRpgArrowProjectileMesh,
+  updateRpgVisualFx,
 } from '../../features/play/systems/enemyHealthBar';
+import {
+  RpgRewardCardsModal,
+  RPG_REWARD_CARD_POOL,
+  type RpgRewardCardOption,
+} from '../../features/play/components/RpgRewardCardsModal';
+import { RpgGameHudOverlay } from '../../features/play/components/RpgGameHudOverlay';
 import { buildChestLootEntriesForEntity } from '../../features/play/systems/chestLootGenerator';
 import { PlayPauseModal } from '../../features/play/components/PlayPauseModal';
 import { RoguelikeRelicDraftModal } from '../../features/play/components/RoguelikeRelicDraftModal';
@@ -622,6 +637,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     physicsId: currentLevel?.drivingConfig?.physicsId ?? 'arcadeDrift',
     driverId: currentLevel?.drivingConfig?.driverId ?? 'stunt',
     cameraView: currentLevel?.drivingConfig?.cameraView ?? 'closeChase',
+    customVehicle: currentLevel?.drivingConfig?.customVehicle,
   }));
   const drivingCfgRef = useRef(drivingCfg);
   drivingCfgRef.current = drivingCfg;
@@ -633,6 +649,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     airborne: false,
     checkpointsHit: 0,
     checkpointsTotal: 0,
+    flightSeconds: 0,
+    hasWings: false,
   });
 
   const [buddyHud, setBuddyHud] = useState({
@@ -679,6 +697,39 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
   const openChestModalFnRef = useRef<(entityId: string, chestName: string) => void>(() => {});
   const liveGrantCurrencyRef = useRef<(coinDelta: number, keyDelta: number) => void>(() => {});
   const chestOpeningLockRef = useRef(false);
+
+  const isRpgMode = currentLevel?.gameplayMode === 'rpg';
+  const [rpgStats, setRpgStats] = useState({
+    atkBonus: 4,
+    defBonus: 3,
+    magicBonus: 5,
+    potions: 2,
+    herbs: 2,
+    weaponName: 'Steel Broadsword',
+    activeCombatStyle: 'sword' as 'sword' | 'arrow' | 'magic',
+  });
+  const rpgStatsRef = useRef(rpgStats);
+  rpgStatsRef.current = rpgStats;
+
+  const [rpgCardModal, setRpgCardModal] = useState<{
+    sourceTitle: string;
+    cards: RpgRewardCardOption[];
+  } | null>(null);
+  const rpgCardModalRef = useRef(rpgCardModal);
+  rpgCardModalRef.current = rpgCardModal;
+  const openRpgCardModalRef = useRef<(sourceTitle: string) => void>(() => {});
+  const liveRpgApplyRewardRef = useRef<((card: RpgRewardCardOption) => void) | null>(null);
+
+  openRpgCardModalRef.current = (sourceTitle: string) => {
+    inputRef.current.keys.clear();
+    inputRef.current.interactQueued = false;
+    inputRef.current.interactPointerDown = false;
+    const shuffled = [...RPG_REWARD_CARD_POOL].sort(() => Math.random() - 0.5).slice(0, 3);
+    setRpgCardModal({
+      sourceTitle,
+      cards: shuffled,
+    });
+  };
 
   openFastTravelRef.current = (plinthEntityId: string, plinthName: string) => {
     if (!currentProject) return;
@@ -1093,6 +1144,13 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
   );
 
   openChestModalFnRef.current = (entityId: string, chestName: string) => {
+    const isCardShrine =
+      chestName.toLowerCase().includes('card') ||
+      (currentLevel?.gameplayMode === 'rpg' && currentLevel.rpgConfig?.lootMode === 'fannedCards');
+    if (isCardShrine) {
+      openRpgCardModalRef.current(chestName);
+      return;
+    }
     const entries = chestEntriesByEntityRef.current.get(entityId) ?? [];
     if (entries.length === 0) {
       showToastGlobal(`${chestName} is empty.`);
@@ -1499,6 +1557,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       physicsId: currentLevel?.drivingConfig?.physicsId ?? 'arcadeDrift',
       driverId: currentLevel?.drivingConfig?.driverId ?? 'stunt',
       cameraView: currentLevel?.drivingConfig?.cameraView ?? 'closeChase',
+      customVehicle: currentLevel?.drivingConfig?.customVehicle,
     });
     introSpokenRef.current = false;
   }, [
@@ -1507,6 +1566,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     currentLevel?.drivingConfig?.physicsId,
     currentLevel?.drivingConfig?.driverId,
     currentLevel?.drivingConfig?.cameraView,
+    JSON.stringify(currentLevel?.drivingConfig?.customVehicle ?? null),
   ]);
 
   const [hudState, setHudState] = useState<HUDState>({
@@ -1535,6 +1595,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     jumpPointerDown: false,
     jumpPressQueuedCount: 0,
     attackQueued: false,
+    arrowQueued: false,
     interactQueued: false,
     interactPointerDown: false,
     magicQueued: false,
@@ -1547,12 +1608,18 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     cameraYaw:
       resolvedCamMode === 'front' || resolvedCamMode === 'heroFront' || resolvedCamMode === 'sideScroll'
         ? 0
+        : isRpgMode
+        ? Math.PI * 0.25
         : 0.4,
     lookYawOffset: 0,
     lookPitchOffset: 0,
     cameraDistance:
       isDrivingMode
         ? 11.2
+        : isRpgMode
+        ? currentLevel?.rpgConfig?.isInterior
+          ? 18.5
+          : currentLevel?.rpgConfig?.cameraZoom ?? 23.5
         : resolvedCamMode === 'cozy'
         ? 6.6
         : resolvedCamMode === 'isometric'
@@ -1601,12 +1668,18 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     inputRef.current.cameraYaw =
       baseCamMode === 'front' || baseCamMode === 'heroFront' || baseCamMode === 'sideScroll'
         ? 0
+        : isRpgMode
+        ? Math.PI * 0.25
         : 0.4;
     inputRef.current.lookYawOffset = 0;
     inputRef.current.lookPitchOffset = 0;
     inputRef.current.cameraDistance =
       isDrivingMode
         ? 11.2
+        : isRpgMode
+        ? currentLevel?.rpgConfig?.isInterior
+          ? 18.5
+          : currentLevel?.rpgConfig?.cameraZoom ?? 23.5
         : baseCamMode === 'cozy'
         ? 6.6
         : baseCamMode === 'isometric'
@@ -1616,7 +1689,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         : baseCamMode === 'heroFront'
         ? 9.2
         : 8.8;
-  }, [currentLevel?.id, baseCamMode, isDrivingMode]);
+  }, [currentLevel?.id, baseCamMode, isDrivingMode, isRpgMode, currentLevel?.rpgConfig?.isInterior, currentLevel?.rpgConfig?.cameraZoom]);
 
   useEffect(() => {
     const hasIntroText = Boolean(currentLevel?.heroIntroSpeech?.trim());
@@ -1830,7 +1903,15 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
           e.preventDefault();
         }
-        inputRef.current.attackQueued = true;
+        if (e.code === 'KeyF' && currentLevel?.gameplayMode === 'rpg') {
+          setRpgStats((prev) => ({ ...prev, activeCombatStyle: 'magic' }));
+          inputRef.current.magicQueued = true;
+        } else {
+          if (currentLevel?.gameplayMode === 'rpg') {
+            setRpgStats((prev) => ({ ...prev, activeCombatStyle: 'sword' }));
+          }
+          inputRef.current.attackQueued = true;
+        }
       } else if (
         e.code === 'KeyE' ||
         ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat)
@@ -1861,6 +1942,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       } else if (e.code === 'KeyR') {
         if (currentLevel?.gameplayMode === 'driving') {
           inputRef.current.carResetQueued = true;
+        } else if (currentLevel?.gameplayMode === 'rpg') {
+          setRpgStats((prev) => ({ ...prev, activeCombatStyle: 'arrow' }));
+          inputRef.current.arrowQueued = true;
         } else {
           inputRef.current.magicQueued = true;
         }
@@ -1875,13 +1959,28 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       } else if (e.code === 'KeyT' && !e.repeat) {
         triggerHeroSpeech("Onward to adventure!", 2600);
       } else if (e.code === 'Digit1') {
-        inputRef.current.emoteType = 'wave';
-        inputRef.current.emoteTimer = 1.4;
-        if (!e.repeat) triggerHeroSpeech('Hey there!', 2200);
+        if (currentLevel?.gameplayMode === 'rpg') {
+          setRpgStats((prev) => ({ ...prev, activeCombatStyle: 'sword' }));
+          inputRef.current.attackQueued = true;
+        } else {
+          inputRef.current.emoteType = 'wave';
+          inputRef.current.emoteTimer = 1.4;
+          if (!e.repeat) triggerHeroSpeech('Hey there!', 2200);
+        }
       } else if (e.code === 'Digit2') {
-        inputRef.current.emoteType = 'dance';
-        inputRef.current.emoteTimer = 2.0;
-        if (!e.repeat) triggerHeroSpeech('Time to celebrate!', 2400);
+        if (currentLevel?.gameplayMode === 'rpg') {
+          setRpgStats((prev) => ({ ...prev, activeCombatStyle: 'arrow' }));
+          inputRef.current.arrowQueued = true;
+        } else {
+          inputRef.current.emoteType = 'dance';
+          inputRef.current.emoteTimer = 2.0;
+          if (!e.repeat) triggerHeroSpeech('Time to celebrate!', 2400);
+        }
+      } else if (e.code === 'Digit3' && currentLevel?.gameplayMode === 'rpg' && !e.repeat) {
+        setRpgStats((prev) => ({ ...prev, activeCombatStyle: 'magic' }));
+        inputRef.current.magicQueued = true;
+      } else if (e.code === 'Digit4' && currentLevel?.gameplayMode === 'rpg' && !e.repeat) {
+        inputRef.current.healQueued = true;
       } else if (
         (e.code === 'Digit3' || e.code === 'Digit4' || e.code === 'Digit5' || e.code === 'Digit6') &&
         !e.repeat
@@ -1896,7 +1995,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           handleHoldItem(picked.id);
         }
       } else if (e.code === 'Escape') {
-        if (activeChestLootRef.current) {
+        if (rpgCardModalRef.current) {
+          setRpgCardModal(null);
+        } else if (activeChestLootRef.current) {
           setActiveChestLoot(null);
         } else if (fastTravelStateRef.current) {
           setFastTravelState(null);
@@ -2130,7 +2231,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       inputRef.current.cameraDistance = THREE.MathUtils.clamp(
         inputRef.current.cameraDistance + e.deltaY * 0.008,
         5.0,
-        24
+        activeLevel.gameplayMode === 'rpg' ? 36 : 24
       );
     };
 
@@ -2525,10 +2626,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       // Driving vehicle rig (active in Driving mode; swaps live on car/driver change)
       let activeCarId: CarPresetId = drivingCfgRef.current.carId;
       let activeDriverId: DriverTypeId = drivingCfgRef.current.driverId;
+      let activeCustomKey: string = JSON.stringify(drivingCfgRef.current.customVehicle ?? null);
+      let carFlightTimer = 0;
       let carRig: CarRig | null = null;
       if (isDriving) {
         heroRoot.visible = false;
-        carRig = buildCarModel(activeCarId, activeDriverId);
+        carRig = buildCarModel(activeCarId, activeDriverId, drivingCfgRef.current.customVehicle);
         applyVisualStyleToObject(carRig.group, style);
         carRig.group.position.set(heroX, heroY, heroZ);
         carRig.group.rotation.y = heroYaw;
@@ -2657,9 +2760,14 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           heroZ + Math.cos(heroYaw) * lookAhead
         );
       } else {
+        const isRpgIso = activeLevel.gameplayMode === 'rpg' && camMode === 'isometric';
+        if (isRpgIso) {
+          camera.fov = 35;
+          camera.updateProjectionMatrix();
+        }
         camera.position.set(
           heroX + Math.sin(inputRef.current.cameraYaw) * inputRef.current.cameraDistance,
-          heroY + (camMode === 'isometric' ? 11.5 : 4.2),
+          heroY + (isRpgIso ? 18.0 : camMode === 'isometric' ? 11.5 : 4.2),
           heroZ + Math.cos(inputRef.current.cameraYaw) * inputRef.current.cameraDistance
         );
         camera.lookAt(heroX, heroY + 1.15, heroZ);
@@ -3368,6 +3476,48 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             scale: Math.max(0.45, Math.min(2.6, e.scale || 1)),
           };
         });
+      const flightCubeEntities = activeLevel.entities
+        .filter(
+          (e) =>
+            e.propPreset === 'flightCube' ||
+            e.name.toLowerCase().includes('flight') ||
+            e.name.toLowerCase().includes('fly cube') ||
+            e.name.toLowerCase().includes('wing cube')
+        )
+        .map((e) => {
+          const [rx, rz] = levelBoardToWorld(activeLevel, e.position);
+          const rt = runtimeEntities.find((r) => r.id === e.id);
+          return {
+            id: e.id,
+            mesh: rt?.mesh,
+            x: rx,
+            z: rz,
+            baseY: sampleLevelHeight(activeLevel, rx, rz) + 1.25,
+            respawnAt: 0,
+          };
+        });
+      const boostPadEntities = activeLevel.entities
+        .filter((e) => e.propPreset === 'boostPad' || e.name.toLowerCase().includes('boost pad'))
+        .map((e) => {
+          const [rx, rz] = levelBoardToWorld(activeLevel, e.position);
+          return {
+            id: e.id,
+            x: rx,
+            z: rz,
+            cooldownUntil: 0,
+          };
+        });
+      const roadBarrierEntities = activeLevel.entities
+        .filter((e) => e.propPreset === 'roadBarrier' || e.name.toLowerCase().includes('barrier'))
+        .map((e) => {
+          const [rx, rz] = levelBoardToWorld(activeLevel, e.position);
+          return {
+            id: e.id,
+            x: rx,
+            z: rz,
+            cooldownUntil: 0,
+          };
+        });
       const tavernRt = runtimeEntities.find(
         (r) => r.propPreset === 'tavern' || r.name.toLowerCase().includes('tavern')
       );
@@ -3392,6 +3542,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         airborne: false,
         checkpointsHit: 0,
         checkpointsTotal: drivingCheckpointsTotal,
+        flightSeconds: 0,
+        hasWings: Boolean(carRig?.hasPermanentWings),
       });
 
       // Dynamic world drops spawned during play (e.g. Wood Logs from chopped trees!)
@@ -3593,7 +3745,10 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         return out;
       };
 
-      const bolts: { mesh: THREE.Mesh; vx: number; vz: number; life: number }[] = [];
+      const bolts: { mesh: THREE.Mesh; vx: number; vz: number; life: number; isArrow?: boolean }[] = [];
+      const evaporatingDamages: EvaporatingDamageNumber[] = [];
+      const rpgVisualFx: RpgVisualFxItem[] = [];
+      const companionAttackCooldowns = new Map<string, number>();
       const sparkGeo = new THREE.OctahedronGeometry(0.11, 0);
       const combatSparks: {
         mesh: THREE.Mesh;
@@ -3714,6 +3869,51 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       liveGrantCurrencyRef.current = (coinDelta: number, keyDelta: number) => {
         if (coinDelta) coins += coinDelta;
         if (keyDelta) keys += keyDelta;
+      };
+      liveRpgApplyRewardRef.current = (card: RpgRewardCardOption) => {
+        const eff = card.effect;
+        if (eff.maxHeartsBonus) {
+          maxHealth += eff.maxHeartsBonus;
+        }
+        if (eff.healHearts) {
+          health = Math.min(maxHealth, health + eff.healHearts);
+        }
+        if (eff.manaRestore) {
+          magic = Math.min(100, magic + eff.manaRestore);
+        }
+        if (eff.coinsBonus) {
+          coins += eff.coinsBonus;
+        }
+        setRpgStats((prev) => ({
+          ...prev,
+          atkBonus: prev.atkBonus + (eff.atkBonus ?? 0),
+          defBonus: prev.defBonus + (eff.defBonus ?? 0),
+          magicBonus: prev.magicBonus + (eff.magicBonus ?? 0),
+          potions: prev.potions + (eff.givePotionQty ?? 0),
+          herbs: prev.herbs + (eff.giveHerbQty ?? 0),
+          weaponName: eff.grantWeaponName ?? prev.weaponName,
+        }));
+        setHudState((prev) => ({
+          ...prev,
+          health,
+          maxHealth,
+          magic,
+          coins,
+        }));
+        AudioEngine.playSound('chime');
+        AudioEngine.playSound('sparkle');
+        spawnCombatSparks(heroX, heroY + 1.3, heroZ, card.borderColor, 18, 7.5);
+        spawnEvaporatingDamageNumber(
+          scene,
+          evaporatingDamages,
+          heroX,
+          heroY + 2.1,
+          heroZ,
+          card.statLabel.split('·')[0].trim(),
+          card.borderColor,
+          card.title.toUpperCase()
+        );
+        showToast(`Acquired Card: ${card.title} (${card.statLabel})!`);
       };
       sameLevelTravelFnRef.current = (target: SavePlinthTarget) => {
         const [destX, destZ] = resolveHorizontalCollision(
@@ -4662,18 +4862,66 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 knockZ * 2.5
               );
             }
+            if (activeLevel.gameplayMode === 'rpg') {
+              const dropRoll = Math.random();
+              if (dropRoll < 0.5) {
+                setRpgStats((prev) => ({ ...prev, herbs: prev.herbs + 1 }));
+                spawnEvaporatingDamageNumber(
+                  scene,
+                  evaporatingDamages,
+                  rt.x,
+                  deathY + 1.85,
+                  rt.z,
+                  '+1 HERB',
+                  '#34D399',
+                  'LOOT DROP'
+                );
+              } else {
+                setRpgStats((prev) => ({ ...prev, potions: prev.potions + 1 }));
+                spawnEvaporatingDamageNumber(
+                  scene,
+                  evaporatingDamages,
+                  rt.x,
+                  deathY + 1.85,
+                  rt.z,
+                  '+1 POTION',
+                  '#10B981',
+                  'LOOT DROP'
+                );
+              }
+            }
             if (rt.isBoss) {
               heroVictoryTimer = 2.8;
               bossVictoryBannerTimer = 4.2;
               AudioEngine.playSound('chime');
               AudioEngine.playSound('sparkle');
-              spawnBossRewardChest(rt);
+              if (
+                activeLevel.gameplayMode === 'rpg' &&
+                activeLevel.rpgConfig?.lootMode !== 'traditional'
+              ) {
+                if (activeLevel.rpgConfig?.lootMode === 'both') {
+                  spawnBossRewardChest(rt);
+                }
+                window.setTimeout(() => {
+                  openRpgCardModalRef.current(`Victory Tribute: ${rt.name}`);
+                }, 650);
+              } else {
+                spawnBossRewardChest(rt);
+              }
               setBossVictoryBanner({
                 bossName: rt.name,
                 coins: rt.baddieAI?.bossRewardCoins ?? 30,
               });
-              showToast(`Victory! ${rt.name} defeated — open the Great Treasure Chest!`);
+              showToast(`Victory! ${rt.name} defeated!`);
             } else {
+              if (
+                activeLevel.gameplayMode === 'rpg' &&
+                activeLevel.rpgConfig?.lootMode === 'fannedCards'
+              ) {
+                window.setTimeout(() => {
+                  openRpgCardModalRef.current(`Fallen Foe Spoils: ${rt.name}`);
+                }, 450);
+              }
               showToast(`Defeated ${rt.name}!`);
             }
           };
@@ -4779,17 +5027,25 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
           if (isDriving && carRig) {
             const cfgNow = drivingCfgRef.current;
-            if (cfgNow.carId !== activeCarId || cfgNow.driverId !== activeDriverId) {
+            const currentCustomKey = JSON.stringify(cfgNow.customVehicle ?? null);
+            if (
+              cfgNow.carId !== activeCarId ||
+              cfgNow.driverId !== activeDriverId ||
+              currentCustomKey !== activeCustomKey
+            ) {
               scene.remove(carRig.group);
               disposeObject3D(carRig.group);
               activeCarId = cfgNow.carId;
               activeDriverId = cfgNow.driverId;
-              carRig = buildCarModel(activeCarId, activeDriverId);
+              activeCustomKey = currentCustomKey;
+              carRig = buildCarModel(activeCarId, activeDriverId, cfgNow.customVehicle);
               applyVisualStyleToObject(carRig.group, style);
               scene.add(carRig.group);
               spawnCombatSparks(heroX, heroY + 1.0, heroZ, '#38BDF8', 12, 6.2);
               AudioEngine.playSound('chime');
-              showToast(`Switched to ${getCarPreset(activeCarId).name} · ${getDriverType(activeDriverId).name}`);
+              showToast(
+                `Switched to ${getCarPreset(activeCarId).name} · ${getDriverType(activeDriverId).name}`
+              );
             }
 
             const carDef = getCarPreset(cfgNow.carId);
@@ -4847,6 +5103,63 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             floorY = preSurf.y;
             const groundedCar = heroY <= floorY + 0.28;
 
+            // Flight Bonus Cubes pickup (Mario Kart style soaring bonus)
+            for (const fc of flightCubeEntities) {
+              if (fc.respawnAt === 0 || gameElapsed >= fc.respawnAt) {
+                if (fc.respawnAt > 0 && gameElapsed >= fc.respawnAt) {
+                  fc.respawnAt = 0;
+                  if (fc.mesh) fc.mesh.visible = true;
+                }
+                const d = Math.hypot(heroX - fc.x, heroZ - fc.z);
+                if (d < 2.65 && Math.abs(heroY - fc.baseY) < 3.2) {
+                  fc.respawnAt = gameElapsed + 14;
+                  carFlightTimer = 9.5;
+                  carBoost = 100;
+                  heroVelY = Math.max(heroVelY, 8.5);
+                  spawnCombatSparks(fc.x, fc.baseY, fc.z, '#38BDF8', 24, 8.5);
+                  AudioEngine.playSound('sparkle');
+                  AudioEngine.playSound('jump');
+                  showToast('Flight Bonus Activated! Hold Space to soar across the chasms!');
+                  if (fc.mesh) fc.mesh.visible = false;
+                }
+              }
+            }
+
+            // Neon Boost Pads surge
+            for (const bp of boostPadEntities) {
+              if (gameElapsed >= bp.cooldownUntil) {
+                const d = Math.hypot(heroX - bp.x, heroZ - bp.z);
+                if (d < 2.6 && groundedCar) {
+                  bp.cooldownUntil = gameElapsed + 1.5;
+                  vFwd = Math.max(vFwd + 13.5, physDef.maxSpeed * 1.35);
+                  carBoost = Math.min(100, carBoost + 50);
+                  spawnCombatSparks(heroX, heroY + 0.35, heroZ, '#0EA5E9', 16, 7.2);
+                  AudioEngine.playSound('whoosh');
+                }
+              }
+            }
+
+            // Striped Road Barriers
+            for (const rb of roadBarrierEntities) {
+              if (gameElapsed >= rb.cooldownUntil) {
+                const d = Math.hypot(heroX - rb.x, heroZ - rb.z);
+                if (d < 1.85 && groundedCar && Math.abs(vFwd) > 3.8) {
+                  rb.cooldownUntil = gameElapsed + 1.2;
+                  vFwd *= -0.32;
+                  shakeTimer = 0.22;
+                  spawnCombatSparks(heroX, heroY + 0.5, heroZ, '#F97316', 14, 6.0);
+                  AudioEngine.playSound('step');
+                }
+              }
+            }
+
+            const isFlying = carFlightTimer > 0 || carRig.hasPermanentWings;
+            if (carFlightTimer > 0) {
+              carFlightTimer = Math.max(0, carFlightTimer - dt);
+            }
+            carRig.wingLeft.visible = isFlying;
+            carRig.wingRight.visible = isFlying;
+
             if (groundedCar) {
               if (throttle > 0.05) {
                 const thrust = physDef.accel * throttle * (wantsBoost ? 1.55 : 1.0);
@@ -4891,9 +5204,24 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               carVelZ = nfz * vFwd + nrz * vLat;
               carWasDrifting = handbrake && Math.hypot(vFwd, vLat) > 6.5;
             } else {
-              // Slight air steer control when jumping off stunt ramps
-              heroYaw += steer * 0.85 * dt;
-              carWasDrifting = false;
+              if (isFlying) {
+                // High-authority aerodynamic steering and flight gliding
+                heroYaw += steer * 1.95 * dt;
+                carWasDrifting = false;
+                const wantsClimb = handbrake || throttle > 0;
+                const targetSink = wantsClimb ? 1.4 : -1.8;
+                heroVelY = THREE.MathUtils.damp(heroVelY, targetSink, 2.5, dt);
+                if (wantsClimb && vFwd > 4) {
+                  vFwd = THREE.MathUtils.damp(vFwd, maxFwd * 0.92, 1.2, dt);
+                }
+                if (Math.random() < 0.32) {
+                  spawnCombatSparks(heroX, heroY + 0.35, heroZ, '#38BDF8', 2, 3.5);
+                }
+              } else {
+                // Slight air steer control when jumping off stunt ramps
+                heroYaw += steer * 0.85 * dt;
+                carWasDrifting = false;
+              }
             }
 
             const rawCarX = heroX + carVelX * dt;
@@ -4923,7 +5251,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
 
             if (heroY > floorY + 0.08 || heroVelY > 0) {
-              heroVelY -= 21 * dt;
+              if (!isFlying || groundedCar) {
+                heroVelY -= 21 * dt;
+              }
               heroY += heroVelY * dt;
               if (heroY <= floorY) {
                 if (heroVelY < -6) {
@@ -4938,7 +5268,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               heroVelY = 0;
             }
 
-            if (heroY < IslandTerrain.waterLevel - 1.15) {
+            if (heroY < IslandTerrain.waterLevel - 3.8) {
               heroX = respawnX;
               heroZ = respawnZ;
               heroYaw = respawnYaw;
@@ -4950,7 +5280,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               heroVelY = 0;
               carVelX = 0;
               carVelZ = 0;
-              showToast('Splashed into deep water — reset to road!');
+              showToast('Car plunged into the chasm — reset to road!');
             }
 
             // Animate CarRig wheels, steering, suspension lean & drift/boost sparks
@@ -4967,9 +5297,19 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             const hBack = sampleDriveSurface(heroX - Math.sin(heroYaw) * 1.15, heroZ - Math.cos(heroYaw) * 1.15).y;
             const hLeft = sampleDriveSurface(heroX + Math.cos(heroYaw) * 0.85, heroZ - Math.sin(heroYaw) * 0.85).y;
             const hRight = sampleDriveSurface(heroX - Math.cos(heroYaw) * 0.85, heroZ + Math.sin(heroYaw) * 0.85).y;
-            const slopePitch = groundedCar ? Math.atan2(hBack - hFront, 2.3) : THREE.MathUtils.clamp(-heroVelY * 0.04, -0.35, 0.35);
-            const slopeRoll = groundedCar ? Math.atan2(hLeft - hRight, 1.7) : 0;
-            const turnLean = groundedCar ? -steer * physDef.bodyRollFactor * 0.08 * THREE.MathUtils.clamp(vFwd / 18, -1, 1) : 0;
+            const inAirSlopePitch = isFlying
+              ? handbrake
+                ? 0.22
+                : throttle > 0
+                ? -0.12
+                : 0
+              : THREE.MathUtils.clamp(-heroVelY * 0.04, -0.35, 0.35);
+            const inAirSlopeRoll = isFlying ? -steer * 0.38 : 0;
+            const slopePitch = groundedCar ? Math.atan2(hBack - hFront, 2.3) : inAirSlopePitch;
+            const slopeRoll = groundedCar ? Math.atan2(hLeft - hRight, 1.7) : inAirSlopeRoll;
+            const turnLean = groundedCar
+              ? -steer * physDef.bodyRollFactor * 0.08 * THREE.MathUtils.clamp(vFwd / 18, -1, 1)
+              : 0;
 
             carPitch = THREE.MathUtils.damp(carPitch, slopePitch, 11, dt);
             carRoll = THREE.MathUtils.damp(carRoll, slopeRoll + turnLean, 11, dt);
@@ -7142,7 +7482,13 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                     ),
                   isHeavyBrute: rt.maxHealth >= 8 || rt.monsterAbility === 'thickFat',
                 };
-                const meleeOut = computeHeroOutgoingDamage(heroAttackDamage, heroProfile, targetDesc);
+                const rpgAtkExtra =
+                  activeLevel.gameplayMode === 'rpg' ? rpgStatsRef.current.atkBonus : 0;
+                const meleeOut = computeHeroOutgoingDamage(
+                  heroAttackDamage + rpgAtkExtra,
+                  heroProfile,
+                  targetDesc
+                );
                 rt.health -= meleeOut.damage;
                 AudioEngine.playSound(activeLevel.audio.hit);
                 if (meleeOut.matchupNote && rt.health > 0) {
@@ -7196,12 +7542,33 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 const sparkX = heroX + dx * 0.68;
                 const sparkZ = heroZ + dz * 0.68;
 
+                // Colorful blade contact slash arc + evaporating enemy HP number overhead!
+                spawnRpgSwordSlashArc(
+                  scene,
+                  rpgVisualFx,
+                  heroX,
+                  heroY,
+                  heroZ,
+                  Math.atan2(dx, dz),
+                  '#F59E0B'
+                );
+                spawnEvaporatingDamageNumber(
+                  scene,
+                  evaporatingDamages,
+                  rt.x,
+                  impactY + (rt.isBoss ? 1.55 : 1.05),
+                  rt.z,
+                  `-${meleeOut.damage}`,
+                  '#FBBF24',
+                  activeLevel.gameplayMode === 'rpg' ? 'SWORD SLASH!' : undefined
+                );
+
                 if (rt.health <= 0) {
                   beginBaddieDeath(rt, nx, nz);
                 } else {
                   hitStopTimer = 0.042;
                   shakeTimer = Math.max(shakeTimer, 0.14);
-                  spawnCombatSparks(sparkX, impactY, sparkZ, '#FFF3B0', 7, 6.8);
+                  spawnCombatSparks(sparkX, impactY, sparkZ, '#FFF3B0', 9, 7.2);
                   // Stagger enemy and interrupt windup (boss keeps poise only during active strike)
                   if (!(rt.isBoss && rt.aiState === 'strike')) {
                     rt.aiState = 'stagger';
@@ -7521,6 +7888,14 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               rt.mesh.scale.multiplyScalar(0.55);
             }
             showToast(rt.puzzleRewardText?.trim() || `${rt.name} solved! (+5 Coins)`);
+            if (
+              activeLevel.gameplayMode === 'rpg' &&
+              (activeLevel.rpgConfig?.lootMode === 'fannedCards' ||
+                activeLevel.rpgConfig?.lootMode === 'both' ||
+                !activeLevel.rpgConfig)
+            ) {
+              openRpgCardModalRef.current(`Puzzle Solved: ${rt.name}`);
+            }
           };
 
           const spawnRevealBeacon = (bx: number, bz: number, colorHex: string, duration = 6.0) => {
@@ -7882,35 +8257,187 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           }
 
-          // Magic bolt
+          // Bow & Arrow shot (RPG mode Key 2 / Key R)
+          if (inp.arrowQueued) {
+            inp.arrowQueued = false;
+            let aimYaw = heroYaw;
+            let bestTarget: RuntimeEntity | null = null;
+            let bestDist = 14.5;
+            for (const rt of runtimeEntities) {
+              if (!rt.alive || rt.kind !== 'baddie' || rt.aiState === 'dying') continue;
+              const d = Math.hypot(rt.x - heroX, rt.z - heroZ);
+              if (d < bestDist) {
+                bestDist = d;
+                bestTarget = rt;
+              }
+            }
+            if (bestTarget) {
+              aimYaw = Math.atan2(bestTarget.x - heroX, bestTarget.z - heroZ);
+              heroYaw = aimYaw;
+            }
+            AudioEngine.playSound('jump');
+            const arrowMesh = buildRpgArrowProjectileMesh(aimYaw);
+            arrowMesh.position.set(
+              heroX + Math.sin(aimYaw) * 0.65,
+              heroY + 1.05,
+              heroZ + Math.cos(aimYaw) * 0.65
+            );
+            scene.add(arrowMesh);
+            bolts.push({
+              mesh: arrowMesh,
+              vx: Math.sin(aimYaw) * 23,
+              vz: Math.cos(aimYaw) * 23,
+              life: 1.35,
+              isArrow: true,
+            });
+            spawnCombatSparks(
+              arrowMesh.position.x,
+              arrowMesh.position.y,
+              arrowMesh.position.z,
+              '#34D399',
+              6,
+              4.2
+            );
+          }
+
+          // Magic bolt & RPG Arcane Lightning Zap
           if (inp.magicQueued) {
             inp.magicQueued = false;
-            if (enabledSet.has('magicBolt') && magic >= 20) {
-              magic -= 20;
+            const magicCost = activeLevel.gameplayMode === 'rpg' ? 15 : 20;
+            if ((enabledSet.has('magicBolt') || activeLevel.gameplayMode === 'rpg') && magic >= magicCost) {
+              magic -= magicCost;
               AudioEngine.playSound('sparkle');
-              const boltMesh = new THREE.Mesh(
-                new THREE.SphereGeometry(0.24, 10, 10),
-                new THREE.MeshStandardMaterial({
-                  color: '#3AA0FF',
-                  emissive: '#7C5CFF',
-                  emissiveIntensity: 1.4,
-                })
-              );
-              boltMesh.position.set(heroX, heroY + 1.0, heroZ);
-              scene.add(boltMesh);
-              bolts.push({
-                mesh: boltMesh,
-                vx: Math.sin(heroYaw) * 16,
-                vz: Math.cos(heroYaw) * 16,
-                life: 1.5,
-              });
+
+              let aimYaw = heroYaw;
+              let zapTarget: RuntimeEntity | null = null;
+              let bestZapDist = 11.5;
+              for (const rt of runtimeEntities) {
+                if (!rt.alive || rt.kind !== 'baddie' || rt.aiState === 'dying') continue;
+                const d = Math.hypot(rt.x - heroX, rt.z - heroZ);
+                if (d < bestZapDist) {
+                  bestZapDist = d;
+                  zapTarget = rt;
+                }
+              }
+
+              if (zapTarget && activeLevel.gameplayMode === 'rpg') {
+                aimYaw = Math.atan2(zapTarget.x - heroX, zapTarget.z - heroZ);
+                heroYaw = aimYaw;
+                const targetY =
+                  Math.max(-0.5, sampleLevelHeight(activeLevel, zapTarget.x, zapTarget.z)) +
+                  zapTarget.flightY +
+                  1.0;
+                spawnRpgMagicZapBeam(
+                  scene,
+                  rpgVisualFx,
+                  heroX,
+                  heroY + 1.2,
+                  heroZ,
+                  zapTarget.x,
+                  targetY,
+                  zapTarget.z,
+                  '#A855F7'
+                );
+                const zapDmg = Math.max(
+                  6,
+                  Math.round(heroAttackDamage + rpgStatsRef.current.magicBonus)
+                );
+                zapTarget.health -= zapDmg;
+                zapTarget.hitFlashTimer = 0.24;
+                zapTarget.recoilPitch = -0.62;
+                const znx = Math.sin(aimYaw);
+                const znz = Math.cos(aimYaw);
+                zapTarget.vx = znx * 8.5;
+                zapTarget.vz = znz * 8.5;
+                zapTarget.vy = 3.2;
+                spawnCombatSparks(zapTarget.x, targetY, zapTarget.z, '#C084FC', 14, 7.8);
+                spawnEvaporatingDamageNumber(
+                  scene,
+                  evaporatingDamages,
+                  zapTarget.x,
+                  targetY + (zapTarget.isBoss ? 1.55 : 1.05),
+                  zapTarget.z,
+                  `-${zapDmg}`,
+                  '#C084FC',
+                  'MAGIC ZAP!'
+                );
+                if (zapTarget.health <= 0) {
+                  beginBaddieDeath(zapTarget, znx, znz);
+                } else {
+                  zapTarget.aiState = 'stagger';
+                  zapTarget.stateTimer = 0.45;
+                }
+              } else {
+                const boltMesh = new THREE.Mesh(
+                  new THREE.SphereGeometry(0.24, 10, 10),
+                  new THREE.MeshStandardMaterial({
+                    color: '#3AA0FF',
+                    emissive: '#7C5CFF',
+                    emissiveIntensity: 1.4,
+                  })
+                );
+                boltMesh.position.set(heroX, heroY + 1.0, heroZ);
+                scene.add(boltMesh);
+                bolts.push({
+                  mesh: boltMesh,
+                  vx: Math.sin(aimYaw) * 16,
+                  vz: Math.cos(aimYaw) * 16,
+                  life: 1.5,
+                });
+              }
+            } else if (activeLevel.gameplayMode === 'rpg' && magic < magicCost) {
+              showToast('Low Arcane Mana! Drink a Potion or Herb (Key 4 / H).');
             }
           }
 
-          // Heal spell
+          // Heal spell / RPG Health Potion & Wild Healing Herb
           if (inp.healQueued) {
             inp.healQueued = false;
-            if (enabledSet.has('heal') && magic >= 25 && health < maxHealth) {
+            if (activeLevel.gameplayMode === 'rpg') {
+              const curRpg = rpgStatsRef.current;
+              if (curRpg.potions > 0) {
+                setRpgStats((prev) => ({ ...prev, potions: Math.max(0, prev.potions - 1) }));
+                health = Math.min(maxHealth, health + 3);
+                magic = Math.min(100, magic + 40);
+                AudioEngine.playSound('sparkle');
+                spawnCombatSparks(heroX, heroY + 1.1, heroZ, '#10B981', 14, 6.2);
+                spawnEvaporatingDamageNumber(
+                  scene,
+                  evaporatingDamages,
+                  heroX,
+                  heroY + 2.0,
+                  heroZ,
+                  '+3 HP · +40 MP',
+                  '#34D399',
+                  'HEALTH POTION'
+                );
+                showToast('Drank Health Potion (+3 HP, +40 Mana)!');
+              } else if (curRpg.herbs > 0) {
+                setRpgStats((prev) => ({ ...prev, herbs: Math.max(0, prev.herbs - 1) }));
+                health = Math.min(maxHealth, health + 2);
+                magic = Math.min(100, magic + 25);
+                AudioEngine.playSound('sparkle');
+                spawnCombatSparks(heroX, heroY + 1.1, heroZ, '#34D399', 12, 5.5);
+                spawnEvaporatingDamageNumber(
+                  scene,
+                  evaporatingDamages,
+                  heroX,
+                  heroY + 2.0,
+                  heroZ,
+                  '+2 HP · +25 MP',
+                  '#A7F3D0',
+                  'HEALING HERB'
+                );
+                showToast('Used Wild Healing Herb (+2 HP, +25 Mana)!');
+              } else if (magic >= 25 && health < maxHealth) {
+                magic -= 25;
+                health = Math.min(maxHealth, health + 2);
+                AudioEngine.playSound('sparkle');
+                showToast('Cast Heal Spell (+2 HP)!');
+              } else {
+                showToast('No Potions or Healing Herbs remaining!');
+              }
+            } else if (enabledSet.has('heal') && magic >= 25 && health < maxHealth) {
               magic -= 25;
               health = Math.min(maxHealth, health + 2);
               AudioEngine.playSound('sparkle');
@@ -7918,7 +8445,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           }
 
-          // Update bolts
+          // Update bolts & feathered arrows
           for (let i = bolts.length - 1; i >= 0; i--) {
             const b = bolts[i];
             b.life -= dt;
@@ -7927,7 +8454,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             let hit = false;
             for (const rt of runtimeEntities) {
               if (!rt.alive || rt.kind !== 'baddie' || rt.aiState === 'dying') continue;
-              if (Math.hypot(rt.x - b.mesh.position.x, rt.z - b.mesh.position.z) < 1.25) {
+              if (Math.hypot(rt.x - b.mesh.position.x, rt.z - b.mesh.position.z) < 1.3) {
                 hit = true;
                 const boltTargetDesc: EnemyTargetDescriptors = {
                   isBoss: rt.isBoss,
@@ -7949,12 +8476,19 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                     ),
                   isHeavyBrute: rt.maxHealth >= 8 || rt.monsterAbility === 'thickFat',
                 };
+                const baseBoltPower = b.isArrow
+                  ? heroAttackDamage +
+                    (activeLevel.gameplayMode === 'rpg' ? rpgStatsRef.current.atkBonus : 0)
+                  : heroProfile.stats.magicPower +
+                    (relicMods?.magicBoltBonus ?? 0) +
+                    (activeLevel.gameplayMode === 'rpg' ? rpgStatsRef.current.magicBonus : 0);
                 const boltOut = computeHeroOutgoingDamage(
-                  heroProfile.stats.magicPower + (relicMods?.magicBoltBonus ?? 0),
+                  baseBoltPower,
                   heroProfile,
                   boltTargetDesc
                 );
-                rt.health -= boltOut.damage;
+                const appliedDmg = b.isArrow ? Math.max(4, boltOut.damage) : boltOut.damage;
+                rt.health -= appliedDmg;
                 AudioEngine.playSound(activeLevel.audio.hit);
                 const bLen = Math.max(0.1, Math.hypot(b.vx, b.vz));
                 const bnx = b.vx / bLen;
@@ -7964,7 +8498,24 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 rt.vy = 3.6;
                 rt.hitFlashTimer = 0.2;
                 rt.recoilPitch = -0.58;
-                spawnCombatSparks(b.mesh.position.x, b.mesh.position.y, b.mesh.position.z, '#7CCBFF', 9, 7.2);
+                spawnCombatSparks(
+                  b.mesh.position.x,
+                  b.mesh.position.y,
+                  b.mesh.position.z,
+                  b.isArrow ? '#34D399' : '#7CCBFF',
+                  10,
+                  7.2
+                );
+                spawnEvaporatingDamageNumber(
+                  scene,
+                  evaporatingDamages,
+                  rt.x,
+                  b.mesh.position.y + (rt.isBoss ? 1.45 : 0.95),
+                  rt.z,
+                  `-${appliedDmg}`,
+                  b.isArrow ? '#34D399' : '#38BDF8',
+                  b.isArrow ? 'ARROW SHOT!' : 'ARCANE BOLT!'
+                );
                 if (rt.health <= 0) {
                   beginBaddieDeath(rt, bnx, bnz);
                 } else {
@@ -7976,11 +8527,14 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
             if (hit || b.life <= 0) {
               scene.remove(b.mesh);
-              b.mesh.geometry.dispose();
-              (b.mesh.material as THREE.Material).dispose();
+              disposeObject3D(b.mesh);
               bolts.splice(i, 1);
             }
           }
+
+          // Update evaporating overhead enemy HP numbers & colorful RPG fight FX
+          updateEvaporatingDamageNumbers(scene, evaporatingDamages, camera, dt);
+          updateRpgVisualFx(scene, rpgVisualFx, dt);
 
           // Update 3D combat impact sparks
           for (let i = combatSparks.length - 1; i >= 0; i--) {
@@ -8089,6 +8643,24 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
             if (rt.kind === 'door' || rt.buildingBlock?.shape === 'trapdoor') {
               applyDoorOpenAnimation(rt.mesh, rt.opened, dt);
+            }
+            if (rt.mesh.userData?.wanderingChicken) {
+              const phase = Number(rt.mesh.userData.chickenPhase) || 0;
+              const speed = Number(rt.mesh.userData.chickenSpeed) || 1.25;
+              const t = gameElapsed * speed + phase;
+              const wx = rt.startX + Math.sin(t * 0.72) * 1.35 + Math.cos(t * 1.45) * 0.35;
+              const wz = rt.startZ + Math.cos(t * 0.64) * 1.35 + Math.sin(t * 1.2) * 0.35;
+              const dxC = wx - rt.x;
+              const dzC = wz - rt.z;
+              rt.x = wx;
+              rt.z = wz;
+              const groundYC = sampleLevelHeight(activeLevel, rt.x, rt.z);
+              const hopC = Math.abs(Math.sin(t * 5.2)) * 0.05;
+              rt.mesh.position.set(rt.x, groundYC + hopC, rt.z);
+              if (Math.hypot(dxC, dzC) > 0.001) {
+                rt.mesh.rotation.y = Math.atan2(dxC, dzC);
+              }
+              rt.mesh.rotation.x = Math.max(0, Math.sin(t * 3.8)) * 0.24;
             }
 
             const dist = Math.hypot(rt.x - heroX, rt.z - heroZ);
@@ -8651,6 +9223,97 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                     ? Math.abs(Math.sin(gameElapsed * 10 + slotIdx)) * 0.08
                     : 0;
                   rt.mesh.position.set(rt.x, sampleLevelHeight(activeLevel, rt.x, rt.z) + hopY, rt.z);
+
+                  // Recruited RPG Companion Combat AI: actively attack nearby enemies with sword, arrow, or magic!
+                  if (activeLevel.gameplayMode === 'rpg' && !tavernCelebrated) {
+                    const lastAllyAtk = companionAttackCooldowns.get(rt.id) ?? 0;
+                    if (gameElapsed - lastAllyAtk >= 1.45) {
+                      let targetEnemy: RuntimeEntity | null = null;
+                      let bestEnemyD = 7.8;
+                      for (const cand of runtimeEntities) {
+                        if (!cand.alive || cand.kind !== 'baddie') continue;
+                        const dCand = Math.hypot(cand.x - rt.x, cand.z - rt.z);
+                        if (dCand < bestEnemyD) {
+                          bestEnemyD = dCand;
+                          targetEnemy = cand;
+                        }
+                      }
+                      if (targetEnemy) {
+                        companionAttackCooldowns.set(rt.id, gameElapsed);
+                        const allyY = sampleLevelHeight(activeLevel, rt.x, rt.z);
+                        const enemyY =
+                          sampleLevelHeight(activeLevel, targetEnemy.x, targetEnemy.z) +
+                          (targetEnemy.flightY ?? 0);
+                        rt.mesh.rotation.y = Math.atan2(
+                          targetEnemy.x - rt.x,
+                          targetEnemy.z - rt.z
+                        );
+                        const lowerName = rt.name.toLowerCase();
+                        const isMageAlly =
+                          lowerName.includes('mage') ||
+                          lowerName.includes('lyra') ||
+                          lowerName.includes('wizard');
+                        const isArcherAlly =
+                          lowerName.includes('ranger') ||
+                          lowerName.includes('archer') ||
+                          lowerName.includes('pip');
+                        const allyDmg = isMageAlly ? 5 : isArcherAlly ? 4 : 4;
+                        if (isMageAlly) {
+                          spawnRpgMagicZapBeam(
+                            scene,
+                            rpgVisualFx,
+                            rt.x,
+                            allyY + 1.0,
+                            rt.z,
+                            targetEnemy.x,
+                            enemyY,
+                            targetEnemy.z,
+                            '#A855F7'
+                          );
+                          AudioEngine.playSound('sparkle');
+                        } else {
+                          spawnRpgSwordSlashArc(
+                            scene,
+                            rpgVisualFx,
+                            targetEnemy.x,
+                            enemyY + 0.85,
+                            targetEnemy.z,
+                            Math.atan2(targetEnemy.x - rt.x, targetEnemy.z - rt.z),
+                            isArcherAlly ? '#34D399' : '#38BDF8'
+                          );
+                          AudioEngine.playSound('hit');
+                        }
+                        targetEnemy.health -= allyDmg;
+                        targetEnemy.hitFlashTimer = 0.16;
+                        spawnCombatSparks(
+                          targetEnemy.x,
+                          enemyY + 0.95,
+                          targetEnemy.z,
+                          isMageAlly ? '#C084FC' : '#38BDF8',
+                          9,
+                          5.6
+                        );
+                        spawnEvaporatingDamageNumber(
+                          scene,
+                          evaporatingDamages,
+                          targetEnemy.x,
+                          enemyY + 1.35,
+                          targetEnemy.z,
+                          `-${allyDmg}`,
+                          isMageAlly ? '#C084FC' : '#38BDF8',
+                          `${rt.name.split(' ')[0].toUpperCase()}!`
+                        );
+                        if (targetEnemy.health <= 0) {
+                          const kLen = Math.max(0.01, bestEnemyD);
+                          beginBaddieDeath(
+                            targetEnemy,
+                            (targetEnemy.x - rt.x) / kLen,
+                            (targetEnemy.z - rt.z) / kLen
+                          );
+                        }
+                      }
+                    }
+                  }
                 } else if (dist < 10) {
                   rt.mesh.rotation.y = Math.atan2(heroX - rt.x, heroZ - rt.z);
                 }
@@ -9848,6 +10511,38 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                         actionDef.telegraphColor || '#FF6B4A',
                         9,
                         6.5
+                      );
+                    }
+                    const isOgreThrow =
+                      !shieldedBlock &&
+                      incomingDmg > 0 &&
+                      (rt.name.toLowerCase().includes('ogre') ||
+                        (activeLevel.gameplayMode === 'rpg' && rt.isBoss));
+                    if (isOgreThrow) {
+                      heroKnockVX = kbDirX * 13.5;
+                      heroKnockVZ = kbDirZ * 13.5;
+                      heroVelY = Math.max(heroVelY, 5.4);
+                      shakeTimer = 0.42;
+                      spawnRpgOgreThrowWave(scene, rpgVisualFx, rt.x, heroY, rt.z);
+                      spawnEvaporatingDamageNumber(
+                        scene,
+                        evaporatingDamages,
+                        heroX,
+                        heroY + 2.1,
+                        heroZ,
+                        `-${incomingDmg} THROWN!`,
+                        '#EF4444',
+                        'OGRE BRUTE FORCE!'
+                      );
+                    } else if (incomingDmg > 0 && activeLevel.gameplayMode === 'rpg') {
+                      spawnEvaporatingDamageNumber(
+                        scene,
+                        evaporatingDamages,
+                        heroX,
+                        heroY + 1.85,
+                        heroZ,
+                        `-${incomingDmg}`,
+                        '#F87171'
                       );
                     }
                     AudioEngine.playSound(shieldedBlock || incomingDmg === 0 ? 'chime' : 'hurt');
@@ -11487,6 +12182,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 airborne: heroY > floorY + 0.35,
                 checkpointsHit: carCheckpointsHit,
                 checkpointsTotal: drivingCheckpointsTotal,
+                flightSeconds: Math.ceil(carFlightTimer),
+                hasWings: Boolean(carRig?.hasPermanentWings),
               });
             }
 
@@ -11706,6 +12403,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           }
         } else {
+          const isRpgIsoNow = activeLevel.gameplayMode === 'rpg' && camModeNow === 'isometric';
           const targetFov =
             camModeNow === 'firstPerson'
               ? 68
@@ -11715,6 +12413,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               ? 42
               : camModeNow === 'cozy'
               ? 48
+              : isRpgIsoNow
+              ? 35
               : camModeNow === 'isometric'
               ? 42
               : 52;
@@ -11833,7 +12533,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             } else {
               const baseDist = THREE.MathUtils.lerp(camDist, 4.1, caveCamBlend);
               const openHeight =
-                (camModeNow === 'isometric' ? 11.5 : camModeNow === 'cozy' ? 2.7 : 3.8) +
+                (isRpgIsoNow ? 18.0 : camModeNow === 'isometric' ? 11.5 : camModeNow === 'cozy' ? 2.7 : 3.8) +
                 inp.lookPitchOffset;
               const camHeight = THREE.MathUtils.lerp(openHeight, 2.05, caveCamBlend);
               _targetCamPos.set(
@@ -12513,6 +13213,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       {!showTitle && (
         <div className="pointer-events-none fixed inset-0 z-20">
           {currentProject.hud.widgets.map((w) => {
+            if (isRpgMode && w.kind !== 'joystick' && w.kind !== 'actionButton') return null;
             if (w.kind === 'bossBar' && !hudState.bossName) return null;
             if (w.kind === 'dialogue' || w.kind === 'minimap') return null;
             const isInteractiveWidget =
@@ -12566,8 +13267,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         </div>
       )}
 
-      {/* Top-center Play Chrome */}
-      {!showTitle && (
+      {/* Top-center Play Chrome (Non-RPG modes; RPG uses RpgGameHudOverlay) */}
+      {!showTitle && !isRpgMode && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 z-20">
           <div className="px-4 py-1.5 rounded-xl bg-black/70 text-white text-xs font-extrabold whitespace-nowrap">
             {activePlayLevel?.name ?? currentLevel.name}
@@ -12941,6 +13642,19 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   <span className="text-[10px] font-semibold text-white/65">Arches</span>
                 </div>
               )}
+
+              {driveHud.flightSeconds > 0 && (
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-[#38BDF8]/25 border border-[#38BDF8]/60 text-xs font-black tabular-nums text-[#38BDF8] animate-pulse shadow-[0_0_12px_rgba(56,189,248,0.35)]">
+                  <span>🪽 Flight Mode</span>
+                  <span>{driveHud.flightSeconds}s</span>
+                </div>
+              )}
+
+              {driveHud.flightSeconds === 0 && driveHud.hasWings && (
+                <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-500/20 border border-purple-400/40 text-[11px] font-bold text-purple-300">
+                  <span>🪽 Wings Equipped</span>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -13029,7 +13743,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           </div>
 
           <div className="pointer-events-none text-[10px] font-semibold text-white/80 bg-black/55 px-3 py-1 rounded-lg whitespace-nowrap">
-            W/S Accelerate &amp; Reverse · A/D Steer · Space Drift · Shift Boost · C Camera View · R Reset to road
+            W/S Accelerate &amp; Reverse · A/D Steer · Space Handbrake / Hold in Air to Glide · Shift Boost · C Camera View · R Reset to road
           </div>
         </div>
       )}
@@ -13038,7 +13752,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       {controlsActive && fishingBanner !== 'none' && (
         <div
           className={`fixed ${
-            unlockedPowers.length > 0 ? 'bottom-32' : 'bottom-24'
+            isRpgMode ? 'bottom-28' : unlockedPowers.length > 0 ? 'bottom-32' : 'bottom-24'
           } left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl border text-xs font-extrabold shadow-xl z-30 flex items-center gap-2 ${
             fishingBanner === 'bite'
               ? 'bg-[#0EA5E9] border-white/40 text-white animate-bounce'
@@ -13058,7 +13772,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       {controlsActive && nearCraftingBench && !harvestPrompt && (
         <div
           className={`fixed ${
-            unlockedPowers.length > 0 ? 'bottom-32' : 'bottom-24'
+            isRpgMode ? 'bottom-28' : unlockedPowers.length > 0 ? 'bottom-32' : 'bottom-24'
           } left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl bg-[#11141D]/92 border border-[#F59E0B]/50 text-white text-xs font-extrabold shadow-xl z-30 flex items-center gap-2 whitespace-nowrap`}
         >
           <Anvil size={14} className="text-[#F59E0B]" />
@@ -13081,10 +13795,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         sitPrompt={sitPrompt}
         climbPrompt={climbPrompt}
         glidePrompt={glidePrompt}
+        isRpgMode={isRpgMode}
       />
 
-      {/* Quick Misfit Powers + Held-Tool Bar + Subtle Control Hint */}
-      {controlsActive && !activeBottomSpeech && !isDrivingMode && (
+      {/* Quick Misfit Powers + Held-Tool Bar + Subtle Control Hint (Non-RPG modes) */}
+      {controlsActive && !activeBottomSpeech && !isDrivingMode && !isRpgMode && (
         <div className="fixed bottom-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 z-20">
           {unlockedPowers.length > 0 && (
             <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[#11141D]/88 border border-white/15 shadow-lg">
@@ -13601,6 +14316,105 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           store.setIsPlaying(false);
         }}
       />
+
+      {/* Cohesive Full-Screen Isometric RPG HUD System */}
+      {isRpgMode && !showTitle && !dead && !finished && (
+        <RpgGameHudOverlay
+          heroName={currentProject.heroName}
+          levelName={activePlayLevel?.name ?? currentLevel.name}
+          hudState={hudState}
+          rpgStats={rpgStats}
+          heroAttackBonus={heroBonusStats.attackPower}
+          heroDefenseBonus={heroBonusStats.defensePower}
+          buddyHud={buddyHud}
+          allBuddyNames={(activePlayLevel ?? currentLevel).entities
+            .filter((e) => e.kind === 'npc' && e.isBuddy)
+            .map((e) => e.name)}
+          quickHotbarTools={quickHotbarTools}
+          heldItemId={equipment.heldItemId}
+          bagCount={inventoryStacks.reduce((sum, s) => sum + s.qty, 0)}
+          bagKeyLabel={formatKeyCodeLabel(inventoryConfig.toggleKey)}
+          resolvedCamMode={resolvedCamMode}
+          worldMapOpen={worldMapOpen || fastTravelState !== null}
+          inventoryOpen={inventoryOpen}
+          muted={muted}
+          chatDisplayMode={chatSettings.displayMode}
+          allowFannedCards={
+            currentLevel.rpgConfig?.lootMode === 'fannedCards' ||
+            currentLevel.rpgConfig?.lootMode === 'both' ||
+            !currentLevel.rpgConfig
+          }
+          onTriggerSword={() => {
+            setRpgStats((prev) => ({ ...prev, activeCombatStyle: 'sword' }));
+            inputRef.current.attackQueued = true;
+          }}
+          onTriggerArrow={() => {
+            setRpgStats((prev) => ({ ...prev, activeCombatStyle: 'arrow' }));
+            inputRef.current.arrowQueued = true;
+          }}
+          onTriggerMagic={() => {
+            setRpgStats((prev) => ({ ...prev, activeCombatStyle: 'magic' }));
+            inputRef.current.magicQueued = true;
+          }}
+          onTriggerHeal={() => {
+            inputRef.current.healQueued = true;
+          }}
+          onOpenTreasureCards={() => {
+            openRpgCardModalRef.current('Destiny Treasure Cards');
+          }}
+          onHoldTool={(itemId) => handleHoldItem(itemId)}
+          onToggleMap={() => {
+            setFastTravelState(null);
+            setWorldMapOpen((o) => !o);
+          }}
+          onToggleInventory={() => {
+            setInventoryMode('bag');
+            setInventoryOpen((o) => !o);
+          }}
+          onCycleCamera={() => toggleCharacterPov()}
+          onTogglePause={() => setPaused((p) => !p)}
+          onToggleMute={() => {
+            const next = !muted;
+            setMuted(next);
+            AudioEngine.setMuted(next);
+          }}
+          onRestart={handleRestart}
+          onToggleChatMode={() => {
+            const nextMode =
+              chatSettings.displayMode === 'bubbles' ? 'bottomPanel' : 'bubbles';
+            store.updateProject('toggle chat display mode', (p) => ({
+              ...p,
+              chatSettings: {
+                ...resolveChatDisplaySettings(p.chatSettings),
+                displayMode: nextMode,
+              },
+            }));
+            showToastGlobal(
+              nextMode === 'bubbles'
+                ? 'Switched to 3D Chat Bubbles'
+                : 'Switched to Bottom Chat Panel'
+            );
+          }}
+          onBackToEditor={() => {
+            AudioEngine.stopMusic();
+            store.setPlayFromPoint(null);
+            store.setIsPlaying(false);
+          }}
+        />
+      )}
+
+      {/* Isometric RPG Fanned-Out Colorful Treasure & Skill Cards Modal */}
+      {rpgCardModal && (
+        <RpgRewardCardsModal
+          sourceTitle={rpgCardModal.sourceTitle}
+          cards={rpgCardModal.cards}
+          onSelectCard={(card) => {
+            liveRpgApplyRewardRef.current?.(card);
+            setRpgCardModal(null);
+          }}
+          onDismiss={() => setRpgCardModal(null)}
+        />
+      )}
 
       {/* Level Complete / Storybook Epilogue Modal */}
       <PlayLevelCompleteModal

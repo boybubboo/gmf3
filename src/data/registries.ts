@@ -921,6 +921,22 @@ export const TemplateLibrary: GameTemplate[] = [
     ],
   },
   {
+    id: 'rpg',
+    name: 'Isometric RPG',
+    symbol: 'shield.fill',
+    colorHex: '#8B5CF6',
+    blurb: 'Rich isometric fantasy RPG with medieval village, companion party, sword/arrow/magic combat, floating damage numbers & fanned-out loot cards.',
+    category: 'stories',
+    prototypeType: 'Isometric Fantasy RPG',
+    biomeLabel: 'Medieval Village & Ruins',
+    highlights: [
+      'Refined isometric diorama view with volumetric lanterns & fog',
+      'Recruited companion party fighting alongside the hero',
+      'Sword, arrow & magic spell combat with floating enemy health bars & damage numbers',
+      'Traditional chests and fanned-out reward card choices for skills & potions',
+    ],
+  },
+  {
     id: 'adventure',
     name: 'Castle Adventure',
     symbol: 'castle.fill',
@@ -2841,6 +2857,230 @@ function buildDrivingProject(name: string): GameProject {
   };
 }
 
+function buildRpgProject(name: string): GameProject {
+  const rpgLevel: GameLevel = {
+    ...createBlankLevel('Oakhollow Village & Temple Ruins', 'forest', 'openWorld'),
+    style: 'openWorld',
+    environmentType: 'openWorld',
+    visualStyle: 'painterlyPBR',
+    cameraMode: 'isometric',
+    biome: 'forest',
+    sky: 'golden',
+    sunAngle: 38,
+    fog: 0.24,
+    weather: 'fireflies',
+    vistaPreset: 'none',
+    canSwim: false,
+    gameplayMode: 'rpg',
+    completeCondition: 'defeatAll',
+    audio: defaultLevelAudio('adventure'),
+    rpgConfig: {
+      scenario: 'medievalVillage',
+      lootMode: 'both',
+      pathStyle: 'weatheredStone',
+      isInterior: false,
+      volumetricLanterns: true,
+      cameraZoom: 25,
+    },
+    notes: 'Isometric fantasy RPG diorama with medieval village, weathered broken stone paths, mountain rope bridge with broken slat, companion party, sword/arrow/magic combat, evaporating overhead enemy HP & fanned-out loot cards.',
+  };
+
+  const startPt = levelWorldToBoard(rpgLevel, 0, 14);
+  rpgLevel.startPoint = startPt;
+  rpgLevel.portalPoint = levelWorldToBoard(rpgLevel, 0, -34);
+
+  rpgLevel.entities = [
+    // Companion Party
+    createEntity('npc', 'Sir Alden (Companion Knight)', 0.46, 0.56, {
+      isBuddy: true,
+      dialogue: 'My blade is yours, hero! Press 1 for Sword, 2 for Bow, 3 for Magic!',
+      health: 40,
+      styleTint: '#3B82F6',
+      notes: 'RPG Companion: knight',
+    }),
+    createEntity('npc', 'Lyra (Companion Mage)', 0.54, 0.56, {
+      isBuddy: true,
+      dialogue: 'Arcane lightning flows through my staff! Let us strike them down.',
+      health: 32,
+      styleTint: '#A855F7',
+      notes: 'RPG Companion: mage',
+    }),
+    createEntity('npc', 'Rowan (Companion Ranger)', 0.5, 0.59, {
+      isBuddy: true,
+      dialogue: 'My bow covers the high path toward the temple ruins.',
+      health: 34,
+      styleTint: '#10B981',
+      notes: 'RPG Companion: ranger',
+    }),
+    // Medieval Village & Temple Buildings (non-blocky organic stonework & timber)
+    createEntity('prop', 'Timber Tavern', 0.36, 0.49, {
+      notes: 'RPG Building: tavern',
+      scale: 0.96,
+      rotation: 18,
+    }),
+    createEntity('prop', 'Blacksmith Forge', 0.64, 0.49, {
+      notes: 'RPG Building: blacksmith',
+      scale: 0.94,
+      rotation: -20,
+    }),
+    createEntity('prop', 'Forest Herbalist Cottage', 0.33, 0.37, {
+      notes: 'RPG Building: cottage',
+      scale: 0.9,
+      rotation: 28,
+    }),
+    createEntity('prop', 'Ancient Vine Stone Shrine', 0.5, 0.21, {
+      notes: 'RPG Building: shrine',
+      scale: 1.04,
+      rotation: 0,
+    }),
+    // Weathered Broken Organic Stone Path & Mountain Rope Bridge with Broken Slat
+    createEntity('prop', 'Weathered Broken Stone Path', 0.5, 0.52, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 0.95,
+      rotation: 12,
+    }),
+    createEntity('prop', 'Weathered Broken Stone Path', 0.5, 0.45, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 0.98,
+      rotation: -8,
+    }),
+    createEntity('prop', 'Weathered Broken Stone Path', 0.5, 0.38, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 0.94,
+      rotation: 15,
+    }),
+    createEntity('prop', 'Rope Bridge with Broken Slat', 0.5, 0.31, {
+      notes: 'RPG Prop: ropeBridge',
+      scale: 0.95,
+      rotation: 90,
+    }),
+    // Village Organic Props, Hollow Magic Tree & Wandering Chickens
+    createEntity('prop', 'Village Stone Well', 0.44, 0.51, {
+      notes: 'RPG Prop: well',
+      scale: 0.88,
+    }),
+    createEntity('prop', 'Hollow Magic Forest Tree', 0.67, 0.36, {
+      notes: 'RPG Prop: hollowMagicTree',
+      scale: 0.98,
+    }),
+    createEntity('prop', 'Distressed Split-Rail Fence', 0.38, 0.55, {
+      notes: 'RPG Prop: fence',
+      scale: 0.86,
+      rotation: 14,
+    }),
+    createEntity('prop', 'Distressed Split-Rail Fence', 0.62, 0.55, {
+      notes: 'RPG Prop: fence',
+      scale: 0.86,
+      rotation: -16,
+    }),
+    createEntity('prop', 'Wandering Chicken', 0.47, 0.48, {
+      notes: 'RPG Prop: chicken',
+      scale: 0.82,
+      styleTint: '#FFFBEB',
+    }),
+    createEntity('prop', 'Wandering Speckled Hen', 0.53, 0.51, {
+      notes: 'RPG Prop: chicken',
+      scale: 0.78,
+      styleTint: '#FDE68A',
+    }),
+    createEntity('prop', 'Wandering Brown Hen', 0.42, 0.54, {
+      notes: 'RPG Prop: chicken',
+      scale: 0.8,
+      styleTint: '#D97706',
+    }),
+    // Volumetric Lanterns
+    createEntity('light', 'Courtyard Volumetric Lantern', 0.47, 0.46, {
+      notes: 'RPG Volumetric Lantern',
+      styleTint: '#FFAE34',
+    }),
+    createEntity('light', 'Temple Volumetric Lantern', 0.53, 0.26, {
+      notes: 'RPG Volumetric Lantern',
+      styleTint: '#FFAE34',
+    }),
+    // Enemies & Ogre Brute Boss
+    createEntity('baddie', 'Bandit Raider', 0.45, 0.34, {
+      brain: 'Chaser',
+      health: 24,
+      speed: 2.7,
+      damage: 1,
+      styleTint: '#EF4444',
+    }),
+    createEntity('baddie', 'Dark Forest Cultist', 0.56, 0.33, {
+      brain: 'patrol',
+      health: 22,
+      speed: 2.5,
+      damage: 1,
+      styleTint: '#8B5CF6',
+    }),
+    createEntity('baddie', 'Ogre Brute Warlord', 0.5, 0.24, {
+      brain: 'Chaser',
+      health: 48,
+      speed: 2.2,
+      damage: 2,
+      scale: 1.38,
+      isBoss: true,
+      styleTint: '#991B1B',
+      notes: 'RPG Boss: ogre',
+    }),
+    // Dual Treasure: Traditional Chest + Fanned-Out Colorful Reward Cards Shrine
+    createEntity('treasure', 'Adventurer Loot Chest', 0.44, 0.22, {
+      loot: 'Health',
+      pickupable: true,
+      pickupItemId: 'health_potion',
+      pickupQty: 2,
+      notes: 'RPG Traditional Chest',
+    }),
+    createEntity('treasure', 'Fanned Skill & Loot Cards Shrine', 0.56, 0.22, {
+      loot: 'Coins',
+      notes: 'RPG Card Choice: Fanned-out colorful reward cards (Crimson Sunblade, Emerald Elixir & Herb Bundle, Arcane Storm Tome)',
+      cards: [makeCard('playerTouches', ['giveTreasure', 'playSound', 'destroySelf'], 'Choose Skill Reward')],
+    }),
+  ];
+
+  rpgLevel.objectives = [
+    { id: uid(), text: 'Explore Oakhollow Village & recruit your companion party (Knight, Mage, Ranger)', isOptional: false },
+    { id: uid(), text: 'Cross the weathered stone path & rope bridge to battle the Bandits and Ogre Brute using Sword (1), Bow (2) & Magic (3)', isOptional: false },
+    { id: uid(), text: 'Loot the traditional chest OR pick from the 3 fanned-out colorful reward cards', isOptional: true },
+  ];
+
+  return {
+    id: uid(),
+    name,
+    tagline: 'Rich isometric fantasy RPG with village taverns, companion party, sword/arrow/magic combat & fanned-out loot cards.',
+    symbol: 'shield.fill',
+    colorHex: '#8B5CF6',
+    updatedAt: new Date().toISOString(),
+    levels: [rpgLevel],
+    heroName: 'Valen',
+    heroBody: 'Knight',
+    heroColors: { tunic: '#8B5CF6', cloak: '#1F2430', hair: '#3B2820', skin: '#F4C7A1' },
+    enabledActions: [
+      'idle',
+      'walk',
+      'run',
+      'sprint',
+      'jump',
+      'dodge',
+      'swordLight',
+      'swordHeavy',
+      'block',
+      'magicBolt',
+      'heal',
+      'open',
+      'pickUp',
+    ],
+    hud: {
+      ...defaultHUDProfile(),
+      name: 'RPG',
+      themeName: 'Fantasy',
+    },
+    currencies: ['Coins', 'Gems', 'Keys'],
+    coverTagline: 'Isometric Diorama · Companion Party · Sword/Magic Combat · Loot Cards.',
+    difficulty: 'Normal',
+    published: false,
+  };
+}
+
 function buildRoguelikeProject(name: string): GameProject {
   const baseFloor: GameLevel = {
     ...createBlankLevel('Floor 1 · Torchlit Crypt', 'cave', 'dungeon'),
@@ -3129,6 +3369,8 @@ function buildDungeonBuilderProject(name: string): GameProject {
 export function projectFromTemplate(name: string, template: GameTemplate): GameProject {
   const cleanName = name.trim() || template.name;
   switch (template.id) {
+    case 'rpg':
+      return buildRpgProject(cleanName);
     case 'floatingIsland':
       return buildFloatingIslandProject(cleanName);
     case 'buddies':

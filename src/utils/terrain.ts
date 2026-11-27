@@ -1001,6 +1001,11 @@ function inferPropPresetForCollision(name?: string, explicit?: PropPresetId): Pr
     return 'savePlinth';
   }
   if (lower.includes('ramp') || lower.includes('jump')) return 'ramp';
+  if (lower.includes('flight') || lower.includes('fly cube') || lower.includes('wing cube')) {
+    return 'flightCube';
+  }
+  if (lower.includes('boost') || lower.includes('turbo pad')) return 'boostPad';
+  if (lower.includes('barrier') || lower.includes('barricade')) return 'roadBarrier';
   if (lower.includes('arch') || lower.includes('gate')) return 'checkpointArch';
   if (lower.includes('signpost')) return 'signpost';
   return undefined;
@@ -1228,8 +1233,15 @@ function buildLevelColliderGrid(level: GameLevel): CachedLevelColliderGrid {
         });
       } else if (ent.kind === 'prop') {
         const preset = inferPropPresetForCollision(ent.name, ent.propPreset);
-        if (preset === 'dock' || preset === 'ramp') {
-          continue; // Walkable / drivable surfaces
+        if (
+          preset === 'dock' ||
+          preset === 'ramp' ||
+          preset === 'flightCube' ||
+          preset === 'boostPad'
+        ) {
+          continue; // Walkable / drivable / collect-through surfaces
+        } else if (preset === 'roadBarrier') {
+          addObbCollider(cells, wx, wz, yaw, 1.45 * s, 0.34 * s, undefined, baseY, baseY + 1.25 * s);
         } else if (preset === 'tavern') {
           const cos = Math.cos(yaw);
           const sin = Math.sin(yaw);
@@ -3388,6 +3400,115 @@ export function createDrivingTerrain(): TerrainData {
     const isTree = item.kind === 'tree' || item.kind === 'pine' || item.kind === 'oak' || item.kind === 'birch';
     const d = distToSpline(trackSamples, item.x, item.z);
     if (d < (isTree ? 7.6 : 5.4)) return false;
+    return true;
+  });
+
+  return {
+    ...base,
+    heights,
+    layers,
+    scatter: cleared,
+    revision: base.revision + 1,
+  };
+}
+
+export interface DrivingChasmGap {
+  x: number;
+  z: number;
+  yawRad: number;
+  width: number;
+  length: number;
+}
+
+export interface CustomDrivingTrackOptions {
+  waypoints: [number, number][];
+  trackHalfWidth?: number;
+  elevationBoost?: number;
+  surfaceLayer?: number;
+  chasmGaps?: DrivingChasmGap[];
+  baseTerrain?: TerrainData;
+}
+
+export function createCustomDrivingTrackTerrain(options: CustomDrivingTrackOptions): TerrainData {
+  const base = options.baseTerrain
+    ? ensureUpgradedTerrain(options.baseTerrain)
+    : createInitialTerrain();
+  const heights = base.heights.slice();
+  const layers = base.layers.slice();
+  const pts = options.waypoints.length >= 2 ? options.waypoints : DrivingWaypoints;
+  const trackSamples = samplePolylineSpline(pts, Math.max(200, pts.length * 24));
+
+  const size = base.size;
+  const width = size + 1;
+  const worldRadius = getTerrainRadius(base);
+  const step = (2 * worldRadius) / size;
+  const trackHalfW = Math.max(3.2, Math.min(7.5, options.trackHalfWidth ?? 4.5));
+  const shoulderW = trackHalfW + 5.2;
+  const surfaceLayer = options.surfaceLayer ?? 6;
+  const elevBoost = options.elevationBoost ?? 0.55;
+  const chasms = options.chasmGaps ?? [];
+
+  for (let row = 0; row < width; row++) {
+    for (let col = 0; col < width; col++) {
+      const vx = -worldRadius + col * step;
+      const vz = -worldRadius + row * step;
+      const d = distToSpline(trackSamples, vx, vz);
+      const idx = row * width + col;
+
+      if (d <= shoulderW) {
+        const scenicWave =
+          1.28 +
+          elevBoost *
+            (Math.sin(vx * 0.032) * 0.75 + Math.cos(vz * 0.028) * 0.65);
+        const targetTrackH = Math.max(0.95, scenicWave);
+        if (d <= trackHalfW) {
+          heights[idx] = targetTrackH;
+          layers[idx] = surfaceLayer;
+        } else {
+          const s = quinticSmooth((d - trackHalfW) / (shoulderW - trackHalfW));
+          heights[idx] = targetTrackH * (1 - s) + Math.max(0.25, heights[idx]) * s;
+          if (d < trackHalfW + 1.1) layers[idx] = surfaceLayer;
+        }
+      }
+
+      // Carve jumpable canyon/water chasms across track segments
+      for (const ch of chasms) {
+        const dx = vx - ch.x;
+        const dz = vz - ch.z;
+        const sy = Math.sin(ch.yawRad);
+        const cy = Math.cos(ch.yawRad);
+        const along = dx * sy + dz * cy;
+        const perp = dx * cy - dz * sy;
+        const hl = Math.max(4.5, ch.length * 0.5);
+        const hw = Math.max(6.0, ch.width * 0.5);
+        const ax = Math.abs(along) / hl;
+        const az = Math.abs(perp) / hw;
+        if (ax <= 1.25 && az <= 1.18) {
+          const rim = Math.max(ax, az);
+          if (rim <= 0.78) {
+            heights[idx] = IslandTerrain.waterLevel - 4.4;
+            layers[idx] = 1;
+          } else {
+            const blend = quinticSmooth((rim - 0.78) / 0.47);
+            const canyonFloor = IslandTerrain.waterLevel - 4.0;
+            heights[idx] = canyonFloor * (1 - blend) + heights[idx] * blend;
+            if (blend < 0.6) layers[idx] = 2; // rocky cliff rim
+          }
+        }
+      }
+    }
+  }
+
+  const cleared = base.scatter.filter((item) => {
+    const isTree =
+      item.kind === 'tree' || item.kind === 'pine' || item.kind === 'oak' || item.kind === 'birch';
+    const d = distToSpline(trackSamples, item.x, item.z);
+    if (d < (isTree ? trackHalfW + 3.4 : trackHalfW + 1.2)) return false;
+    for (const ch of chasms) {
+      if (Math.hypot(item.x - ch.x, item.z - ch.z) < Math.max(ch.width, ch.length) * 0.65) {
+        return false;
+      }
+    }
     return true;
   });
 

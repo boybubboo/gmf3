@@ -38,7 +38,10 @@ import {
 } from '../../ai/aiAppliers';
 import {
   AI_CONTEXT_META,
+  DRIVING_WORLD_STARTER_PROMPTS,
   PLATFORMER_WORLD_STARTER_PROMPTS,
+  ROGUELIKE_WORLD_STARTER_PROMPTS,
+  RPG_WORLD_STARTER_PROMPTS,
   buildContextualAiPrompts,
   type GlbAiSummary,
 } from '../../ai/contextPacks';
@@ -53,8 +56,16 @@ import {
   type CharacterGuideExtremity,
   type CharacterGuideSurface,
   type CharacterPromptGuide,
+  type DrivingGuideMod,
+  type DrivingGuideVehicleStyle,
+  type DrivingPromptGuide,
   type PlatformerGuideMechanic,
   type PlatformerPromptGuide,
+  type RoguelikeGuideTrap,
+  type RoguelikePromptGuide,
+  type RoguelikeScenarioPreset,
+  type RpgPromptGuide,
+  type RpgScenarioPreset,
 } from '../../ai/studioBridge';
 import { createEntity } from '../../data/registries';
 import type { MakerStore } from '../../store/useMakerStore';
@@ -171,6 +182,87 @@ const PLATFORMER_MECHANIC_OPTIONS: { id: PlatformerGuideMechanic; label: string 
   { id: 'platformBaddies', label: 'Branch Baddies' },
 ];
 
+const DEFAULT_DRIVING_GUIDE: DrivingPromptGuide = {
+  vehicleStyle: 'auto',
+  trackStyle: 'auto',
+  mods: [],
+};
+
+const DRIVING_VEHICLE_OPTIONS: { id: DrivingGuideVehicleStyle; label: string; icon: string }[] = [
+  { id: 'flintstones', label: 'Flintstones', icon: '🦴' },
+  { id: 'f1Racer', label: 'Formula 1', icon: '🏎️' },
+  { id: 'sportCoupe', label: 'Sport Coupe / Porsche', icon: '🚗' },
+  { id: 'motorbike', label: 'Scrambler Bike', icon: '🏍️' },
+  { id: 'trailBuggy', label: 'Trail Buggy', icon: '🚙' },
+  { id: 'rallyCoupe', label: 'Rally Coupe', icon: '🏎️' },
+  { id: 'forestTruck', label: '4x4 Truck', icon: '🛻' },
+  { id: 'vintageRoadster', label: 'Vintage Roadster', icon: '🚘' },
+];
+
+const DRIVING_MOD_OPTIONS: { id: DrivingGuideMod; label: string; icon: string }[] = [
+  { id: 'thickMagWheels', label: 'Thick Mag Wheels', icon: '🛞' },
+  { id: 'stoneRollerWheels', label: 'Stone Rollers', icon: '🪨' },
+  { id: 'slickWheels', label: 'F1 Slicks', icon: '🏁' },
+  { id: 'tintedSunroof', label: 'Tinted Sunroof', icon: '🪟' },
+  { id: 'openRoadster', label: 'Open Roadster', icon: '🕶️' },
+  { id: 'chasmGliderWings', label: 'Chasm Glider Wings', icon: '🪽' },
+  { id: 'turboJetWings', label: 'Turbo Jet Wings', icon: '🚀' },
+  { id: 'neonBoostPads', label: 'Neon Boost Pads', icon: '⚡' },
+  { id: 'flightBonusCubes', label: 'Flight Bonus Cubes', icon: '📦' },
+  { id: 'stuntRamps', label: 'Timber Stunt Ramps', icon: '📐' },
+  { id: 'carvedChasms', label: 'Carved Canyon Chasms', icon: '🏞️' },
+];
+
+const DEFAULT_ROGUELIKE_GUIDE: RoguelikePromptGuide = {
+  scenario: 'auto',
+  traps: [],
+  enemyDensity: 'balanced',
+  bossTheme: 'auto',
+};
+
+const ROGUELIKE_SCENARIO_OPTIONS: { id: RoguelikeScenarioPreset; label: string; icon: string }[] = [
+  { id: 'ancientCrypt', label: 'Ancient Crypt', icon: '💀' },
+  { id: 'cyberpunkLab', label: 'Cyberpunk Lab', icon: '🤖' },
+  { id: 'overgrownJungle', label: 'Jungle Ruins', icon: '🌿' },
+  { id: 'volcanicAbyss', label: 'Volcanic Abyss', icon: '🌋' },
+  { id: 'frostCitadel', label: 'Frost Citadel', icon: '❄️' },
+  { id: 'sunkenTemple', label: 'Sunken Temple', icon: '🌊' },
+  { id: 'desertPyramid', label: 'Desert Pyramid', icon: '🏜️' },
+  { id: 'astralVoid', label: 'Astral Void', icon: '✨' },
+];
+
+const ROGUELIKE_TRAP_OPTIONS: { id: RoguelikeGuideTrap; label: string; icon: string }[] = [
+  { id: 'laserTripwires', label: 'Laser Tripwires', icon: '⚡' },
+  { id: 'poisonDartPillars', label: 'Poison Darts', icon: '🎯' },
+  { id: 'fireGeysers', label: 'Fire Geysers', icon: '🔥' },
+  { id: 'frostSpikes', label: 'Frost Spikes', icon: '🧊' },
+  { id: 'acidPuddles', label: 'Acid Puddles', icon: '🧪' },
+  { id: 'whirlpoolVortex', label: 'Whirlpool Vortex', icon: '🌀' },
+  { id: 'sawBlades', label: 'Saw Blades', icon: '🪚' },
+  { id: 'ironSpikes', label: 'Iron Spikes', icon: '🗡️' },
+  { id: 'emberPlates', label: 'Ember Plates', icon: '♨️' },
+  { id: 'cursedRunes', label: 'Cursed Runes', icon: '🔮' },
+];
+
+const DEFAULT_RPG_GUIDE: RpgPromptGuide = {
+  scenario: 'auto',
+  lootStyle: 'mixed',
+  companionRecruits: 'knightAndMage',
+  worldAtmosphere: 'lushFoggy',
+  pathStyle: 'weatheredStone',
+};
+
+const RPG_SCENARIO_OPTIONS: { id: RpgScenarioPreset; label: string; icon: string }[] = [
+  { id: 'medievalVillage', label: 'Medieval Village', icon: '🏘️' },
+  { id: 'jungleRuins', label: 'Jungle Ruins', icon: '🌴' },
+  { id: 'deepWoodedForest', label: 'Deep Forest', icon: '🌲' },
+  { id: 'stoneTemple', label: 'Stone Temple', icon: '🏛️' },
+  { id: 'coastalVillage', label: 'Coastal Village', icon: '⚓' },
+  { id: 'interiorCottage', label: 'Cottage Interior', icon: '🕯️' },
+  { id: 'interiorTavern', label: 'Tavern Interior', icon: '🍺' },
+  { id: 'interiorCave', label: 'Cavern Interior', icon: '💎' },
+];
+
 async function encodeReferenceImageFile(file: File): Promise<AiReferenceImage> {
   const objectUrl = URL.createObjectURL(file);
   try {
@@ -235,17 +327,58 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
     targetContext === 'world' &&
     Boolean(store.currentLevel && getEnvironmentType(store.currentLevel) === 'sideScroller');
 
+  const isDrivingWorld =
+    targetContext === 'world' &&
+    Boolean(store.currentLevel && store.currentLevel.gameplayMode === 'driving');
+
+  const isRoguelikeWorld =
+    targetContext === 'world' &&
+    Boolean(store.currentLevel && store.currentLevel.gameplayMode === 'roguelike');
+
+  const isRpgWorld =
+    targetContext === 'world' &&
+    Boolean(store.currentLevel && store.currentLevel.gameplayMode === 'rpg');
+
   const contextMeta = useMemo(() => {
     const base = AI_CONTEXT_META[targetContext];
-    if (!isSideScrollerWorld) return base;
-    return {
-      ...base,
-      title: 'Platformer Director AI',
-      tagline:
-        'Builds 2D flat runs, vertical towers, layered jungles, underwater worlds, vines, secret rooms & contraptions.',
-      starterPrompts: PLATFORMER_WORLD_STARTER_PROMPTS,
-    };
-  }, [targetContext, isSideScrollerWorld]);
+    if (isSideScrollerWorld) {
+      return {
+        ...base,
+        title: 'Platformer Director AI',
+        tagline:
+          'Builds 2D flat runs, vertical towers, layered jungles, underwater worlds, vines, secret rooms & contraptions.',
+        starterPrompts: PLATFORMER_WORLD_STARTER_PROMPTS,
+      };
+    }
+    if (isDrivingWorld) {
+      return {
+        ...base,
+        title: 'Vehicle & Driving Course AI',
+        tagline:
+          'Builds custom vehicles (Flintstones, F1, Porsche coupe, motorbike), thick mags, sunroofs, glider wings & winding island tracks with flight bonus cubes & chasms.',
+        starterPrompts: DRIVING_WORLD_STARTER_PROMPTS,
+      };
+    }
+    if (isRoguelikeWorld) {
+      return {
+        ...base,
+        title: 'Roguelike Scenario Director AI',
+        tagline:
+          'Builds multi-scenario roguelikes (Cyberpunk Lab, Jungle Ruins, Volcanic Abyss, Frost Citadel, Sunken Temple, Desert Pyramid, Astral Void) with themed enemies, traps & bosses.',
+        starterPrompts: ROGUELIKE_WORLD_STARTER_PROMPTS,
+      };
+    }
+    if (isRpgWorld) {
+      return {
+        ...base,
+        title: 'Isometric RPG World Director AI',
+        tagline:
+          'Builds detailed medieval villages, vine-draped jungle ruins, deep forests & cutaway interiors with companions, weathered stone/rope bridges, volumetric lanterns & fanned reward cards.',
+        starterPrompts: RPG_WORLD_STARTER_PROMPTS,
+      };
+    }
+    return base;
+  }, [targetContext, isSideScrollerWorld, isDrivingWorld, isRoguelikeWorld, isRpgWorld]);
 
   const [tab, setTab] = useState<ModalTab>('create');
   const [prompt, setPrompt] = useState<string>('');
@@ -290,6 +423,16 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
   const [platformerGuide, setPlatformerGuide] = useState<PlatformerPromptGuide>(
     DEFAULT_PLATFORMER_GUIDE
   );
+  const [showDrivingGuide, setShowDrivingGuide] = useState(true);
+  const [drivingGuide, setDrivingGuide] = useState<DrivingPromptGuide>(
+    DEFAULT_DRIVING_GUIDE
+  );
+  const [showRoguelikeGuide, setShowRoguelikeGuide] = useState(true);
+  const [roguelikeGuide, setRoguelikeGuide] = useState<RoguelikePromptGuide>(
+    DEFAULT_ROGUELIKE_GUIDE
+  );
+  const [showRpgGuide, setShowRpgGuide] = useState(true);
+  const [rpgGuide, setRpgGuide] = useState<RpgPromptGuide>(DEFAULT_RPG_GUIDE);
 
   useEffect(() => {
     void fetchAiProviderStatus()
@@ -353,12 +496,16 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
       const envType = getEnvironmentType(lvl);
       return {
         levelName: lvl.name,
+        gameplayMode: lvl.gameplayMode,
+        drivingConfig: lvl.drivingConfig,
         environmentType: envType,
         worldEditorScope: store.worldEditorScope,
         biome: lvl.biome,
         sky: lvl.sky,
         weather: lvl.weather,
         sideScrollerConfig: envType === 'sideScroller' ? lvl.sideScrollerConfig ?? null : undefined,
+        dungeonStyle: lvl.dungeonStyle ?? lvl.roguelikeConfig?.dungeonStyle,
+        roguelikeConfig: lvl.roguelikeConfig,
         vistaPreset: lvl.vistaPreset ?? 'none',
         mountainConfig: lvl.terrain?.mountainConfig ?? null,
         cavesCount: lvl.terrain?.caves?.length ?? 0,
@@ -441,6 +588,9 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
       return applyWorldTerraformToStore(store, data, {
         modifyExisting: useModify,
         platformerGuide: isSideScrollerWorld ? platformerGuide : undefined,
+        drivingGuide: isDrivingWorld ? drivingGuide : undefined,
+        roguelikeGuide: isRoguelikeWorld ? roguelikeGuide : undefined,
+        rpgGuide: isRpgWorld ? rpgGuide : undefined,
       });
     }
     if (targetContext === 'logic') {
@@ -632,6 +782,9 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
         modifyExisting,
         characterGuide: targetContext === 'character' ? characterGuide : undefined,
         platformerGuide: isSideScrollerWorld ? platformerGuide : undefined,
+        drivingGuide: isDrivingWorld ? drivingGuide : undefined,
+        roguelikeGuide: isRoguelikeWorld ? roguelikeGuide : undefined,
+        rpgGuide: isRpgWorld ? rpgGuide : undefined,
         hasReferenceImage: Boolean(referenceImage),
       });
 
@@ -1502,6 +1655,473 @@ export const ContextualAiPanel: React.FC<ContextualAiPanelProps> = ({
                             </button>
                           );
                         })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Driving & Vehicle Director Helper (only when World level is Driving) */}
+            {isDrivingWorld && (
+              <div
+                className={`p-2.5 rounded-xl border space-y-2 ${
+                  embedded
+                    ? 'bg-slate-50 dark:bg-[#12151E] border-slate-200/80 dark:border-white/[0.08]'
+                    : 'bg-[#171A23] border-white/[0.08]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDrivingGuide((v) => !v)}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-left"
+                  >
+                    {showDrivingGuide ? (
+                      <ChevronUp size={13} className="text-[#38BDF8]" />
+                    ) : (
+                      <ChevronDown size={13} className="text-[#38BDF8]" />
+                    )}
+                    <span>Vehicle Archetype &amp; Modifications</span>
+                  </button>
+                  {(drivingGuide.vehicleStyle !== 'auto' || (drivingGuide.mods && drivingGuide.mods.length > 0)) && (
+                    <button
+                      type="button"
+                      onClick={() => setDrivingGuide(DEFAULT_DRIVING_GUIDE)}
+                      className="text-[10px] font-bold text-[#38BDF8] hover:underline"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {showDrivingGuide && (
+                  <div className="space-y-2 pt-0.5">
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Vehicle Chassis Archetype
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
+                        {DRIVING_VEHICLE_OPTIONS.map((opt) => {
+                          const active = drivingGuide.vehicleStyle === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setDrivingGuide((prev) => ({
+                                  ...prev,
+                                  vehicleStyle: active ? 'auto' : opt.id,
+                                }))
+                              }
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border transition-colors flex items-center gap-1 truncate ${
+                                active
+                                  ? 'bg-[#0284C7] border-[#38BDF8] text-white shadow-sm'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              <span>{opt.icon}</span>
+                              <span className="truncate">{opt.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Active Mods &amp; Course Mechanics
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
+                        {DRIVING_MOD_OPTIONS.map((opt) => {
+                          const checked = (drivingGuide.mods ?? []).includes(opt.id);
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setDrivingGuide((prev) => ({
+                                  ...prev,
+                                  mods: checked
+                                    ? (prev.mods ?? []).filter((x) => x !== opt.id)
+                                    : [...(prev.mods ?? []), opt.id],
+                                }))
+                              }
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border inline-flex items-center gap-1 transition-colors ${
+                                checked
+                                  ? 'bg-[#38BDF8]/20 border-[#38BDF8] text-sky-700 dark:text-sky-200'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              <span>{opt.icon}</span>
+                              <span className="truncate">{opt.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Roguelike Scenario Director Helper (only when World level is Roguelike) */}
+            {isRoguelikeWorld && (
+              <div
+                className={`p-2.5 rounded-xl border space-y-2 ${
+                  embedded
+                    ? 'bg-slate-50 dark:bg-[#12151E] border-slate-200/80 dark:border-white/[0.08]'
+                    : 'bg-[#171A23] border-white/[0.08]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowRoguelikeGuide((v) => !v)}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-left"
+                  >
+                    {showRoguelikeGuide ? (
+                      <ChevronUp size={13} className="text-[#A855F7]" />
+                    ) : (
+                      <ChevronDown size={13} className="text-[#A855F7]" />
+                    )}
+                    <span>Roguelike Scenario &amp; Traps Director</span>
+                  </button>
+                  {(roguelikeGuide.scenario !== 'auto' ||
+                    (roguelikeGuide.traps && roguelikeGuide.traps.length > 0) ||
+                    roguelikeGuide.bossTheme !== 'auto') && (
+                    <button
+                      type="button"
+                      onClick={() => setRoguelikeGuide(DEFAULT_ROGUELIKE_GUIDE)}
+                      className="text-[10px] font-bold text-[#A855F7] hover:underline"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {showRoguelikeGuide && (
+                  <div className="space-y-2 pt-0.5">
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Scenario Environment Theme
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
+                        {ROGUELIKE_SCENARIO_OPTIONS.map((opt) => {
+                          const active = roguelikeGuide.scenario === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setRoguelikeGuide((prev) => ({
+                                  ...prev,
+                                  scenario: active ? 'auto' : opt.id,
+                                }))
+                              }
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border transition-colors flex items-center gap-1 truncate ${
+                                active
+                                  ? 'bg-[#9333EA] border-[#A855F7] text-white shadow-sm'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              <span>{opt.icon}</span>
+                              <span className="truncate">{opt.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Hazards &amp; Trap Mechanics (Multi-Select)
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
+                        {ROGUELIKE_TRAP_OPTIONS.map((opt) => {
+                          const checked = (roguelikeGuide.traps ?? []).includes(opt.id);
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setRoguelikeGuide((prev) => ({
+                                  ...prev,
+                                  traps: checked
+                                    ? (prev.traps ?? []).filter((x) => x !== opt.id)
+                                    : [...(prev.traps ?? []), opt.id],
+                                }))
+                              }
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border inline-flex items-center gap-1 transition-colors ${
+                                checked
+                                  ? 'bg-[#9333EA]/20 border-[#A855F7] text-purple-700 dark:text-purple-200'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              <span>{opt.icon}</span>
+                              <span className="truncate">{opt.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <div
+                          className={`text-[10px] font-bold ${
+                            embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                          }`}
+                        >
+                          Enemy Density
+                        </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          {(['light', 'balanced', 'intense', 'nightmare'] as const).map((density) => {
+                            const active = roguelikeGuide.enemyDensity === density;
+                            return (
+                              <button
+                                key={density}
+                                type="button"
+                                onClick={() =>
+                                  setRoguelikeGuide((prev) => ({
+                                    ...prev,
+                                    enemyDensity: density,
+                                  }))
+                                }
+                                className={`px-1.5 py-1 rounded-lg text-[9px] font-bold border capitalize transition-colors truncate ${
+                                  active
+                                    ? 'bg-[#9333EA] border-[#A855F7] text-white shadow-sm'
+                                    : embedded
+                                    ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                    : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                                }`}
+                              >
+                                {density}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div
+                          className={`text-[10px] font-bold ${
+                            embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                          }`}
+                        >
+                          Boss Encounter Theme
+                        </div>
+                        <select
+                          value={roguelikeGuide.bossTheme}
+                          onChange={(e) =>
+                            setRoguelikeGuide((prev) => ({
+                              ...prev,
+                              bossTheme: e.target.value as RoguelikePromptGuide['bossTheme'],
+                            }))
+                          }
+                          className={`w-full px-2 py-1.5 rounded-lg text-[10px] font-bold border ${
+                            embedded
+                              ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-800 dark:text-[#E2E8F0]'
+                              : 'bg-[#11141C] border-white/[0.08] text-[#E2E8F0]'
+                          }`}
+                        >
+                          <option value="auto">Auto Scenario Boss</option>
+                          <option value="cyberMecha">Cyber Mecha Titan</option>
+                          <option value="jungleTitan">Jungle Behemoth</option>
+                          <option value="magmaLord">Infernal Dreadlord</option>
+                          <option value="frostLich">Glacial Sovereign</option>
+                          <option value="abyssalGod">Leviathan Kraken</option>
+                          <option value="pharaoh">Pharaoh Guardian</option>
+                          <option value="voidHorror">Void Dreadlord</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Isometric RPG World & Loot Director Helper (only when World level is RPG) */}
+            {isRpgWorld && (
+              <div
+                className={`p-2.5 rounded-xl border space-y-2 ${
+                  embedded
+                    ? 'bg-slate-50 dark:bg-[#12151E] border-slate-200/80 dark:border-white/[0.08]'
+                    : 'bg-[#171A23] border-white/[0.08]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowRpgGuide((v) => !v)}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-left"
+                  >
+                    {showRpgGuide ? (
+                      <ChevronUp size={13} className="text-[#8B5CF6]" />
+                    ) : (
+                      <ChevronDown size={13} className="text-[#8B5CF6]" />
+                    )}
+                    <span>Isometric RPG Scenario, Paths &amp; Loot Cards Director</span>
+                  </button>
+                  {rpgGuide.scenario !== 'auto' && (
+                    <button
+                      type="button"
+                      onClick={() => setRpgGuide(DEFAULT_RPG_GUIDE)}
+                      className="text-[10px] font-bold text-[#8B5CF6] hover:underline"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+
+                {showRpgGuide && (
+                  <div className="space-y-2 pt-0.5">
+                    <div className="space-y-1">
+                      <div
+                        className={`text-[10px] font-bold ${
+                          embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                        }`}
+                      >
+                        Scenario &amp; Interior Diorama Style
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
+                        {RPG_SCENARIO_OPTIONS.map((opt) => {
+                          const active = rpgGuide.scenario === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setRpgGuide((prev) => ({
+                                  ...prev,
+                                  scenario: active ? 'auto' : opt.id,
+                                }))
+                              }
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-bold border transition-colors flex items-center gap-1 truncate ${
+                                active
+                                  ? 'bg-[#7C3AED] border-[#A78BFA] text-white shadow-sm'
+                                  : embedded
+                                  ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-[#C8D0E4]'
+                                  : 'bg-[#11141C] border-white/[0.08] text-[#C8D0E4] hover:border-white/20'
+                              }`}
+                            >
+                              <span>{opt.icon}</span>
+                              <span className="truncate">{opt.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <div
+                          className={`text-[10px] font-bold ${
+                            embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                          }`}
+                        >
+                          Path &amp; Bridge Style
+                        </div>
+                        <select
+                          value={rpgGuide.pathStyle ?? 'weatheredStone'}
+                          onChange={(e) =>
+                            setRpgGuide((prev) => ({
+                              ...prev,
+                              pathStyle: e.target.value as RpgPromptGuide['pathStyle'],
+                            }))
+                          }
+                          className={`w-full px-2 py-1.5 rounded-lg text-[10px] font-bold border ${
+                            embedded
+                              ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-800 dark:text-[#E2E8F0]'
+                              : 'bg-[#11141C] border-white/[0.08] text-[#E2E8F0]'
+                          }`}
+                        >
+                          <option value="weatheredStone">Weathered Broken Stones</option>
+                          <option value="ropeBridgeSlats">Rope Bridge &amp; Broken Slats</option>
+                          <option value="mossyCobble">Ancient Mossy Cobbles</option>
+                          <option value="woodPlankWalkway">Distressed Wood Slats</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div
+                          className={`text-[10px] font-bold ${
+                            embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                          }`}
+                        >
+                          Treasure &amp; Reward Style
+                        </div>
+                        <select
+                          value={rpgGuide.lootStyle}
+                          onChange={(e) =>
+                            setRpgGuide((prev) => ({
+                              ...prev,
+                              lootStyle: e.target.value as RpgPromptGuide['lootStyle'],
+                            }))
+                          }
+                          className={`w-full px-2 py-1.5 rounded-lg text-[10px] font-bold border ${
+                            embedded
+                              ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-800 dark:text-[#E2E8F0]'
+                              : 'bg-[#11141C] border-white/[0.08] text-[#E2E8F0]'
+                          }`}
+                        >
+                          <option value="mixed">Both Chests &amp; Fanned Cards</option>
+                          <option value="cardChoice">Fanned Reward Cards Choice</option>
+                          <option value="traditionalChests">Traditional Chests &amp; Drops</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div
+                          className={`text-[10px] font-bold ${
+                            embedded ? 'text-slate-500 dark:text-[#949BB0]' : 'text-[#949BB0]'
+                          }`}
+                        >
+                          Recruited Party Allies
+                        </div>
+                        <select
+                          value={rpgGuide.companionRecruits}
+                          onChange={(e) =>
+                            setRpgGuide((prev) => ({
+                              ...prev,
+                              companionRecruits: e.target.value as RpgPromptGuide['companionRecruits'],
+                            }))
+                          }
+                          className={`w-full px-2 py-1.5 rounded-lg text-[10px] font-bold border ${
+                            embedded
+                              ? 'bg-white dark:bg-[#1A1F2B] border-slate-200 dark:border-white/[0.08] text-slate-800 dark:text-[#E2E8F0]'
+                              : 'bg-[#11141C] border-white/[0.08] text-[#E2E8F0]'
+                          }`}
+                        >
+                          <option value="knightAndMage">Knight &amp; Mage Allies</option>
+                          <option value="rangerAndThief">Ranger &amp; Rogue Allies</option>
+                          <option value="clericAndWarrior">Cleric &amp; Paladin Allies</option>
+                          <option value="soloHero">Solo Hero</option>
+                        </select>
                       </div>
                     </div>
                   </div>

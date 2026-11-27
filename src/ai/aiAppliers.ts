@@ -141,18 +141,55 @@ import type {
   TreeBarkStyle,
   TreeGeneratorMode,
   TreeSpeciesType,
+  VehicleCustomSpec,
+  VehicleRoofStyle,
+  VehicleWheelStyle,
+  VehicleWingStyle,
+  CarPresetId,
+  DriverTypeId,
+  DrivingCameraView,
+  DrivingConfig,
+  DrivingPhysicsId,
+  DungeonFloorStyle,
+  DungeonPropStyle,
+  DungeonStyleConfig,
+  DungeonTrapStyle,
+  DungeonWallStyle,
+  PropPresetId,
+  RoguelikeConfig,
+  RoguelikeScenarioKind,
+  RpgLootMode,
+  RpgPathStyle,
+  RpgScenarioId,
   WaterBodyConfig,
   WeatherKind,
   WidgetAnchor,
   WidgetKind,
 } from '../types/maker';
+import {
+  BOSS_NAMES,
+  DUNGEON_FLOOR_STYLE_META,
+  DUNGEON_PROP_STYLE_META,
+  DUNGEON_THEME_PRESETS,
+  DUNGEON_TRAP_STYLE_META,
+  DUNGEON_WALL_STYLE_META,
+  DungeonGenerator,
+  ENEMY_ARCHETYPES,
+  SCENARIO_BOSS_NAMES,
+  SCENARIO_ENEMY_ARCHETYPES,
+  applyDungeonStyleToLevel,
+} from '../services/DungeonGenerator';
+import { DEFAULT_ROGUELIKE_CONFIG } from '../data/roguelikeEngine';
 import { getDefaultMechanismsForTemplate } from '../three/mechanismController';
 import type { AiApplyOptions, CharacterPromptGuide } from './studioBridge';
 import {
+  DrivingChasmGap,
+  DrivingWaypoints,
   IslandTerrain,
   applyMountainCaveToTerrain,
   applyRoadSplineToTerrain,
   carveWaterBodyIntoTerrain,
+  createCustomDrivingTrackTerrain,
   createDefaultMountainConfig,
   createInitialTerrain,
   createSideScrollerPresetConfig,
@@ -3093,6 +3130,1072 @@ export function applyPlatformerAiToStore(
   );
 }
 
+export function applyDrivingAiToStore(
+  store: MakerStore,
+  raw: Record<string, unknown>,
+  options?: AiApplyOptions
+): string {
+  const lvl = store.currentLevel;
+  const proj = store.currentProject;
+  if (!lvl || !proj) throw new Error('No active driving level found.');
+
+  const modifyExisting = Boolean(options?.modifyExisting);
+  const drivingGuide = options?.drivingGuide;
+
+  const biome = oneOf<BiomeId>(
+    raw.biome,
+    ['meadow', 'island', 'forest', 'snow', 'desert', 'cave', 'swamp', 'night'],
+    modifyExisting ? lvl.biome : 'island'
+  );
+  const sky = oneOf<SkyPresetId>(
+    raw.sky,
+    ['sunny', 'golden', 'night', 'mist', 'storm', 'cave'],
+    modifyExisting ? lvl.sky : 'sunny'
+  );
+  const weather = oneOf<WeatherKind>(
+    raw.weather,
+    ['none', 'fireflies', 'leaves', 'rain', 'snow'],
+    modifyExisting ? lvl.weather : 'none'
+  );
+
+  const rawVeh = (raw.vehicle && typeof raw.vehicle === 'object' ? raw.vehicle : {}) as Record<string, unknown>;
+  const rawCustom = (rawVeh.custom && typeof rawVeh.custom === 'object' ? rawVeh.custom : {}) as Record<string, unknown>;
+
+  // Selected vehicle archetype
+  const carPresetHint =
+    drivingGuide?.vehicleStyle && drivingGuide.vehicleStyle !== 'auto'
+      ? drivingGuide.vehicleStyle
+      : rawVeh.carId;
+  const carId = oneOf<CarPresetId>(
+    carPresetHint,
+    ['flintstones', 'f1Racer', 'sportCoupe', 'motorbike', 'trailBuggy', 'rallyCoupe', 'forestTruck', 'vintageRoadster'],
+    modifyExisting && lvl.drivingConfig?.carId ? lvl.drivingConfig.carId : 'trailBuggy'
+  );
+
+  const physicsId = oneOf<DrivingPhysicsId>(
+    rawVeh.physicsId,
+    ['arcadeDrift', 'grippyRally', 'offroadCrawler'],
+    modifyExisting && lvl.drivingConfig?.physicsId ? lvl.drivingConfig.physicsId : 'arcadeDrift'
+  );
+
+  const driverId = oneOf<DriverTypeId>(
+    rawVeh.driverId,
+    ['stunt', 'ranger', 'skunk', 'bot'],
+    modifyExisting && lvl.drivingConfig?.driverId ? lvl.drivingConfig.driverId : 'stunt'
+  );
+
+  const cameraView = oneOf<DrivingCameraView>(
+    rawVeh.cameraView,
+    ['closeChase', 'driverPov', 'farChase'],
+    modifyExisting && lvl.drivingConfig?.cameraView ? lvl.drivingConfig.cameraView : 'closeChase'
+  );
+
+  // Custom Vehicle Specs
+  const activeMods = drivingGuide?.mods ?? [];
+
+  // Wheel style
+  let wheelStyle = oneOf<VehicleWheelStyle>(
+    rawCustom.wheelStyle,
+    ['standard', 'thickMag', 'offroadKnobby', 'stoneRoller', 'slick'],
+    carId === 'flintstones' ? 'stoneRoller' : carId === 'f1Racer' ? 'slick' : 'standard'
+  );
+  if (activeMods.includes('thickMagWheels')) wheelStyle = 'thickMag';
+  if (activeMods.includes('stoneRollerWheels')) wheelStyle = 'stoneRoller';
+  if (activeMods.includes('slickWheels')) wheelStyle = 'slick';
+
+  // Roof style
+  let roofStyle = oneOf<VehicleRoofStyle>(
+    rawCustom.roofStyle,
+    ['standard', 'sunroof', 'openTop', 'rollCage'],
+    carId === 'sportCoupe' ? 'sunroof' : carId === 'motorbike' || carId === 'vintageRoadster' ? 'openTop' : 'standard'
+  );
+  if (activeMods.includes('tintedSunroof')) roofStyle = 'sunroof';
+  if (activeMods.includes('openRoadster')) roofStyle = 'openTop';
+
+  // Wing style
+  let wingStyle = oneOf<VehicleWingStyle>(
+    rawCustom.wingStyle,
+    ['none', 'gliderWings', 'aeroFins', 'jetWing'],
+    carId === 'f1Racer' ? 'aeroFins' : 'none'
+  );
+  if (activeMods.includes('chasmGliderWings')) wingStyle = 'gliderWings';
+  if (activeMods.includes('turboJetWings')) wingStyle = 'jetWing';
+
+  const defaultBodyColor =
+    carId === 'flintstones'
+      ? '#8C6747'
+      : carId === 'f1Racer'
+      ? '#EF4444'
+      : carId === 'sportCoupe'
+      ? '#D946EF'
+      : '#38BDF8';
+
+  const customVehicle: VehicleCustomSpec = {
+    bodyColor: hexColor(rawCustom.bodyColor, defaultBodyColor),
+    accentColor: hexColor(rawCustom.accentColor, carId === 'flintstones' ? '#E5D5C5' : '#38BDF8'),
+    rimColor: hexColor(rawCustom.rimColor, carId === 'flintstones' ? '#9CA3AF' : '#F8FAFC'),
+    wheelStyle,
+    roofStyle,
+    wingStyle,
+    hasSpoiler: Boolean(rawCustom.hasSpoiler || carId === 'sportCoupe' || carId === 'f1Racer'),
+    hasBullbar: Boolean(rawCustom.hasBullbar || carId === 'forestTruck'),
+    hasTwinExhaust: Boolean(rawCustom.hasTwinExhaust || carId === 'sportCoupe' || carId === 'f1Racer'),
+  };
+
+  const nextDrivingConfig: DrivingConfig = {
+    carId,
+    physicsId,
+    driverId,
+    cameraView,
+    customVehicle,
+  };
+
+  // Parse Track and Chasms
+  const rawTrack = (raw.track && typeof raw.track === 'object' ? raw.track : {}) as Record<string, unknown>;
+  let waypoints: [number, number][] = [];
+  if (Array.isArray(rawTrack.waypoints) && rawTrack.waypoints.length >= 3) {
+    waypoints = rawTrack.waypoints
+      .map((p) =>
+        Array.isArray(p) && p.length >= 2
+          ? ([num(p[0], 0, -120, 120), num(p[1], 0, -120, 120)] as [number, number])
+          : null
+      )
+      .filter((p): p is [number, number] => p !== null);
+  }
+  if (waypoints.length < 3) {
+    waypoints = DrivingWaypoints;
+  }
+
+  // Chasm gaps
+  const chasmGaps: DrivingChasmGap[] = [];
+  if (Array.isArray(rawTrack.chasmGaps)) {
+    for (const c of rawTrack.chasmGaps) {
+      if (c && typeof c === 'object') {
+        const rc = c as Record<string, unknown>;
+        const idx = Math.max(
+          0,
+          Math.min(
+            waypoints.length - 1,
+            Math.round(num(rc.centerWaypointIndex, 0, 0, waypoints.length - 1))
+          )
+        );
+        const r = num(rc.gapRadius, 18, 10, 32);
+        const wp = waypoints[idx];
+        const nextWp = waypoints[(idx + 1) % waypoints.length];
+        const yawRad = Math.atan2(nextWp[0] - wp[0], nextWp[1] - wp[1]);
+        chasmGaps.push({ x: wp[0], z: wp[1], yawRad, width: r * 1.4, length: r });
+      }
+    }
+  }
+  if (
+    chasmGaps.length === 0 &&
+    (activeMods.includes('carvedChasms') || customVehicle.wingStyle !== 'none')
+  ) {
+    // Carve 1 or 2 thrilling chasm gaps across the track!
+    const midIdx1 = Math.floor(waypoints.length * 0.35);
+    const wp1 = waypoints[midIdx1];
+    const nextWp1 = waypoints[(midIdx1 + 1) % waypoints.length];
+    chasmGaps.push({
+      x: wp1[0],
+      z: wp1[1],
+      yawRad: Math.atan2(nextWp1[0] - wp1[0], nextWp1[1] - wp1[1]),
+      width: 26,
+      length: 18,
+    });
+
+    if (waypoints.length >= 7) {
+      const midIdx2 = Math.floor(waypoints.length * 0.72);
+      const wp2 = waypoints[midIdx2];
+      const nextWp2 = waypoints[(midIdx2 + 1) % waypoints.length];
+      chasmGaps.push({
+        x: wp2[0],
+        z: wp2[1],
+        yawRad: Math.atan2(nextWp2[0] - wp2[0], nextWp2[1] - wp2[1]),
+        width: 28,
+        length: 20,
+      });
+    }
+  }
+
+  const trackHalfWidth = num(rawTrack.trackHalfWidth, 5.0, 3.5, 7.5);
+  const surfaceLayer = 6; // rock / road
+
+  // Sculpt island terrain with continuous track spline + carved chasm canyons
+  const newTerrain = createCustomDrivingTrackTerrain({
+    waypoints,
+    trackHalfWidth,
+    surfaceLayer,
+    elevationBoost: 0.65,
+    chasmGaps,
+    baseTerrain: modifyExisting ? lvl.terrain : undefined,
+  });
+
+  // Entities placement:
+  // Clean up old auto-driving props if fresh create
+  const keepEntities = modifyExisting
+    ? lvl.entities.filter(
+        (e) =>
+          !['flightCube', 'boostPad', 'roadBarrier', 'ramp', 'checkpointArch'].includes(
+            e.propPreset ?? ''
+          )
+      )
+    : [];
+
+  const nextEntities: LevelEntity[] = [...keepEntities];
+
+  const spawnPropEntity = (
+    preset: PropPresetId,
+    name: string,
+    x: number,
+    z: number,
+    yaw: number = 0
+  ) => {
+    const boardPos = levelWorldToBoard(lvl, x, z);
+    const ent = createEntity('prop', name, boardPos.x, boardPos.y, {
+      propPreset: preset,
+      rotation: (yaw * 180) / Math.PI,
+    });
+    nextEntities.push(ent);
+  };
+
+  // Place stunt ramps
+  if (Array.isArray(raw.stuntRamps) && raw.stuntRamps.length > 0) {
+    for (const r of raw.stuntRamps) {
+      if (r && typeof r === 'object') {
+        const rr = r as Record<string, unknown>;
+        spawnPropEntity(
+          'ramp',
+          'Stunt Ramp',
+          num(rr.x, 0, -120, 120),
+          num(rr.z, 0, -120, 120),
+          num(rr.yaw, 0, -Math.PI * 2, Math.PI * 2)
+        );
+      }
+    }
+  } else if (chasmGaps.length > 0 || activeMods.includes('stuntRamps')) {
+    // Auto-place ramps right before chasm gaps
+    for (const gap of chasmGaps) {
+      const sy = Math.sin(gap.yawRad);
+      const cy = Math.cos(gap.yawRad);
+      const rampX = gap.x - sy * (gap.length * 0.95);
+      const rampZ = gap.z - cy * (gap.length * 0.95);
+      spawnPropEntity('ramp', 'Chasm Launch Ramp', rampX, rampZ, gap.yawRad);
+    }
+  }
+
+  // Place Flight Cubes
+  if (Array.isArray(raw.flightCubes) && raw.flightCubes.length > 0) {
+    for (const fc of raw.flightCubes) {
+      if (fc && typeof fc === 'object') {
+        const rfc = fc as Record<string, unknown>;
+        spawnPropEntity(
+          'flightCube',
+          'Flight Bonus Cube',
+          num(rfc.x, 0, -120, 120),
+          num(rfc.z, 0, -120, 120)
+        );
+      }
+    }
+  } else if (chasmGaps.length > 0 || activeMods.includes('flightBonusCubes')) {
+    // Place flight cubes right before/at the edge of chasms
+    for (const gap of chasmGaps) {
+      const sy = Math.sin(gap.yawRad);
+      const cy = Math.cos(gap.yawRad);
+      const cubeX = gap.x - sy * (gap.length * 0.45);
+      const cubeZ = gap.z - cy * (gap.length * 0.45);
+      spawnPropEntity('flightCube', 'Flight Bonus Cube', cubeX, cubeZ);
+    }
+  }
+
+  // Place Boost Pads
+  if (Array.isArray(raw.boostPads) && raw.boostPads.length > 0) {
+    for (const bp of raw.boostPads) {
+      if (bp && typeof bp === 'object') {
+        const rbp = bp as Record<string, unknown>;
+        spawnPropEntity(
+          'boostPad',
+          'Turbo Boost Pad',
+          num(rbp.x, 0, -120, 120),
+          num(rbp.z, 0, -120, 120),
+          num(rbp.yaw, 0, -Math.PI * 2, Math.PI * 2)
+        );
+      }
+    }
+  } else {
+    // Place boost pads along straights (every 3rd waypoint)
+    for (let i = 0; i < waypoints.length; i += 3) {
+      const nextI = (i + 1) % waypoints.length;
+      const wp = waypoints[i];
+      const wpNext = waypoints[nextI];
+      const dx = wpNext[0] - wp[0];
+      const dz = wpNext[1] - wp[1];
+      const yaw = Math.atan2(dx, dz);
+      spawnPropEntity('boostPad', 'Turbo Boost Pad', wp[0] + dx * 0.5, wp[1] + dz * 0.5, yaw);
+    }
+  }
+
+  // Place Road Barriers
+  if (Array.isArray(raw.roadBarriers) && raw.roadBarriers.length > 0) {
+    for (const rb of raw.roadBarriers) {
+      if (rb && typeof rb === 'object') {
+        const rrb = rb as Record<string, unknown>;
+        spawnPropEntity(
+          'roadBarrier',
+          'Hazard Barrier',
+          num(rrb.x, 0, -120, 120),
+          num(rrb.z, 0, -120, 120),
+          num(rrb.yaw, 0, -Math.PI * 2, Math.PI * 2)
+        );
+      }
+    }
+  }
+
+  // Place Checkpoint Arches
+  if (Array.isArray(raw.checkpointArches) && raw.checkpointArches.length > 0) {
+    for (const ca of raw.checkpointArches) {
+      if (ca && typeof ca === 'object') {
+        const rca = ca as Record<string, unknown>;
+        spawnPropEntity(
+          'checkpointArch',
+          'Rally Arch',
+          num(rca.x, 0, -120, 120),
+          num(rca.z, 0, -120, 120),
+          num(rca.yaw, 0, -Math.PI * 2, Math.PI * 2)
+        );
+      }
+    }
+  } else {
+    // Place 2-4 arches around circuit
+    const step = Math.max(2, Math.floor(waypoints.length / 4));
+    for (let i = 0; i < waypoints.length; i += step) {
+      const nextI = (i + 1) % waypoints.length;
+      const wp = waypoints[i];
+      const wpNext = waypoints[nextI];
+      const yaw = Math.atan2(wpNext[0] - wp[0], wpNext[1] - wp[1]);
+      spawnPropEntity('checkpointArch', 'Rally Arch', wp[0], wp[1], yaw);
+    }
+  }
+
+  // Player Spawn Point: place at start waypoint
+  const firstWp = waypoints[0] ?? [0, 0];
+  const spawnWorldX = Array.isArray(raw.playerSpawn)
+    ? num(raw.playerSpawn[0], firstWp[0], -120, 120)
+    : firstWp[0];
+  const spawnWorldZ = Array.isArray(raw.playerSpawn)
+    ? num(raw.playerSpawn[1], firstWp[1], -120, 120)
+    : firstWp[1];
+  const nextPlayerSpawn = levelWorldToBoard(lvl, spawnWorldX, spawnWorldZ);
+
+  store.updateLevel('AI sculpt driving course & custom vehicle', (prev) => ({
+    ...prev,
+    gameplayMode: 'driving',
+    biome,
+    sky,
+    weather,
+    drivingConfig: nextDrivingConfig,
+    terrain: newTerrain,
+    startPoint: nextPlayerSpawn,
+    entities: nextEntities,
+  }));
+
+  const flightBonusDesc =
+    chasmGaps.length > 0
+      ? ` with ${chasmGaps.length} deep carved chasm gorges & flight cubes`
+      : '';
+
+  return str(
+    raw.summary,
+    `Built custom ${carId} vehicle (${wheelStyle} wheels, ${roofStyle} roof, ${
+      wingStyle !== 'none' ? `${wingStyle} wings` : 'no wings'
+    }) on winding ${waypoints.length}-waypoint island track${flightBonusDesc}.`
+  );
+}
+
+export function applyRoguelikeAiToStore(
+  store: MakerStore,
+  raw: Record<string, unknown>,
+  options?: AiApplyOptions
+): string {
+  const lvl = store.currentLevel;
+  const proj = store.currentProject;
+  if (!lvl || !proj) throw new Error('No active roguelike level found.');
+
+  const modifyExisting = Boolean(options?.modifyExisting);
+  const guide = options?.roguelikeGuide;
+
+  const SCENARIO_KINDS: readonly RoguelikeScenarioKind[] = [
+    'ancientCrypt',
+    'cyberpunkLab',
+    'overgrownJungle',
+    'volcanicAbyss',
+    'frostCitadel',
+    'sunkenTemple',
+    'desertPyramid',
+    'astralVoid',
+  ];
+
+  const scenarioHint =
+    guide && guide.scenario !== 'auto'
+      ? guide.scenario
+      : typeof raw.scenarioKind === 'string'
+      ? raw.scenarioKind
+      : undefined;
+
+  const scenarioKind = oneOf<RoguelikeScenarioKind>(
+    scenarioHint,
+    SCENARIO_KINDS,
+    (lvl.dungeonStyle?.scenarioKind ??
+      lvl.roguelikeConfig?.scenarioKind ??
+      'ancientCrypt') as RoguelikeScenarioKind
+  );
+
+  const scenarioPreset =
+    DUNGEON_THEME_PRESETS.find((p) => p.style.scenarioKind === scenarioKind) ??
+    DUNGEON_THEME_PRESETS[0];
+
+  const rawStyle = (raw.dungeonStyle ?? {}) as Record<string, unknown>;
+
+  const wallStyle = oneOf<DungeonWallStyle>(
+    rawStyle.wallStyle,
+    Object.keys(DUNGEON_WALL_STYLE_META) as DungeonWallStyle[],
+    modifyExisting && lvl.dungeonStyle
+      ? lvl.dungeonStyle.wallStyle
+      : scenarioPreset.style.wallStyle
+  );
+
+  const floorStyle = oneOf<DungeonFloorStyle>(
+    rawStyle.floorStyle,
+    Object.keys(DUNGEON_FLOOR_STYLE_META) as DungeonFloorStyle[],
+    modifyExisting && lvl.dungeonStyle
+      ? lvl.dungeonStyle.floorStyle
+      : scenarioPreset.style.floorStyle
+  );
+
+  const propStyle = oneOf<DungeonPropStyle>(
+    rawStyle.propStyle,
+    Object.keys(DUNGEON_PROP_STYLE_META) as DungeonPropStyle[],
+    modifyExisting && lvl.dungeonStyle
+      ? lvl.dungeonStyle.propStyle
+      : scenarioPreset.style.propStyle
+  );
+
+  const trapHint =
+    guide?.traps && guide.traps.length > 0 ? guide.traps[0] : rawStyle.trapStyle;
+  const trapStyle = oneOf<DungeonTrapStyle>(
+    trapHint,
+    Object.keys(DUNGEON_TRAP_STYLE_META) as DungeonTrapStyle[],
+    modifyExisting && lvl.dungeonStyle
+      ? lvl.dungeonStyle.trapStyle
+      : scenarioPreset.style.trapStyle
+  );
+
+  const resolvedStyle: DungeonStyleConfig = {
+    scenarioKind,
+    wallStyle,
+    floorStyle,
+    propStyle,
+    trapStyle,
+    ...(rawStyle.wallTint ? { wallTint: hexColor(rawStyle.wallTint, '#CBD5E1') } : {}),
+    ...(rawStyle.floorTint ? { floorTint: hexColor(rawStyle.floorTint, '#FFFFFF') } : {}),
+    ...(rawStyle.propTint ? { propTint: hexColor(rawStyle.propTint, '#FFFFFF') } : {}),
+    ...(rawStyle.trapTint ? { trapTint: hexColor(rawStyle.trapTint, '#FFFFFF') } : {}),
+  };
+
+  const rawCfg = (raw.roguelikeConfig ?? {}) as Record<string, unknown>;
+  const prevCfg = lvl.roguelikeConfig ?? DEFAULT_ROGUELIKE_CONFIG;
+
+  const densityMult =
+    guide?.enemyDensity === 'light'
+      ? 0.7
+      : guide?.enemyDensity === 'intense'
+      ? 1.5
+      : guide?.enemyDensity === 'nightmare'
+      ? 2.0
+      : 1.0;
+
+  const updatedRoguelikeCfg: RoguelikeConfig = {
+    ...prevCfg,
+    scenarioKind,
+    dungeonStyle: resolvedStyle,
+    bossInterval: Math.round(num(rawCfg.bossInterval, prevCfg.bossInterval, 1, 10)),
+    difficultyScale: num(rawCfg.difficultyScale, prevCfg.difficultyScale * densityMult, 0.1, 1.0),
+    trapDensity: num(rawCfg.trapDensity, prevCfg.trapDensity * densityMult, 0.2, 3.0),
+    startingMaxHealth: Math.round(num(rawCfg.startingMaxHealth, prevCfg.startingMaxHealth, 2, 20)),
+  };
+
+  const rawAtmosphere = (raw.atmosphere ?? {}) as Record<string, unknown>;
+  const defaultSkyForScenario: SkyPresetId =
+    scenarioKind === 'cyberpunkLab'
+      ? 'night'
+      : scenarioKind === 'volcanicAbyss'
+      ? 'cave'
+      : scenarioKind === 'sunkenTemple'
+      ? 'mist'
+      : scenarioKind === 'frostCitadel'
+      ? 'storm'
+      : scenarioKind === 'astralVoid'
+      ? 'night'
+      : 'cave';
+
+  const sky = oneOf<SkyPresetId>(
+    rawAtmosphere.sky,
+    ['sunny', 'golden', 'night', 'mist', 'storm', 'cave'],
+    modifyExisting ? lvl.sky : defaultSkyForScenario
+  );
+
+  const weather = oneOf<WeatherKind>(
+    rawAtmosphere.weather,
+    ['none', 'fireflies', 'leaves', 'rain', 'snow'],
+    modifyExisting
+      ? lvl.weather
+      : scenarioKind === 'frostCitadel'
+      ? 'snow'
+      : scenarioKind === 'volcanicAbyss' || scenarioKind === 'cyberpunkLab'
+      ? 'fireflies'
+      : 'none'
+  );
+
+  const shouldRegen = Boolean(raw.regenerateRooms) && !modifyExisting;
+
+  if (shouldRegen) {
+    const freshLevel = DungeonGenerator.generateFloor(
+      lvl,
+      Math.floor(Math.random() * 999999),
+      1,
+      updatedRoguelikeCfg
+    );
+
+    store.updateLevel('AI generate roguelike scenario', (l) => ({
+      ...freshLevel,
+      id: l.id,
+      name: l.name,
+      sky,
+      weather,
+    }));
+
+    return str(
+      raw.summary,
+      `Applied ${scenarioPreset.name} scenario: regenerated floor layout with ${resolvedStyle.wallStyle} walls, ${resolvedStyle.trapStyle} traps, and themed enemy encounters.`
+    );
+  }
+
+  store.updateLevel('AI apply roguelike scenario', (prev) => {
+    let nextLevel = applyDungeonStyleToLevel(prev, resolvedStyle);
+    nextLevel = {
+      ...nextLevel,
+      sky,
+      weather,
+      roguelikeConfig: updatedRoguelikeCfg,
+      dungeonStyle: resolvedStyle,
+    };
+
+    if (Array.isArray(raw.traps) && raw.traps.length > 0) {
+      const explicitTraps: LevelEntity[] = [];
+      raw.traps.slice(0, 10).forEach((tRaw, idx) => {
+        if (!tRaw || typeof tRaw !== 'object') return;
+        const t = tRaw as Record<string, unknown>;
+        const tStyle = oneOf<DungeonTrapStyle>(
+          t.trapStyle,
+          Object.keys(DUNGEON_TRAP_STYLE_META) as DungeonTrapStyle[],
+          resolvedStyle.trapStyle
+        );
+        const tx = num(t.x, (idx % 3 - 1) * 6, -35, 35);
+        const tz = num(t.z, Math.floor(idx / 3) * 6 - 6, -35, 35);
+        const tName = typeof t.name === 'string' && t.name.trim() ? t.name.trim() : DUNGEON_TRAP_STYLE_META[tStyle].label;
+        const tint = t.tint ? hexColor(t.tint, DUNGEON_TRAP_STYLE_META[tStyle].hazardHex) : undefined;
+        const bx = Math.min(0.95, Math.max(0.05, tx / 76 + 0.5));
+        const by = Math.min(0.95, Math.max(0.05, tz / 76 + 0.5));
+        const trapEnt = createEntity('trap', tName, bx, by, {
+          trapStyle: tStyle,
+          styleTint: tint,
+        });
+        explicitTraps.push(trapEnt);
+      });
+
+      if (!modifyExisting) {
+        nextLevel.entities = [
+          ...nextLevel.entities.filter((e) => e.kind !== 'trap'),
+          ...explicitTraps,
+        ];
+      } else {
+        nextLevel.entities = [...nextLevel.entities, ...explicitTraps];
+      }
+    }
+
+    if (Array.isArray(raw.enemies) && raw.enemies.length > 0) {
+      const scenarioEnemyPool = SCENARIO_ENEMY_ARCHETYPES[scenarioKind] ?? ENEMY_ARCHETYPES;
+      const explicitEnemies: LevelEntity[] = [];
+      raw.enemies.slice(0, 12).forEach((eRaw, idx) => {
+        if (!eRaw || typeof eRaw !== 'object') return;
+        const e = eRaw as Record<string, unknown>;
+        const fallbackArch = scenarioEnemyPool[idx % scenarioEnemyPool.length];
+        const eName = typeof e.name === 'string' && e.name.trim() ? e.name.trim() : fallbackArch.name;
+        const brain = oneOf<string>(e.brain, ['Chaser', 'Flyer', 'Charger', 'Patroller'], fallbackArch.brain);
+        const hp = Math.round(num(e.health, fallbackArch.baseHp, 1, 30));
+        const spd = num(e.speed, fallbackArch.baseSpeed, 1.5, 6.0);
+        const dmg = Math.round(num(e.damage, fallbackArch.damage, 1, 4));
+        const scale = num(e.scale, fallbackArch.scale, 0.7, 2.0);
+        const ex = num(e.x, (idx % 4 - 1.5) * 8, -35, 35);
+        const ez = num(e.z, Math.floor(idx / 4) * 8 - 8, -35, 35);
+        const bx = Math.min(0.95, Math.max(0.05, ex / 76 + 0.5));
+        const by = Math.min(0.95, Math.max(0.05, ez / 76 + 0.5));
+        const enemyEnt = createEntity('baddie', eName, bx, by, {
+          brain,
+          health: hp,
+          speed: spd,
+          damage: dmg,
+          scale,
+        });
+        explicitEnemies.push(enemyEnt);
+      });
+
+      if (!modifyExisting) {
+        nextLevel.entities = [
+          ...nextLevel.entities.filter((e) => e.kind !== 'baddie' || e.isBoss),
+          ...explicitEnemies,
+        ];
+      } else {
+        nextLevel.entities = [...nextLevel.entities, ...explicitEnemies];
+      }
+    }
+
+    if (raw.boss && typeof raw.boss === 'object') {
+      const b = raw.boss as Record<string, unknown>;
+      const scenarioBossPool = SCENARIO_BOSS_NAMES[scenarioKind] ?? BOSS_NAMES;
+      const bossName = typeof b.name === 'string' && b.name.trim() ? b.name.trim() : scenarioBossPool[0];
+      const bossHp = Math.round(num(b.health, 18, 8, 80));
+      const bossSpd = num(b.speed, 3.2, 2.0, 5.0);
+      const bossScale = num(b.scale, 1.6, 1.2, 2.5);
+      const bx = num(b.x, 0, -32, 32);
+      const bz = num(b.z, 20, -32, 32);
+      const dialogue = typeof b.dialogue === 'string' && b.dialogue.trim() ? b.dialogue.trim() : `You dare trespass into the ${scenarioPreset.name}?`;
+      const boardX = Math.min(0.95, Math.max(0.05, bx / 76 + 0.5));
+      const boardY = Math.min(0.95, Math.max(0.05, bz / 76 + 0.5));
+
+      const existingBoss = nextLevel.entities.find((e) => e.kind === 'baddie' && e.isBoss);
+      if (existingBoss) {
+        existingBoss.name = bossName;
+        existingBoss.health = bossHp;
+        existingBoss.speed = bossSpd;
+        existingBoss.scale = bossScale;
+        existingBoss.dialogue = dialogue;
+      } else {
+        const bossEnt = createEntity('baddie', bossName, boardX, boardY, {
+          isBoss: true,
+          brain: 'Boss',
+          health: bossHp,
+          speed: bossSpd,
+          damage: 1,
+          scale: bossScale,
+          dialogue,
+        });
+        nextLevel.entities.push(bossEnt);
+      }
+    }
+
+    return nextLevel;
+  });
+
+  return str(
+    raw.summary,
+    `Applied ${scenarioPreset.name} scenario: wall style ${resolvedStyle.wallStyle}, floor style ${resolvedStyle.floorStyle}, prop style ${resolvedStyle.propStyle}, and trap style ${resolvedStyle.trapStyle}.`
+  );
+}
+
+export function applyRpgAiToStore(
+  store: MakerStore,
+  raw: Record<string, unknown>,
+  options?: AiApplyOptions
+): string {
+  const lvl = store.currentLevel;
+  const proj = store.currentProject;
+  if (!lvl || !proj) throw new Error('No active RPG level found.');
+
+  const modifyExisting = Boolean(options?.modifyExisting);
+  const guide = options?.rpgGuide;
+
+  const rawScenario =
+    guide && guide.scenario !== 'auto'
+      ? guide.scenario
+      : typeof raw.scenarioKind === 'string'
+      ? raw.scenarioKind
+      : lvl.rpgConfig?.scenario ?? 'medievalVillage';
+
+  const scenarioHint = oneOf<RpgScenarioId>(
+    rawScenario,
+    [
+      'medievalVillage',
+      'jungleRuins',
+      'deepWoodedForest',
+      'stoneTemple',
+      'coastalVillage',
+      'interiorCottage',
+      'interiorTavern',
+      'interiorCave',
+    ],
+    'medievalVillage'
+  );
+
+  const isInterior =
+    Boolean(raw.isInterior) ||
+    scenarioHint === 'interiorCottage' ||
+    scenarioHint === 'interiorTavern' ||
+    scenarioHint === 'interiorCave';
+
+  const pathStyle = oneOf<RpgPathStyle>(
+    guide?.pathStyle ?? raw.pathStyle,
+    ['weatheredStone', 'ropeBridgeSlats', 'mossyCobble', 'woodPlankWalkway'],
+    scenarioHint === 'jungleRuins'
+      ? 'ropeBridgeSlats'
+      : scenarioHint === 'coastalVillage'
+      ? 'woodPlankWalkway'
+      : 'weatheredStone'
+  );
+
+  const lootMode = oneOf<RpgLootMode>(
+    guide?.lootStyle === 'traditionalChests'
+      ? 'traditional'
+      : guide?.lootStyle === 'cardChoice'
+      ? 'fannedCards'
+      : guide?.lootStyle === 'mixed'
+      ? 'both'
+      : raw.lootMode,
+    ['both', 'traditional', 'fannedCards'],
+    'both'
+  );
+
+  const atmo = (raw.atmosphere ?? {}) as Record<string, unknown>;
+  const biome = oneOf<BiomeId>(
+    atmo.biome,
+    ['forest', 'island', 'meadow', 'cave', 'swamp', 'night'],
+    scenarioHint === 'jungleRuins'
+      ? 'swamp'
+      : scenarioHint === 'deepWoodedForest'
+      ? 'forest'
+      : scenarioHint === 'stoneTemple' || scenarioHint === 'interiorCave'
+      ? 'cave'
+      : scenarioHint === 'coastalVillage'
+      ? 'island'
+      : 'forest'
+  );
+  const sky = oneOf<SkyPresetId>(
+    atmo.sky,
+    ['golden', 'sunny', 'night', 'mist', 'storm', 'cave'],
+    scenarioHint === 'stoneTemple' || scenarioHint === 'interiorCave'
+      ? 'cave'
+      : scenarioHint === 'jungleRuins' || scenarioHint === 'deepWoodedForest'
+      ? 'mist'
+      : 'golden'
+  );
+  const weather = oneOf<WeatherKind>(
+    atmo.weather,
+    ['none', 'fireflies', 'leaves', 'rain', 'snow'],
+    scenarioHint === 'jungleRuins'
+      ? 'fireflies'
+      : scenarioHint === 'deepWoodedForest'
+      ? 'leaves'
+      : 'fireflies'
+  );
+  const fogDensity = num(
+    atmo.fogDensity,
+    scenarioHint === 'jungleRuins' || scenarioHint === 'deepWoodedForest' ? 0.38 : 0.22,
+    0.05,
+    0.65
+  );
+  const volumetricLanterns =
+    atmo.volumetricLanterns !== undefined ? Boolean(atmo.volumetricLanterns) : true;
+
+  store.updateLevel('AI build isometric RPG scene', (prev) => {
+    // Configure biome-accurate EZ-Tree canopy engine so jungleRuins NEVER gets pine or oak trees!
+    const baseCanopy = prev.canopyEngine ?? createDefaultCanopyConfig();
+    let nextCanopy = { ...baseCanopy, enabled: true, targetTrees: 'all' as const };
+    if (scenarioHint === 'jungleRuins' || biome === 'swamp') {
+      nextCanopy = {
+        ...nextCanopy,
+        treeType: 'fantasy',
+        customTypeName: 'Tropical Vine Banyan',
+        treeGeneratorMode: 'ezTree',
+        barkStyle: 'rough',
+        barkColor: '#4E3928',
+        trunkHeight: 5.4,
+        trunkThickness: 0.95,
+        trunkLean: 0.28,
+        majorBranchCount: 6,
+        majorBranchLength: 2.3,
+        majorBranchSpread: 1.25,
+        majorBranchDroop: 0.35,
+        gnarlAmount: 0.55,
+        rootMode: 'all',
+        rootCount: 7,
+        rootReach: 2.4,
+        rootArchHeight: 0.65,
+        silhouette: 'umbrella',
+        minPuffs: 7,
+        maxPuffs: 12,
+        canopyHeight: 3.4,
+        basePuffSize: 2.6,
+        foliageBaseColor: '#1E7A44',
+        canopyLeavesEnabled: true,
+        canopyLeafSeason: 'summer',
+        canopyLeafColor: '#22C55E',
+        fruitEnabled: true,
+        fruitCount: 18,
+        fruitSize: 0.28,
+        fruitColor: '#4ADE80',
+        fruitDistribution: 'hanging',
+        fruitGlow: 0.35,
+      };
+    } else if (scenarioHint === 'deepWoodedForest') {
+      nextCanopy = {
+        ...nextCanopy,
+        treeType: 'oak',
+        customTypeName: 'Ancient Deepwood Elder',
+        treeGeneratorMode: 'ezTree',
+        barkStyle: 'knotty',
+        barkColor: '#3B2A1E',
+        trunkHeight: 6.4,
+        trunkThickness: 1.35,
+        trunkLean: 0.18,
+        majorBranchCount: 6,
+        majorBranchLength: 2.4,
+        majorBranchSpread: 1.3,
+        gnarlAmount: 0.78,
+        hollowMode: 'lots',
+        rootMode: 'all',
+        rootCount: 6,
+        rootReach: 2.5,
+        silhouette: 'dome',
+        minPuffs: 9,
+        maxPuffs: 14,
+        canopyHeight: 5.2,
+        basePuffSize: 3.1,
+        foliageBaseColor: '#1B5E37',
+        canopyLeavesEnabled: true,
+        canopyLeafSeason: 'mystic',
+        canopyLeafColor: '#2E7D47',
+      };
+    }
+
+    // Filter background scatter so Jungle Ruins has zero pine/birch trees and Interior scenes have clear floorplans
+    let updatedTerrain = prev.terrain;
+    if (updatedTerrain?.scatter) {
+      if (isInterior) {
+        updatedTerrain = {
+          ...updatedTerrain,
+          scatter: updatedTerrain.scatter.filter((s) => Math.hypot(s.x, s.z) > 38),
+        };
+      } else if (scenarioHint === 'jungleRuins' || biome === 'swamp') {
+        updatedTerrain = {
+          ...updatedTerrain,
+          scatter: updatedTerrain.scatter.map((s, idx) =>
+            s.kind === 'pine' || s.kind === 'birch'
+              ? { ...s, kind: idx % 2 === 0 ? 'fern' : 'broadleaf', size: Math.max(1.2, s.size * 1.25) }
+              : s
+          ),
+        };
+      }
+    }
+
+    const nextLevel: GameLevel = {
+      ...prev,
+      gameplayMode: 'rpg',
+      biome,
+      sky,
+      weather,
+      fog: fogDensity,
+      cameraMode: 'isometric',
+      vistaPreset: isInterior ? 'none' : scenarioHint === 'jungleRuins' ? 'mistyHills' : prev.vistaPreset ?? 'none',
+      canopyEngine: nextCanopy,
+      terrain: updatedTerrain,
+      rpgConfig: {
+        scenario: scenarioHint,
+        lootMode,
+        pathStyle,
+        isInterior,
+        volumetricLanterns,
+        cameraZoom: 25,
+      },
+    };
+
+    const newEntities: LevelEntity[] = modifyExisting
+      ? [...prev.entities.filter((e) => e.kind !== 'checkpoint')]
+      : [];
+
+    // If interior mode and no explicit interior building was provided, add the cutaway interior room
+    const rawBuildings = Array.isArray(raw.buildings) ? raw.buildings : [];
+    const hasInteriorBuilding = rawBuildings.some(
+      (b) => b && typeof b === 'object' && String((b as Record<string, unknown>).kind ?? '').startsWith('interior')
+    );
+    if (isInterior && !hasInteriorBuilding && !modifyExisting) {
+      const intKind =
+        scenarioHint === 'interiorTavern'
+          ? 'interiorTavern'
+          : scenarioHint === 'interiorCave'
+          ? 'interiorCave'
+          : 'interiorCottage';
+      newEntities.push(
+        createEntity('prop', `Cutaway ${intKind.replace('interior', '')} Room`, 0.5, 0.48, {
+          notes: `RPG Building: ${intKind}`,
+          scale: 1.15,
+        })
+      );
+    }
+
+    // 1. Party & Companions
+    const party = (raw.party ?? {}) as Record<string, unknown>;
+    const companions = Array.isArray(party.companions) ? party.companions : [];
+    companions.forEach((cRaw, idx) => {
+      if (!cRaw || typeof cRaw !== 'object') return;
+      const c = cRaw as Record<string, unknown>;
+      const cName = typeof c.name === 'string' && c.name.trim() ? c.name.trim() : `Companion ${idx + 1}`;
+      const cClass = typeof c.class === 'string' ? c.class : idx === 0 ? 'warrior' : 'mage';
+      const cWeapon = typeof c.weapon === 'string' ? c.weapon : cClass === 'mage' ? 'staff' : cClass === 'ranger' ? 'bow' : 'sword';
+      const bx = 0.46 + idx * 0.06;
+      const by = 0.56 + (idx % 2 === 0 ? 0.03 : -0.03);
+      const companionEnt = createEntity('npc', cName, bx, by, {
+        isBuddy: true,
+        dialogue: `Standing by your side with my ${cWeapon}! Let us strike together!`,
+        health: num(c.health, 30, 14, 65),
+        notes: `RPG Companion: ${cClass}:${cWeapon}`,
+      });
+      newEntities.push(companionEnt);
+    });
+
+    // 2. Buildings (taverns, blacksmith, cottages, shrines, temples, cutaway interiors)
+    rawBuildings.slice(0, 10).forEach((bRaw, idx) => {
+      if (!bRaw || typeof bRaw !== 'object') return;
+      const b = bRaw as Record<string, unknown>;
+      const bName = typeof b.name === 'string' && b.name.trim() ? b.name.trim() : `Building ${idx + 1}`;
+      const bx = num(b.x, (idx % 3 - 1) * 16, -55, 55);
+      const bz = num(b.z, Math.floor(idx / 3) * 16 - 16, -55, 55);
+      const boardX = Math.min(0.9, Math.max(0.1, bx / 76 + 0.5));
+      const boardY = Math.min(0.9, Math.max(0.1, bz / 76 + 0.5));
+      const bKind = typeof b.kind === 'string' ? b.kind : 'cottage';
+      const propEnt = createEntity('prop', bName, boardX, boardY, {
+        notes: `RPG Building: ${bKind}`,
+        rotation: num(b.rotationDeg, 0, -180, 180),
+        scale: num(b.scale, 1.0, 0.65, 1.65),
+      });
+      newEntities.push(propEnt);
+    });
+
+    // 3. Props & Flora (fences, well, chickens, tropical trees, exotic plants, hollow magic trees, weathered stone paths, rope bridges, lanterns, rune puzzles)
+    const rawProps = Array.isArray(raw.propsAndFlora) ? raw.propsAndFlora : [];
+    rawProps.slice(0, 26).forEach((pRaw, idx) => {
+      if (!pRaw || typeof pRaw !== 'object') return;
+      const p = pRaw as Record<string, unknown>;
+      const pName = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Prop ${idx + 1}`;
+      const px = num(p.x, (idx % 5 - 2) * 11, -65, 65);
+      const pz = num(p.z, Math.floor(idx / 5) * 11 - 26, -65, 65);
+      const boardX = Math.min(0.92, Math.max(0.08, px / 76 + 0.5));
+      const boardY = Math.min(0.92, Math.max(0.08, pz / 76 + 0.5));
+      const kind = typeof p.kind === 'string' ? p.kind : 'lantern';
+      const isLight = kind === 'lantern';
+      const isPuzzle = kind === 'runePuzzle';
+      const ent = createEntity(isLight ? 'light' : isPuzzle ? 'puzzle' : 'prop', pName, boardX, boardY, {
+        notes: isLight ? 'RPG Lantern: volumetric' : `RPG Prop: ${kind}`,
+        rotation: num(p.rotationDeg, 0, -180, 180),
+        scale: num(p.scale, 1.0, 0.65, 1.75),
+      });
+      newEntities.push(ent);
+    });
+
+    // Ensure signature organic paths & rope bridge exist if not explicitly placed
+    if (!modifyExisting) {
+      const hasPath = rawProps.some(
+        (p) => p && typeof p === 'object' && ['weatheredStonePath', 'ropeBridge'].includes(String((p as Record<string, unknown>).kind ?? ''))
+      );
+      if (!hasPath) {
+        for (let step = 0; step < 5; step++) {
+          newEntities.push(
+            createEntity(
+              'prop',
+              pathStyle === 'ropeBridgeSlats' && step === 2
+                ? 'Rope Bridge with Broken Slat'
+                : 'Weathered Broken Stone Path',
+              0.5 + Math.sin(step * 0.7) * 0.03,
+              0.56 - step * 0.075,
+              {
+                notes:
+                  pathStyle === 'ropeBridgeSlats' && step === 2
+                    ? 'RPG Prop: ropeBridge'
+                    : 'RPG Prop: weatheredStonePath',
+                rotation: (step % 2 === 0 ? 12 : -14),
+              }
+            )
+          );
+        }
+      }
+    }
+
+    // 4. Enemies & Monsters (including Ogre Brutes with brute-force throw!)
+    const rawEnemies = Array.isArray(raw.enemies) ? raw.enemies : [];
+    rawEnemies.slice(0, 12).forEach((eRaw, idx) => {
+      if (!eRaw || typeof eRaw !== 'object') return;
+      const e = eRaw as Record<string, unknown>;
+      const archetype = typeof e.archetype === 'string' ? e.archetype : 'bandit';
+      const isOgre = archetype === 'ogre' || String(e.name ?? '').toLowerCase().includes('ogre');
+      const eName =
+        typeof e.name === 'string' && e.name.trim()
+          ? e.name.trim()
+          : isOgre
+          ? 'Ogre Brute'
+          : `Bandit Raider ${idx + 1}`;
+      const ex = num(e.x, (idx % 4 - 1.5) * 13, -50, 50);
+      const ez = num(e.z, Math.floor(idx / 4) * 13 - 18, -50, 50);
+      const boardX = Math.min(0.9, Math.max(0.1, ex / 76 + 0.5));
+      const boardY = Math.min(0.9, Math.max(0.1, ez / 76 + 0.5));
+      const baddieEnt = createEntity('baddie', eName, boardX, boardY, {
+        brain: 'Chaser',
+        isBoss: isOgre,
+        health: num(e.health, isOgre ? 42 : 22, 10, 75),
+        speed: isOgre ? 2.25 : 2.85,
+        damage: isOgre ? 2 : 1,
+        scale: isOgre ? 1.38 : 1.0,
+        notes: `RPG Enemy: ${archetype}`,
+        pickupable: true,
+        pickupItemId: isOgre ? 'iron_sword' : 'health_potion',
+        pickupQty: 1,
+      });
+      newEntities.push(baddieEnt);
+    });
+
+    // 5. Loots & Fanned-out Cards
+    const rawLoots = Array.isArray(raw.lootsAndCards) ? raw.lootsAndCards : [];
+    rawLoots.slice(0, 8).forEach((lRaw, idx) => {
+      if (!lRaw || typeof lRaw !== 'object') return;
+      const l = lRaw as Record<string, unknown>;
+      const isCard = l.kind === 'cardChoice' || lootMode === 'fannedCards';
+      const lName =
+        typeof l.name === 'string' && l.name.trim()
+          ? l.name.trim()
+          : isCard
+          ? `Fanned Skill & Loot Cards ${idx + 1}`
+          : `Adventurer Treasure Chest ${idx + 1}`;
+      const lx = num(l.x, (idx % 3 - 1) * 16, -45, 45);
+      const lz = num(l.z, Math.floor(idx / 3) * 16 - 22, -45, 45);
+      const boardX = Math.min(0.9, Math.max(0.1, lx / 76 + 0.5));
+      const boardY = Math.min(0.9, Math.max(0.1, lz / 76 + 0.5));
+      const treasureEnt = createEntity('treasure', lName, boardX, boardY, {
+        loot: isCard ? 'Coins' : 'Health',
+        pickupable: true,
+        pickupItemId: typeof l.rewardItem === 'string' ? l.rewardItem : 'health_potion',
+        pickupQty: 2,
+        notes: isCard ? 'RPG Card Choice' : 'RPG Chest',
+      });
+      newEntities.push(treasureEnt);
+    });
+
+    nextLevel.entities = [...prev.entities.filter((e) => e.kind === 'checkpoint'), ...newEntities];
+    return nextLevel;
+  });
+
+  return str(
+    raw.summary,
+    `Built isometric RPG scene (${scenarioHint}): populated refined organic buildings, companion party, biome-accurate flora & paths, volumetric lanterns, enemies with evaporating overhead health points, and ${lootMode === 'fannedCards' ? 'fanned-out reward card choices' : 'treasure chests & fanned reward cards'}.`
+  );
+}
+
 export function applyWorldTerraformToStore(
   store: MakerStore,
   raw: Record<string, unknown>,
@@ -3104,6 +4207,23 @@ export function applyWorldTerraformToStore(
 
   if (getEnvironmentType(lvl) === 'sideScroller' || typeof raw.layoutStyle === 'string') {
     return applyPlatformerAiToStore(store, raw, options);
+  }
+
+  if (lvl.gameplayMode === 'driving' || raw.track || raw.vehicle) {
+    return applyDrivingAiToStore(store, raw, options);
+  }
+
+  if (lvl.gameplayMode === 'rpg' || raw.party || raw.buildings || raw.propsAndFlora || raw.lootsAndCards) {
+    return applyRpgAiToStore(store, raw, options);
+  }
+
+  if (
+    lvl.gameplayMode === 'roguelike' ||
+    typeof raw.scenarioKind === 'string' ||
+    raw.dungeonStyle ||
+    raw.roguelikeConfig
+  ) {
+    return applyRoguelikeAiToStore(store, raw, options);
   }
 
   const modifyExisting = Boolean(options?.modifyExisting);

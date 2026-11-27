@@ -46,6 +46,7 @@ import {
   MusicMoodOptions,
   StorybookThemeCatalog,
   VistaPropKinds,
+  createEntity,
   defaultStorybookConfig,
 } from '../../data/registries';
 import { DEFAULT_ROGUELIKE_CONFIG } from '../../data/roguelikeEngine';
@@ -85,15 +86,29 @@ import type {
   EnvironmentType,
   GameplayMode,
   LevelEntity,
+  PropPresetId,
+  RpgLootMode,
+  RpgPathStyle,
+  RpgScenarioId,
   SideScrollerLayoutStyle,
   SideScrollerThemeId,
   StorybookThemeId,
   TerrainBrush,
+  VehicleCustomSpec,
+  VehicleRoofStyle,
+  VehicleWheelStyle,
+  VehicleWingStyle,
   ViewportTool,
   VistaPropItem,
   VistaPropKind,
   WorldDomainId,
 } from '../../types/maker';
+import {
+  CAR_PRESETS,
+  DRIVING_CAMERA_VIEWS,
+  DRIVING_PHYSICS_PRESETS,
+  DRIVER_TYPES,
+} from '../../three/vehicleModels';
 import {
   BUILDING_MATERIALS,
   BUILDING_SHAPES,
@@ -1454,18 +1469,134 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                             mode === 'roguelike'
                               ? lvl.roguelikeConfig ?? { ...DEFAULT_ROGUELIKE_CONFIG }
                               : lvl.roguelikeConfig,
+                          rpgConfig:
+                            mode === 'rpg'
+                              ? lvl.rpgConfig ?? {
+                                  scenario: 'medievalVillage',
+                                  lootMode: 'both',
+                                  pathStyle: 'weatheredStone',
+                                  isInterior: false,
+                                  volumetricLanterns: true,
+                                  cameraZoom: 25,
+                                }
+                              : lvl.rpgConfig,
                           cameraMode:
-                            mode === 'roguelike' && !lvl.cameraMode ? 'isometric' : lvl.cameraMode,
+                            mode === 'roguelike' || mode === 'rpg'
+                              ? 'isometric'
+                              : lvl.cameraMode,
                         }));
                       }}
                       className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[11px] font-bold"
                     >
                       <option value="adventure">Adventure</option>
+                      <option value="rpg">Isometric RPG</option>
                       <option value="buddies">Buddies Quest</option>
                       <option value="driving">Forest Driving</option>
                       <option value="roguelike">Roguelike Run</option>
                     </select>
                   </div>
+
+                  {currentLevel.gameplayMode === 'rpg' && (
+                    <div className="space-y-2 pt-2 border-t border-slate-200/70 dark:border-white/[0.06]">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-extrabold text-[#8B5CF6]">
+                          Isometric RPG Diorama & Loot
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400">
+                          Sword · Bow · Magic
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <select
+                          value={currentLevel.rpgConfig?.scenario ?? 'medievalVillage'}
+                          onChange={(e) => {
+                            const scenario = e.target.value as RpgScenarioId;
+                            const isInterior = scenario.startsWith('interior');
+                            store.updateLevel('change RPG scenario', (lvl) => ({
+                              ...lvl,
+                              cameraMode: 'isometric',
+                              biome:
+                                scenario === 'jungleRuins'
+                                  ? 'swamp'
+                                  : scenario === 'stoneTemple' || scenario === 'interiorCave'
+                                    ? 'cave'
+                                    : scenario === 'coastalVillage'
+                                      ? 'island'
+                                      : 'forest',
+                              rpgConfig: {
+                                scenario,
+                                lootMode: lvl.rpgConfig?.lootMode ?? 'both',
+                                pathStyle: lvl.rpgConfig?.pathStyle ?? 'weatheredStone',
+                                isInterior,
+                                volumetricLanterns: true,
+                                cameraZoom: isInterior ? 20 : 25,
+                              },
+                            }));
+                          }}
+                          className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold"
+                        >
+                          <option value="medievalVillage">Medieval Village</option>
+                          <option value="jungleRuins">Lush Jungle Ruins</option>
+                          <option value="deepWoodedForest">Deep Wooded Forest</option>
+                          <option value="stoneTemple">Stone Temple Sanctuary</option>
+                          <option value="coastalVillage">Coastal Harbor Village</option>
+                          <option value="interiorCottage">Interior: Forest Cottage</option>
+                          <option value="interiorTavern">Interior: Timber Tavern</option>
+                          <option value="interiorCave">Interior: Volumetric Cave</option>
+                        </select>
+
+                        <select
+                          value={currentLevel.rpgConfig?.lootMode ?? 'both'}
+                          onChange={(e) => {
+                            const lootMode = e.target.value as RpgLootMode;
+                            store.updateLevel('change RPG loot mode', (lvl) => ({
+                              ...lvl,
+                              rpgConfig: {
+                                scenario: lvl.rpgConfig?.scenario ?? 'medievalVillage',
+                                lootMode,
+                                pathStyle: lvl.rpgConfig?.pathStyle ?? 'weatheredStone',
+                                isInterior: lvl.rpgConfig?.isInterior ?? false,
+                                volumetricLanterns: lvl.rpgConfig?.volumetricLanterns ?? true,
+                                cameraZoom: lvl.rpgConfig?.cameraZoom ?? 25,
+                              },
+                            }));
+                          }}
+                          className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold"
+                        >
+                          <option value="both">Chests + Fanned Cards</option>
+                          <option value="fannedCards">Fanned Reward Cards</option>
+                          <option value="traditional">Traditional Chests</option>
+                        </select>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold text-slate-500">Path & Bridge Style</span>
+                        <select
+                          value={currentLevel.rpgConfig?.pathStyle ?? 'weatheredStone'}
+                          onChange={(e) => {
+                            const pathStyle = e.target.value as RpgPathStyle;
+                            store.updateLevel('change RPG path style', (lvl) => ({
+                              ...lvl,
+                              rpgConfig: {
+                                scenario: lvl.rpgConfig?.scenario ?? 'medievalVillage',
+                                lootMode: lvl.rpgConfig?.lootMode ?? 'both',
+                                pathStyle,
+                                isInterior: lvl.rpgConfig?.isInterior ?? false,
+                                volumetricLanterns: lvl.rpgConfig?.volumetricLanterns ?? true,
+                                cameraZoom: lvl.rpgConfig?.cameraZoom ?? 25,
+                              },
+                            }));
+                          }}
+                          className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold"
+                        >
+                          <option value="weatheredStone">Weathered Broken Stone</option>
+                          <option value="ropeBridgeSlats">Rope Bridge (Broken Slat)</option>
+                          <option value="mossyCobble">Mossy Cobblestone</option>
+                          <option value="woodPlankWalkway">Distressed Wood Slats</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
 
                   {currentLevel.gameplayMode === 'roguelike' && (
                     <div className="space-y-2 pt-2 border-t border-slate-200/70 dark:border-white/[0.06]">
@@ -1636,94 +1767,375 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                               ))}
                             </select>
                           </div>
+                          <div className="space-y-1 pt-1.5 border-t border-slate-200/50 dark:border-white/[0.04]">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold text-slate-500 dark:text-[#949BB0]">
+                                Place Scenario Trap Hazard
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1">
+                              {(
+                                [
+                                  'laserTripwires',
+                                  'poisonDartPillars',
+                                  'fireGeysers',
+                                  'frostSpikes',
+                                  'acidPuddles',
+                                  'whirlpoolVortex',
+                                ] as DungeonTrapStyle[]
+                              ).map((tStyle) => {
+                                const meta = DUNGEON_TRAP_STYLE_META[tStyle];
+                                return (
+                                  <button
+                                    key={tStyle}
+                                    type="button"
+                                    onClick={() => {
+                                      const sp = currentLevel.startPoint ?? { x: 0.5, y: 0.5 };
+                                      const jitter = (Math.random() - 0.5) * 0.16;
+                                      const bx = Math.min(0.9, Math.max(0.1, sp.x + jitter));
+                                      const by = Math.min(0.9, Math.max(0.1, sp.y + 0.1 + jitter));
+                                      const newTrap = createEntity('trap', meta.label, bx, by, {
+                                        trapStyle: tStyle,
+                                        styleTint: meta.emissiveHex ?? meta.hazardHex,
+                                      });
+                                      store.updateLevel(`add ${meta.label}`, (lvl) => ({
+                                        ...lvl,
+                                        entities: [...lvl.entities, newTrap],
+                                      }));
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] hover:bg-slate-200 dark:hover:bg-[#2A3142] text-[10px] font-semibold flex items-center justify-between text-left truncate transition-colors"
+                                  >
+                                    <span className="truncate">{meta.label}</span>
+                                    <span
+                                      className="w-2 h-2 rounded-full shrink-0 ml-1"
+                                      style={{ backgroundColor: meta.hazardHex }}
+                                    />
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
                       );
                     })()}
 
-                  {currentLevel.gameplayMode === 'driving' && (
-                    <div className="space-y-1.5 pt-2 border-t border-slate-200/70 dark:border-white/[0.06]">
-                      <select
-                        value={currentLevel.drivingConfig?.carId ?? 'trailBuggy'}
-                        onChange={(e) =>
-                          store.updateLevel('change car preset', (lvl) => ({
-                            ...lvl,
-                            drivingConfig: {
-                              carId: e.target.value as CarPresetId,
-                              physicsId: lvl.drivingConfig?.physicsId ?? 'arcadeDrift',
-                              driverId: lvl.drivingConfig?.driverId ?? 'stunt',
-                              cameraView: lvl.drivingConfig?.cameraView ?? 'closeChase',
-                            },
-                          }))
-                        }
-                        className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[11px] font-semibold"
-                      >
-                        {CAR_PRESETS_SAFE.map((car) => (
-                          <option key={car.id} value={car.id}>
-                            {car.name}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <select
-                          value={currentLevel.drivingConfig?.physicsId ?? 'arcadeDrift'}
-                          onChange={(e) =>
-                            store.updateLevel('change driving physics', (lvl) => ({
-                              ...lvl,
-                              drivingConfig: {
-                                carId: lvl.drivingConfig?.carId ?? 'trailBuggy',
-                                physicsId: e.target.value as DrivingPhysicsId,
-                                driverId: lvl.drivingConfig?.driverId ?? 'stunt',
-                                cameraView: lvl.drivingConfig?.cameraView ?? 'closeChase',
-                              },
-                            }))
-                          }
-                          className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-semibold"
-                        >
-                          <option value="arcadeDrift">Arcade Drift</option>
-                          <option value="grippyRally">Grippy Rally</option>
-                          <option value="offroadCrawler">Trail Crawler</option>
-                        </select>
-                        <select
-                          value={currentLevel.drivingConfig?.driverId ?? 'stunt'}
-                          onChange={(e) =>
-                            store.updateLevel('change driver type', (lvl) => ({
-                              ...lvl,
-                              drivingConfig: {
-                                carId: lvl.drivingConfig?.carId ?? 'trailBuggy',
-                                physicsId: lvl.drivingConfig?.physicsId ?? 'arcadeDrift',
-                                driverId: e.target.value as DriverTypeId,
-                                cameraView: lvl.drivingConfig?.cameraView ?? 'closeChase',
-                              },
-                            }))
-                          }
-                          className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-semibold"
-                        >
-                          <option value="stunt">Stunt Racer</option>
-                          <option value="critter">Critter Driver</option>
-                          <option value="knight">Knight Pilot</option>
-                        </select>
+                  {currentLevel.gameplayMode === 'driving' && (() => {
+                    const drivingCfg = currentLevel.drivingConfig ?? {
+                      carId: 'trailBuggy' as CarPresetId,
+                      physicsId: 'arcadeDrift' as DrivingPhysicsId,
+                      driverId: 'stunt' as DriverTypeId,
+                      cameraView: 'closeChase' as DrivingCameraView,
+                    };
+                    const custom = drivingCfg.customVehicle ?? {};
+
+                    const updateCustomVehicle = (patch: Partial<VehicleCustomSpec>) => {
+                      store.updateLevel('customize vehicle', (lvl) => ({
+                        ...lvl,
+                        drivingConfig: {
+                          carId: lvl.drivingConfig?.carId ?? 'trailBuggy',
+                          physicsId: lvl.drivingConfig?.physicsId ?? 'arcadeDrift',
+                          driverId: lvl.drivingConfig?.driverId ?? 'stunt',
+                          cameraView: lvl.drivingConfig?.cameraView ?? 'closeChase',
+                          ...lvl.drivingConfig,
+                          customVehicle: {
+                            ...(lvl.drivingConfig?.customVehicle ?? {}),
+                            ...patch,
+                          },
+                        },
+                      }));
+                    };
+
+                    const spawnDriveProp = (preset: PropPresetId, name: string) => {
+                      const spawn = currentLevel.startPoint ?? { x: 8, y: 8 };
+                      const count = currentLevel.entities.filter((e) => e.propPreset === preset).length;
+                      const offset = (count + 1) * 2;
+                      const pos = {
+                        x: spawn.x + (count % 2 === 0 ? offset : -offset),
+                        y: spawn.y + offset,
+                      };
+                      const created = store.addEntity('prop', name, pos);
+                      if (created) {
+                        store.updateEntity(created.id, `spawn ${name}`, (ent) => ({
+                          ...ent,
+                          propPreset: preset,
+                        }));
+                      }
+                    };
+
+                    return (
+                      <div className="space-y-2 pt-2 border-t border-slate-200/70 dark:border-white/[0.06]">
+                        <div className="text-[11px] font-extrabold text-sky-600 dark:text-sky-400 flex items-center justify-between">
+                          <span>Vehicle &amp; Driving Setup</span>
+                          <span className="text-[9px] font-normal text-slate-400">Phase 2 Engine</span>
+                        </div>
+
+                        {/* Car Chassis Preset */}
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 dark:text-white/60">Chassis Archetype</label>
+                          <select
+                            value={drivingCfg.carId}
+                            onChange={(e) =>
+                              store.updateLevel('change car preset', (lvl) => ({
+                                ...lvl,
+                                drivingConfig: {
+                                  carId: e.target.value as CarPresetId,
+                                  physicsId: lvl.drivingConfig?.physicsId ?? 'arcadeDrift',
+                                  driverId: lvl.drivingConfig?.driverId ?? 'stunt',
+                                  cameraView: lvl.drivingConfig?.cameraView ?? 'closeChase',
+                                  customVehicle: lvl.drivingConfig?.customVehicle,
+                                },
+                              }))
+                            }
+                            className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[11px] font-semibold"
+                          >
+                            {CAR_PRESETS.map((car) => (
+                              <option key={car.id} value={car.id}>
+                                {car.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Physics & Driver */}
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 dark:text-white/60">Physics</label>
+                            <select
+                              value={drivingCfg.physicsId}
+                              onChange={(e) =>
+                                store.updateLevel('change driving physics', (lvl) => ({
+                                  ...lvl,
+                                  drivingConfig: {
+                                    carId: lvl.drivingConfig?.carId ?? 'trailBuggy',
+                                    physicsId: e.target.value as DrivingPhysicsId,
+                                    driverId: lvl.drivingConfig?.driverId ?? 'stunt',
+                                    cameraView: lvl.drivingConfig?.cameraView ?? 'closeChase',
+                                    customVehicle: lvl.drivingConfig?.customVehicle,
+                                  },
+                                }))
+                              }
+                              className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-semibold"
+                            >
+                              {DRIVING_PHYSICS_PRESETS.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 dark:text-white/60">Pilot</label>
+                            <select
+                              value={drivingCfg.driverId}
+                              onChange={(e) =>
+                                store.updateLevel('change driver type', (lvl) => ({
+                                  ...lvl,
+                                  drivingConfig: {
+                                    carId: lvl.drivingConfig?.carId ?? 'trailBuggy',
+                                    physicsId: lvl.drivingConfig?.physicsId ?? 'arcadeDrift',
+                                    driverId: e.target.value as DriverTypeId,
+                                    cameraView: lvl.drivingConfig?.cameraView ?? 'closeChase',
+                                    customVehicle: lvl.drivingConfig?.customVehicle,
+                                  },
+                                }))
+                              }
+                              className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-semibold"
+                            >
+                              {DRIVER_TYPES.map((d) => (
+                                <option key={d.id} value={d.id}>
+                                  {d.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Camera View */}
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 dark:text-white/60">Camera View</label>
+                          <select
+                            value={drivingCfg.cameraView ?? 'closeChase'}
+                            onChange={(e) =>
+                              store.updateLevel('change driving cam', (lvl) => ({
+                                ...lvl,
+                                drivingConfig: {
+                                  carId: lvl.drivingConfig?.carId ?? 'trailBuggy',
+                                  physicsId: lvl.drivingConfig?.physicsId ?? 'arcadeDrift',
+                                  driverId: lvl.drivingConfig?.driverId ?? 'stunt',
+                                  cameraView: e.target.value as DrivingCameraView,
+                                  customVehicle: lvl.drivingConfig?.customVehicle,
+                                },
+                              }))
+                            }
+                            className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-semibold"
+                          >
+                            {DRIVING_CAMERA_VIEWS.map((cam) => (
+                              <option key={cam.id} value={cam.id}>
+                                {cam.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Vehicle Customizer (Wheels, Roof, Wings, Colors) */}
+                        <div className="p-2 rounded-xl bg-slate-100/80 dark:bg-black/30 border border-slate-200 dark:border-white/10 space-y-2">
+                          <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-600 dark:text-sky-300">
+                            Custom Modifications
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {/* Wheel Style */}
+                            <div className="space-y-0.5">
+                              <label className="text-[9px] font-bold text-slate-500 dark:text-white/60">Wheels</label>
+                              <select
+                                value={custom.wheelStyle ?? 'standard'}
+                                onChange={(e) => updateCustomVehicle({ wheelStyle: e.target.value as VehicleWheelStyle })}
+                                className="w-full px-1.5 py-1 rounded bg-white dark:bg-[#171A23] text-[10px] font-semibold"
+                              >
+                                <option value="standard">Stock</option>
+                                <option value="thickMag">Thick Mag Wheels</option>
+                                <option value="offroadKnobby">Off-Road Knobby</option>
+                                <option value="stoneRoller">Stone Rollers</option>
+                                <option value="slick">F1 Slicks</option>
+                              </select>
+                            </div>
+
+                            {/* Roof Style */}
+                            <div className="space-y-0.5">
+                              <label className="text-[9px] font-bold text-slate-500 dark:text-white/60">Roof / Canopy</label>
+                              <select
+                                value={custom.roofStyle ?? 'standard'}
+                                onChange={(e) => updateCustomVehicle({ roofStyle: e.target.value as VehicleRoofStyle })}
+                                className="w-full px-1.5 py-1 rounded bg-white dark:bg-[#171A23] text-[10px] font-semibold"
+                              >
+                                <option value="standard">Standard</option>
+                                <option value="sunroof">Tinted Sunroof</option>
+                                <option value="openTop">Open Roadster</option>
+                                <option value="rollCage">Roll Cage</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Wings for Chasm Flight */}
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] font-bold text-slate-500 dark:text-white/60">Aerodynamic Wings (Chasm Leaps)</label>
+                            <select
+                              value={custom.wingStyle ?? 'none'}
+                              onChange={(e) => updateCustomVehicle({ wingStyle: e.target.value as VehicleWingStyle })}
+                              className="w-full px-1.5 py-1 rounded bg-white dark:bg-[#171A23] text-[10px] font-semibold"
+                            >
+                              <option value="none">No Permanent Wings</option>
+                              <option value="gliderWings">🪽 Chasm Glider Wings (Hold Space)</option>
+                              <option value="aeroFins">📐 Downforce Aero Fins</option>
+                              <option value="jetWing">🚀 Turbo Jet Wings</option>
+                            </select>
+                          </div>
+
+                          {/* Accessories Toggles */}
+                          <div className="flex flex-wrap items-center gap-2 pt-1 text-[10px] font-semibold">
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(custom.hasSpoiler)}
+                                onChange={(e) => updateCustomVehicle({ hasSpoiler: e.target.checked })}
+                              />
+                              <span>Spoiler</span>
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(custom.hasBullbar)}
+                                onChange={(e) => updateCustomVehicle({ hasBullbar: e.target.checked })}
+                              />
+                              <span>Bullbar</span>
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(custom.hasTwinExhaust)}
+                                onChange={(e) => updateCustomVehicle({ hasTwinExhaust: e.target.checked })}
+                              />
+                              <span>Twin Exhaust</span>
+                            </label>
+                          </div>
+
+                          {/* Color Palette */}
+                          <div className="grid grid-cols-3 gap-1 pt-1">
+                            <label className="flex flex-col gap-0.5 text-[9px] font-bold text-slate-500 dark:text-white/60">
+                              <span>Body Color</span>
+                              <input
+                                type="color"
+                                value={custom.bodyColor ?? '#D946EF'}
+                                onChange={(e) => updateCustomVehicle({ bodyColor: e.target.value })}
+                                className="w-full h-6 rounded cursor-pointer border border-white/20 bg-transparent"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-0.5 text-[9px] font-bold text-slate-500 dark:text-white/60">
+                              <span>Accent Color</span>
+                              <input
+                                type="color"
+                                value={custom.accentColor ?? '#38BDF8'}
+                                onChange={(e) => updateCustomVehicle({ accentColor: e.target.value })}
+                                className="w-full h-6 rounded cursor-pointer border border-white/20 bg-transparent"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-0.5 text-[9px] font-bold text-slate-500 dark:text-white/60">
+                              <span>Rim Color</span>
+                              <input
+                                type="color"
+                                value={custom.rimColor ?? '#F8FAFC'}
+                                onChange={(e) => updateCustomVehicle({ rimColor: e.target.value })}
+                                className="w-full h-6 rounded cursor-pointer border border-white/20 bg-transparent"
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Quick Driving Props Placement */}
+                        <div className="space-y-1 pt-1">
+                          <label className="text-[10px] font-bold text-slate-500 dark:text-white/60">Quick Add Driving Props</label>
+                          <div className="grid grid-cols-2 gap-1 text-[10px] font-semibold">
+                            <button
+                              type="button"
+                              onClick={() => spawnDriveProp('flightCube', 'Flight Bonus Cube')}
+                              className="px-2 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-600 dark:text-sky-300 transition-colors text-left"
+                            >
+                              + 🪽 Flight Cube
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => spawnDriveProp('boostPad', 'Turbo Boost Pad')}
+                              className="px-2 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-600 dark:text-cyan-300 transition-colors text-left"
+                            >
+                              + ⚡ Boost Pad
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => spawnDriveProp('ramp', 'Timber Stunt Ramp')}
+                              className="px-2 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-700 dark:text-amber-300 transition-colors text-left"
+                            >
+                              + 📐 Stunt Ramp
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => spawnDriveProp('roadBarrier', 'Hazard Barrier')}
+                              className="px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-600 dark:text-rose-300 transition-colors text-left"
+                            >
+                              + 🚧 Barrier
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => spawnDriveProp('checkpointArch', 'Rally Arch')}
+                              className="col-span-2 px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-600 dark:text-emerald-300 transition-colors text-center"
+                            >
+                              + 🏁 Rally Checkpoint Arch
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      <select
-                        value={currentLevel.drivingConfig?.cameraView ?? 'closeChase'}
-                        onChange={(e) =>
-                          store.updateLevel('change driving cam', (lvl) => ({
-                            ...lvl,
-                            drivingConfig: {
-                              carId: lvl.drivingConfig?.carId ?? 'trailBuggy',
-                              physicsId: lvl.drivingConfig?.physicsId ?? 'arcadeDrift',
-                              driverId: lvl.drivingConfig?.driverId ?? 'stunt',
-                              cameraView: e.target.value as DrivingCameraView,
-                            },
-                          }))
-                        }
-                        className="w-full px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-semibold"
-                      >
-                        <option value="closeChase">Close Chase Cam</option>
-                        <option value="wideVista">Wide Vista Cam</option>
-                        <option value="hood">Hood Cam</option>
-                      </select>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {currentLevel.gameplayMode !== 'driving' && (
                     <div className="space-y-2 pt-2 border-t border-slate-200/70 dark:border-white/[0.06]">
@@ -3127,10 +3539,3 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     </div>
   );
 };
-
-const CAR_PRESETS_SAFE: { id: CarPresetId; name: string }[] = [
-  { id: 'trailBuggy', name: 'Trail Buggy' },
-  { id: 'rallyCoupe', name: 'Rally Coupe' },
-  { id: 'forestTruck', name: 'Forest Truck' },
-  { id: 'vintageRoadster', name: 'Vintage Roadster' },
-];

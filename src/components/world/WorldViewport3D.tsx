@@ -1598,6 +1598,13 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         for (let fi = 0; fi < refs.floatSpinObjects.length; fi++) {
           refs.floatSpinObjects[fi].rotation.y += dt * 1.4;
         }
+        refs.entityGroups.forEach((grp) => {
+          if (grp.userData?.wanderingChicken) {
+            const ph = Number(grp.userData.wanderPhase ?? 0);
+            grp.rotation.y += Math.sin(t * 0.9 + ph) * dt * 0.65;
+            grp.rotation.x = Math.max(0, Math.sin(t * 4.5 + ph)) * 0.22;
+          }
+        });
         for (let ti = 0; ti < refs.torchFlameObjects.length; ti++) {
           const tf = refs.torchFlameObjects[ti];
           tf.mesh.position.y = tf.baseY + Math.sin(t * 9.2 + tf.phase) * 0.025;
@@ -2178,6 +2185,15 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       } else if (env === 'sideScroller') {
         refs.camera.position.set(0, 8, 30);
         refs.controls.target.set(0, 1.5, 0);
+      } else if (level.gameplayMode === 'rpg') {
+        const isInterior = Boolean(level.rpgConfig?.isInterior);
+        if (isInterior) {
+          refs.camera.position.set(16, 17, 16);
+          refs.controls.target.set(0, 1.2, 0);
+        } else {
+          refs.camera.position.set(23, 25, 25);
+          refs.controls.target.set(0, 1.4, -3);
+        }
       } else if (env === 'dungeon' || env === 'castle') {
         refs.camera.position.set(0, 32, 46);
         refs.controls.target.set(0, 1.2, 0);
@@ -2679,7 +2695,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       if (level.gameplayMode === 'driving') {
         const carRig = buildCarModel(
           level.drivingConfig?.carId ?? 'trailBuggy',
-          level.drivingConfig?.driverId ?? 'stunt'
+          level.drivingConfig?.driverId ?? 'stunt',
+          level.drivingConfig?.customVehicle
         );
         applyVisualStyleToObject(carRig.group, style);
         heroAnchor.add(carRig.group);

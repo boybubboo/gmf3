@@ -92,6 +92,11 @@ export function resolvePropPreset(name?: string, explicit?: PropPresetId): PropP
     return 'savePlinth';
   }
   if (lower.includes('ramp') || lower.includes('jump')) return 'ramp';
+  if (lower.includes('flight') || lower.includes('fly cube') || lower.includes('wing cube')) {
+    return 'flightCube';
+  }
+  if (lower.includes('boost') || lower.includes('turbo pad')) return 'boostPad';
+  if (lower.includes('barrier') || lower.includes('barricade')) return 'roadBarrier';
   if (lower.includes('arch') || lower.includes('gate')) return 'checkpointArch';
   if (lower.includes('signpost')) return 'signpost';
   return undefined;
@@ -859,6 +864,102 @@ function buildPropPresetMesh(preset: PropPresetId): THREE.Group {
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.22, 0.28), goldMat);
     stripe.position.set(0, 4.15, 0);
     g.add(colL, colR, banner, stripe);
+  } else if (preset === 'flightCube') {
+    // Glowing Mario-Kart-inspired winged Flight Bonus Cube
+    const cubeRoot = new THREE.Group();
+    cubeRoot.position.y = 1.45;
+    cubeRoot.userData.floatSpin = true;
+
+    const glassBoxMat = new THREE.MeshStandardMaterial({
+      color: '#38BDF8',
+      emissive: '#0EA5E9',
+      emissiveIntensity: 0.9,
+      roughness: 0.14,
+      metalness: 0.25,
+      transparent: true,
+      opacity: 0.78,
+    });
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(1.35, 1.35, 1.35), glassBoxMat);
+    crate.rotation.set(Math.PI / 6, Math.PI / 4, 0);
+    crate.castShadow = true;
+
+    const frameMat = new THREE.MeshStandardMaterial({
+      color: '#FACC15',
+      emissive: '#F59E0B',
+      emissiveIntensity: 0.55,
+      roughness: 0.25,
+      metalness: 0.72,
+    });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.02, 0.08, 8, 20), frameMat);
+    ring.rotation.x = Math.PI / 2;
+
+    // Wing emblems jutting from cube sides
+    for (const sx of [-1, 1]) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.12, 0.42), frameMat);
+      wing.position.set(sx * 1.15, 0.18, 0);
+      wing.rotation.z = sx * 0.28;
+      cubeRoot.add(wing);
+    }
+
+    const coreOrb = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.42, 0),
+      new THREE.MeshStandardMaterial({
+        color: '#FEF3C7',
+        emissive: '#FDE047',
+        emissiveIntensity: 1.8,
+        roughness: 0.1,
+      })
+    );
+    cubeRoot.add(crate, ring, coreOrb);
+    g.add(cubeRoot);
+  } else if (preset === 'boostPad') {
+    const padBase = new THREE.Mesh(
+      new THREE.BoxGeometry(4.2, 0.08, 3.4),
+      new THREE.MeshStandardMaterial({ color: '#0F172A', roughness: 0.4, metalness: 0.5 })
+    );
+    padBase.position.y = 0.04;
+    padBase.receiveShadow = true;
+    const chevMat = new THREE.MeshStandardMaterial({
+      color: '#38BDF8',
+      emissive: '#0EA5E9',
+      emissiveIntensity: 1.6,
+      roughness: 0.15,
+    });
+    for (let i = 0; i < 3; i++) {
+      const zOff = -0.95 + i * 0.95;
+      const barL = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.1, 0.24), chevMat);
+      barL.position.set(-0.65, 0.06, zOff);
+      barL.rotation.y = 0.45;
+      const barR = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.1, 0.24), chevMat);
+      barR.position.set(0.65, 0.06, zOff);
+      barR.rotation.y = -0.45;
+      g.add(barL, barR);
+    }
+    g.add(padBase);
+  } else if (preset === 'roadBarrier') {
+    const legMat = new THREE.MeshStandardMaterial({ color: '#1F2937', roughness: 0.65 });
+    for (const lx of [-1.05, 1.05]) {
+      const legF = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.96, 0.14), legMat);
+      legF.position.set(lx, 0.46, 0.18);
+      legF.rotation.x = -0.22;
+      legF.castShadow = true;
+      const legB = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.96, 0.14), legMat);
+      legB.position.set(lx, 0.46, -0.18);
+      legB.rotation.x = 0.22;
+      legB.castShadow = true;
+      const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.18, 8), lanternGlowMat);
+      beacon.position.set(lx, 1.08, 0);
+      g.add(legF, legB, beacon);
+    }
+    const plankMat = new THREE.MeshStandardMaterial({ color: '#F97316', roughness: 0.55 });
+    const stripeMat = new THREE.MeshStandardMaterial({ color: '#F8FAFC', roughness: 0.5 });
+    const railTop = new THREE.Mesh(new THREE.BoxGeometry(2.85, 0.28, 0.14), plankMat);
+    railTop.position.set(0, 0.82, 0);
+    railTop.castShadow = true;
+    const railMid = new THREE.Mesh(new THREE.BoxGeometry(2.85, 0.22, 0.14), stripeMat);
+    railMid.position.set(0, 0.46, 0);
+    railMid.castShadow = true;
+    g.add(railTop, railMid);
   } else if (preset === 'craftingBench') {
     // Artisan Woodland Crafting Bench: heavy timber trestle, plank deck, mini cast-iron anvil,
     // glowing alchemy flask, stone mortar, hammer, and unrolled blueprint scroll
@@ -2523,6 +2624,679 @@ export function buildFallingTreeMesh(
   return g;
 }
 
+function buildRpgRewardCardsShrineMesh(entity: LevelEntity): THREE.Group {
+  const root = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: '#5A626A', roughness: 0.88 });
+  const mossMat = new THREE.MeshStandardMaterial({ color: '#3E6B3C', roughness: 0.9 });
+  const goldMat = new THREE.MeshStandardMaterial({ color: '#F59E0B', roughness: 0.25, metalness: 0.85 });
+
+  // Organic stepped octagonal stone pedestal
+  const base1 = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.74, 0.22, 8), stoneMat);
+  base1.position.y = 0.11;
+  base1.castShadow = true;
+  base1.receiveShadow = true;
+  const base2 = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.56, 0.38, 7), stoneMat);
+  base2.position.y = 0.4;
+  base2.rotation.y = 0.35;
+  base2.castShadow = true;
+  const mossCap = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.48, 0.08, 7), mossMat);
+  mossCap.position.y = 0.6;
+  root.add(base1, base2, mossCap);
+
+  // 3 colorful fanned-out reward cards hovering above the shrine
+  const cardPivot = new THREE.Group();
+  cardPivot.position.set(0, 1.28, 0);
+  cardPivot.userData.floatSpin = true;
+
+  const cardSpecs = [
+    { color: '#EF4444', border: '#F59E0B', x: -0.36, y: -0.04, z: 0.03, rotZ: 0.28, rotY: 0.18 },
+    { color: '#8B5CF6', border: '#FDE047', x: 0, y: 0.06, z: 0.08, rotZ: 0, rotY: 0 },
+    { color: '#10B981', border: '#F59E0B', x: 0.36, y: -0.04, z: 0.03, rotZ: -0.28, rotY: -0.18 },
+  ];
+
+  for (const spec of cardSpecs) {
+    const cardGroup = new THREE.Group();
+    cardGroup.position.set(spec.x, spec.y, spec.z);
+    cardGroup.rotation.set(0, spec.rotY, spec.rotZ);
+
+    const frame = new THREE.Mesh(
+      new THREE.BoxGeometry(0.42, 0.62, 0.04),
+      new THREE.MeshStandardMaterial({ color: spec.border, roughness: 0.28, metalness: 0.8 })
+    );
+    frame.castShadow = true;
+    const face = new THREE.Mesh(
+      new THREE.BoxGeometry(0.35, 0.54, 0.05),
+      new THREE.MeshStandardMaterial({
+        color: spec.color,
+        emissive: spec.color,
+        emissiveIntensity: 0.45,
+        roughness: 0.3,
+      })
+    );
+    const emblem = new THREE.Mesh(new THREE.OctahedronGeometry(0.09, 0), goldMat);
+    emblem.position.z = 0.035;
+    cardGroup.add(frame, face, emblem);
+    cardPivot.add(cardGroup);
+  }
+
+  root.add(cardPivot);
+  root.userData.isRpgCardShrine = true;
+  root.userData.entityTint = entity.styleTint;
+  return root;
+}
+
+function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | null {
+  const lowerName = entity.name.toLowerCase();
+  const lowerNotes = (entity.notes ?? '').toLowerCase();
+  const isRpg =
+    lowerNotes.includes('rpg') ||
+    lowerName.includes('tavern') ||
+    lowerName.includes('blacksmith') ||
+    lowerName.includes('cottage') ||
+    lowerName.includes('cutaway') ||
+    lowerName.includes('weathered stone') ||
+    lowerName.includes('rope bridge') ||
+    lowerName.includes('broken slat') ||
+    lowerName.includes('wandering chicken') ||
+    lowerName.includes('village well') ||
+    lowerName.includes('stone well') ||
+    lowerName.includes('hollow magic tree') ||
+    lowerName.includes('tropical') ||
+    lowerName.includes('distressed');
+
+  if (!isRpg) return null;
+
+  const root = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: '#6E737B', roughness: 0.9 });
+  const darkStoneMat = new THREE.MeshStandardMaterial({ color: '#4B5058', roughness: 0.92 });
+  const mossMat = new THREE.MeshStandardMaterial({ color: '#3F6E38', roughness: 0.88 });
+  const timberMat = new THREE.MeshStandardMaterial({ color: '#5A3A22', roughness: 0.85 });
+  const weatheredWoodMat = new THREE.MeshStandardMaterial({ color: '#7D583A', roughness: 0.88 });
+  const plasterMat = new THREE.MeshStandardMaterial({ color: entity.styleTint ?? '#DFD3BE', roughness: 0.82 });
+  const roofMat = new THREE.MeshStandardMaterial({ color: '#6E3224', roughness: 0.82 });
+  const warmGlowMat = new THREE.MeshStandardMaterial({
+    color: '#FFB74D',
+    emissive: '#FF8F00',
+    emissiveIntensity: 1.35,
+    roughness: 0.25,
+  });
+
+  // 1. Cutaway Isometric Interior (Cottage / Tavern / Cave Chamber)
+  if (
+    lowerNotes.includes('interior') ||
+    lowerName.includes('cutaway') ||
+    lowerName.includes('interior')
+  ) {
+    const isCave = lowerNotes.includes('cave') || lowerName.includes('cave');
+    const wallMat = isCave ? darkStoneMat : plasterMat;
+    const floorMat = isCave
+      ? new THREE.MeshStandardMaterial({ color: '#3D4047', roughness: 0.92 })
+      : weatheredWoodMat;
+
+    // Diorama floor slab with flagged border
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.18, 5.6), floorMat);
+    floor.position.y = 0.09;
+    floor.receiveShadow = true;
+    root.add(floor);
+
+    // L-shaped cutaway back-left walls so isometric camera sees clearly inside
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(5.6, 2.5, 0.28), wallMat);
+    backWall.position.set(0, 1.34, -2.66);
+    backWall.castShadow = true;
+    backWall.receiveShadow = true;
+    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.5, 5.6), wallMat);
+    leftWall.position.set(-2.66, 1.34, 0);
+    leftWall.castShadow = true;
+    leftWall.receiveShadow = true;
+    root.add(backWall, leftWall);
+
+    // Exposed timber wall beams
+    for (let i = -2.2; i <= 2.2; i += 1.1) {
+      const beamBack = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.55, 0.34), timberMat);
+      beamBack.position.set(i, 1.35, -2.66);
+      const beamLeft = new THREE.Mesh(new THREE.BoxGeometry(0.34, 2.55, 0.14), timberMat);
+      beamLeft.position.set(-2.66, 1.35, i);
+      root.add(beamBack, beamLeft);
+    }
+
+    // Stone Hearth Fireplace against back wall
+    const hearth = new THREE.Mesh(new THREE.BoxGeometry(1.45, 1.65, 0.72), stoneMat);
+    hearth.position.set(-0.8, 0.9, -2.25);
+    hearth.castShadow = true;
+    const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.48, 1.3, 6), stoneMat);
+    chimney.position.set(-0.8, 2.3, -2.28);
+    const fireEmbers = new THREE.Mesh(new THREE.DodecahedronGeometry(0.26, 0), warmGlowMat);
+    fireEmbers.position.set(-0.8, 0.38, -2.02);
+    root.add(hearth, chimney, fireEmbers);
+
+    // Handcrafted Oak Table & Benches inside room
+    const tableTop = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.12, 1.05), timberMat);
+    tableTop.position.set(0.65, 0.72, 0.35);
+    tableTop.castShadow = true;
+    root.add(tableTop);
+    for (const [lx, lz] of [
+      [-0.72, -0.4],
+      [0.72, -0.4],
+      [-0.72, 0.4],
+      [0.72, 0.4],
+    ]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.68, 6), timberMat);
+      leg.position.set(0.65 + lx, 0.36, 0.35 + lz);
+      root.add(leg);
+    }
+    // Glowing potion bottle & scroll on table
+    const potion = new THREE.Mesh(
+      new THREE.SphereGeometry(0.11, 10, 10),
+      new THREE.MeshStandardMaterial({ color: '#10B981', emissive: '#059669', emissiveIntensity: 0.9 })
+    );
+    potion.position.set(0.45, 0.86, 0.32);
+    const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.18, 8), warmGlowMat);
+    candle.position.set(0.95, 0.87, 0.25);
+    root.add(potion, candle);
+
+    // Interior volumetric lantern beam
+    const coneMat = new THREE.MeshBasicMaterial({
+      color: '#FFCC66',
+      transparent: true,
+      opacity: 0.14,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const lightCone = new THREE.Mesh(new THREE.ConeGeometry(1.85, 2.3, 18, 1, true), coneMat);
+    lightCone.position.set(0.65, 1.32, 0.35);
+    root.add(lightCone);
+    return root;
+  }
+
+  // 2. Medieval Timber Tavern / Blacksmith / Forest Cottage / Stone Shrine
+  if (
+    lowerNotes.includes('rpg building') ||
+    lowerName.includes('tavern') ||
+    lowerName.includes('blacksmith') ||
+    lowerName.includes('cottage') ||
+    lowerName.includes('temple') ||
+    lowerName.includes('shrine')
+  ) {
+    if (lowerName.includes('shrine') || lowerName.includes('temple') || lowerNotes.includes('shrine') || lowerNotes.includes('temple')) {
+      // Organic Weathered Stone Temple / Shrine with hanging vines & glowing altar
+      const dais1 = new THREE.Mesh(new THREE.CylinderGeometry(1.75, 1.98, 0.32, 9), stoneMat);
+      dais1.position.y = 0.16;
+      dais1.receiveShadow = true;
+      const dais2 = new THREE.Mesh(new THREE.CylinderGeometry(1.32, 1.52, 0.28, 8), darkStoneMat);
+      dais2.position.y = 0.44;
+      dais2.rotation.y = 0.24;
+      root.add(dais1, dais2);
+
+      // 4 weathered crooked stone columns with hanging vines
+      for (let i = 0; i < 4; i++) {
+        const ang = (i * Math.PI) / 2 + 0.38;
+        const px = Math.cos(ang) * 1.12;
+        const pz = Math.sin(ang) * 1.12;
+        const col = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.18, 0.23, i === 2 ? 1.35 : 1.95, 7),
+          stoneMat
+        );
+        col.position.set(px, (i === 2 ? 1.35 : 1.95) * 0.5 + 0.52, pz);
+        col.rotation.z = (i % 2 === 0 ? 1 : -1) * 0.04;
+        col.castShadow = true;
+        root.add(col);
+
+        const vine = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.045, 6, 12), mossMat);
+        vine.position.set(px, 1.35, pz);
+        vine.rotation.x = Math.PI / 2 + 0.3;
+        root.add(vine);
+      }
+
+      // Mossy lintel arch & glowing rune monolith
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.28, 0.42), darkStoneMat);
+      lintel.position.set(0, 2.52, -0.78);
+      lintel.rotation.z = 0.03;
+      const runeCrystal = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.32, 0),
+        new THREE.MeshStandardMaterial({
+          color: '#34D399',
+          emissive: '#10B981',
+          emissiveIntensity: 1.1,
+          roughness: 0.2,
+        })
+      );
+      runeCrystal.position.set(0, 1.18, 0);
+      runeCrystal.userData.floatSpin = true;
+      root.add(lintel, runeCrystal);
+      return root;
+    }
+
+    if (lowerName.includes('blacksmith') || lowerNotes.includes('blacksmith')) {
+      // Blacksmith Forge with stone hearth, glowing coals, timber shelter & anvil
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(1.65, 1.8, 0.22, 9), stoneMat);
+      base.position.y = 0.11;
+      base.receiveShadow = true;
+      const forgeBody = new THREE.Mesh(new THREE.BoxGeometry(1.35, 1.25, 1.15), darkStoneMat);
+      forgeBody.position.set(-0.42, 0.72, -0.35);
+      forgeBody.castShadow = true;
+      const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.52, 1.45, 7), stoneMat);
+      chimney.position.set(-0.42, 1.98, -0.35);
+      const coals = new THREE.Mesh(new THREE.DodecahedronGeometry(0.28, 1), warmGlowMat);
+      coals.position.set(-0.42, 0.92, 0.12);
+      // Anvil on oak stump
+      const stump = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.46, 8), timberMat);
+      stump.position.set(0.62, 0.34, 0.35);
+      const anvil = new THREE.Mesh(
+        new THREE.BoxGeometry(0.46, 0.24, 0.22),
+        new THREE.MeshStandardMaterial({ color: '#374151', metalness: 0.85, roughness: 0.3 })
+      );
+      anvil.position.set(0.62, 0.66, 0.35);
+      // Slanted timber canopy roof
+      const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.55, 0.85, 4), roofMat);
+      canopy.position.set(0.15, 2.15, 0.1);
+      canopy.rotation.y = Math.PI / 4;
+      canopy.castShadow = true;
+      for (const [px, pz] of [
+        [1.05, 0.95],
+        [-0.85, 0.95],
+      ]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 1.65, 7), timberMat);
+        post.position.set(px, 0.92, pz);
+        root.add(post);
+      }
+      root.add(base, forgeBody, chimney, coals, stump, anvil, canopy);
+      return root;
+    }
+
+    // Medieval Timber Tavern or Forest Cottage (non-blocky organic stonework + steep pitched roof + dormers)
+    const isTavern = lowerName.includes('tavern') || lowerNotes.includes('tavern');
+    const w = isTavern ? 2.55 : 1.95;
+    const d = isTavern ? 2.05 : 1.65;
+    const h = isTavern ? 1.55 : 1.28;
+
+    // Irregular fieldstone foundation plinth
+    const foundation = new THREE.Mesh(new THREE.CylinderGeometry(w * 0.66, w * 0.72, 0.34, 9), stoneMat);
+    foundation.position.y = 0.17;
+    foundation.receiveShadow = true;
+    root.add(foundation);
+
+    // Main plaster-and-timber body
+    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), plasterMat);
+    body.position.y = 0.34 + h * 0.5;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    root.add(body);
+
+    // Organic crooked timber framing beams
+    for (const sx of [-w * 0.5, 0, w * 0.5]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, h + 0.06, 6), timberMat);
+      post.position.set(sx, 0.34 + h * 0.5, d * 0.5);
+      post.rotation.z = sx * 0.02;
+      const postBack = post.clone();
+      postBack.position.z = -d * 0.5;
+      root.add(post, postBack);
+    }
+    const crossBeam = new THREE.Mesh(new THREE.BoxGeometry(w + 0.14, 0.12, d + 0.14), timberMat);
+    crossBeam.position.y = 0.34 + h;
+    root.add(crossBeam);
+
+    // Steeply pitched multi-tier roof with ridge beam & moss patches
+    const roofCone = new THREE.Mesh(new THREE.ConeGeometry(w * 0.82, isTavern ? 1.48 : 1.22, 4), roofMat);
+    roofCone.position.y = 0.34 + h + (isTavern ? 0.72 : 0.58);
+    roofCone.rotation.y = Math.PI / 4;
+    roofCone.scale.set(1.08, 1, d / w);
+    roofCone.castShadow = true;
+    root.add(roofCone);
+
+    // Stone chimney stack
+    const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.28, 1.15, 7), stoneMat);
+    chimney.position.set(-w * 0.32, 0.34 + h + 0.68, -d * 0.22);
+    chimney.rotation.z = -0.05;
+    chimney.castShadow = true;
+    root.add(chimney);
+
+    // Arched wooden door & glowing warm tavern/cottage windows
+    const door = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.78, 0.1), timberMat);
+    door.position.set(0, 0.73, d * 0.5 + 0.03);
+    root.add(door);
+
+    for (const wx of isTavern ? [-0.74, 0.74] : [0.56]) {
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.38, 0.09), warmGlowMat);
+      win.position.set(wx, 0.34 + h * 0.56, d * 0.5 + 0.02);
+      root.add(win);
+    }
+
+    if (isTavern) {
+      // Hanging swinging tavern signboard & porch barrel
+      const signArm = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.65, 6), timberMat);
+      signArm.rotation.z = Math.PI / 2;
+      signArm.position.set(w * 0.5 + 0.25, 0.34 + h * 0.78, d * 0.35);
+      const signBoard = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.32, 0.06),
+        new THREE.MeshStandardMaterial({ color: '#D97706', roughness: 0.6 })
+      );
+      signBoard.position.set(w * 0.5 + 0.36, 0.34 + h * 0.6, d * 0.35);
+      root.add(signArm, signBoard);
+    }
+    return root;
+  }
+
+  // 3. Weathered Broken Organic Stone Path
+  if (lowerName.includes('weathered stone') || lowerNotes.includes('weatheredstone') || lowerName.includes('stone path')) {
+    const offsets = [
+      { x: -0.78, z: -0.15, r: 0.44, sides: 6, rot: 0.2, y: 0.05 },
+      { x: -0.22, z: 0.18, r: 0.52, sides: 7, rot: 0.85, y: 0.06 },
+      { x: 0.36, z: -0.12, r: 0.48, sides: 6, rot: 1.4, y: 0.055 },
+      { x: 0.88, z: 0.14, r: 0.42, sides: 5, rot: 2.1, y: 0.045 },
+      { x: -0.52, z: 0.42, r: 0.24, sides: 5, rot: 0.5, y: 0.04 },
+      { x: 0.12, z: -0.44, r: 0.28, sides: 6, rot: 1.8, y: 0.04 },
+    ];
+    for (let i = 0; i < offsets.length; i++) {
+      const o = offsets[i];
+      const slab = new THREE.Mesh(
+        new THREE.CylinderGeometry(o.r * 0.92, o.r, 0.09, o.sides),
+        i % 2 === 0 ? stoneMat : darkStoneMat
+      );
+      slab.position.set(o.x, o.y, o.z);
+      slab.rotation.set((i % 3 - 1) * 0.03, o.rot, ((i + 1) % 3 - 1) * 0.03);
+      slab.receiveShadow = true;
+      slab.castShadow = true;
+      root.add(slab);
+    }
+    // Moss tufts between cracked flagstones
+    for (const [mx, mz] of [
+      [-0.48, 0.02],
+      [0.08, 0.05],
+      [0.62, -0.02],
+    ]) {
+      const moss = new THREE.Mesh(new THREE.DodecahedronGeometry(0.11, 0), mossMat);
+      moss.scale.set(1.4, 0.35, 1.2);
+      moss.position.set(mx, 0.04, mz);
+      root.add(moss);
+    }
+    return root;
+  }
+
+  // 4. Mountain Rope Bridge with Wooden Slats & Broken Slat Gap
+  if (lowerName.includes('rope bridge') || lowerName.includes('broken slat') || lowerNotes.includes('ropebridge')) {
+    const ropeMat = new THREE.MeshStandardMaterial({ color: '#A38655', roughness: 0.92 });
+    // 4 weathered corner posts
+    for (const [px, pz] of [
+      [-1.7, -0.62],
+      [-1.7, 0.62],
+      [1.7, -0.62],
+      [1.7, 0.62],
+    ]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.95, 7), timberMat);
+      post.position.set(px, 0.48, pz);
+      post.rotation.z = px > 0 ? -0.05 : 0.05;
+      post.castShadow = true;
+      root.add(post);
+    }
+    // Twin support ropes & handrail ropes
+    for (const rz of [-0.62, 0.62]) {
+      const bottomCable = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 3.55, 8), ropeMat);
+      bottomCable.rotation.z = Math.PI / 2;
+      bottomCable.position.set(0, 0.14, rz);
+      const topRope = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 3.55, 8), ropeMat);
+      topRope.rotation.z = Math.PI / 2;
+      topRope.position.set(0, 0.78, rz);
+      root.add(bottomCable, topRope);
+    }
+    // Wooden plank slats with slat #4 broken in two uneven splintered halves
+    const slatCount = 8;
+    for (let i = 0; i < slatCount; i++) {
+      const sx = -1.4 + i * 0.4;
+      const sagY = 0.17 - Math.sin((i / (slatCount - 1)) * Math.PI) * 0.05;
+      if (i === 4) {
+        // Broken slat gap! Left stub & right tilted splinter
+        const leftStub = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.42), weatheredWoodMat);
+        leftStub.position.set(sx - 0.03, sagY - 0.02, -0.42);
+        leftStub.rotation.set(0.14, 0.08, -0.18);
+        const rightStub = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.34), weatheredWoodMat);
+        rightStub.position.set(sx + 0.04, sagY - 0.03, 0.46);
+        rightStub.rotation.set(-0.18, -0.12, 0.15);
+        root.add(leftStub, rightStub);
+      } else {
+        const slat = new THREE.Mesh(new THREE.BoxGeometry(0.31, 0.065, 1.32), i % 2 === 0 ? weatheredWoodMat : timberMat);
+        slat.position.set(sx, sagY, 0);
+        slat.rotation.set((i % 3 - 1) * 0.025, (i % 2 === 0 ? 1 : -1) * 0.03, 0);
+        slat.castShadow = true;
+        slat.receiveShadow = true;
+        root.add(slat);
+      }
+    }
+    return root;
+  }
+
+  // 5. Distressed Organic Split-Rail Wood Fence
+  if (lowerName.includes('fence') || lowerNotes.includes('fence')) {
+    for (const px of [-0.95, 0, 0.95]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.085, 0.92, 6), timberMat);
+      post.position.set(px, 0.45, (px === 0 ? 1 : -1) * 0.03);
+      post.rotation.set((px % 2) * 0.06, px * 0.2, (px === 0 ? -1 : 1) * 0.07);
+      post.castShadow = true;
+      root.add(post);
+    }
+    // Crooked organic split rails
+    for (const [ry, tiltZ, tiltY] of [
+      [0.32, 0.04, 0.03],
+      [0.66, -0.05, -0.04],
+    ]) {
+      const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.052, 2.15, 6), weatheredWoodMat);
+      rail.rotation.set(tiltY, 0, Math.PI / 2 + tiltZ);
+      rail.position.set(0, ry, 0.04);
+      rail.castShadow = true;
+      root.add(rail);
+    }
+    return root;
+  }
+
+  // 6. Village Stone Well with Timber Roof & Hanging Bucket
+  if (lowerName.includes('well') || lowerNotes.includes('well')) {
+    const wellWall = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.68, 0.62, 12), stoneMat);
+    wellWall.position.y = 0.31;
+    wellWall.castShadow = true;
+    const waterDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(0.5, 12),
+      new THREE.MeshStandardMaterial({ color: '#0284C7', roughness: 0.15, metalness: 0.2 })
+    );
+    waterDisc.rotation.x = -Math.PI / 2;
+    waterDisc.position.y = 0.56;
+    root.add(wellWall, waterDisc);
+
+    for (const sx of [-0.54, 0.54]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 1.35, 7), timberMat);
+      post.position.set(sx, 0.95, 0);
+      post.castShadow = true;
+      root.add(post);
+    }
+    const spindle = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.15, 8), weatheredWoodMat);
+    spindle.rotation.z = Math.PI / 2;
+    spindle.position.y = 1.25;
+    const bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.1, 0.22, 8), timberMat);
+    bucket.position.set(0, 0.88, 0);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.88, 0.62, 4), roofMat);
+    roof.position.y = 1.82;
+    roof.rotation.y = Math.PI / 4;
+    roof.castShadow = true;
+    root.add(spindle, bucket, roof);
+    return root;
+  }
+
+  // 7. Wandering Village Chicken
+  if (lowerName.includes('chicken') || lowerNotes.includes('chicken')) {
+    const featherMat = new THREE.MeshStandardMaterial({ color: entity.styleTint ?? '#FFFBEB', roughness: 0.8 });
+    const combMat = new THREE.MeshStandardMaterial({ color: '#DC2626', roughness: 0.5 });
+    const beakMat = new THREE.MeshStandardMaterial({ color: '#F59E0B', roughness: 0.4 });
+
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.21, 10, 10), featherMat);
+    body.scale.set(0.95, 0.88, 1.25);
+    body.position.set(0, 0.26, 0);
+    body.castShadow = true;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 9, 9), featherMat);
+    head.position.set(0, 0.43, 0.18);
+    const comb = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.09, 0.12), combMat);
+    comb.position.set(0, 0.55, 0.18);
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.11, 5), beakMat);
+    beak.rotation.x = Math.PI / 2;
+    beak.position.set(0, 0.42, 0.32);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.22, 5), featherMat);
+    tail.rotation.x = -0.55;
+    tail.position.set(0, 0.36, -0.24);
+    for (const lx of [-0.07, 0.07]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 5), beakMat);
+      leg.position.set(lx, 0.08, 0.02);
+      root.add(leg);
+    }
+    root.add(body, head, comb, beak, tail);
+    root.userData.wanderingChicken = true;
+    root.userData.wanderPhase = Math.random() * Math.PI * 2;
+    return root;
+  }
+
+  // 8. Hollow Magic Forest Tree with Inner Arcane Glow
+  if (lowerName.includes('hollow') || lowerNotes.includes('hollowmagictree')) {
+    const barkMat = new THREE.MeshStandardMaterial({ color: '#3E2A1D', roughness: 0.94 });
+    const leafMat = new THREE.MeshStandardMaterial({ color: '#1E4620', roughness: 0.86 });
+    const trunk = new THREE.Mesh(
+      createOrganicTrunkGeometry({
+        rTop: 0.38,
+        rBottom: 0.68,
+        height: 2.45,
+        yOffset: 0,
+        radialSegs: 12,
+        heightSegs: 7,
+        rootFlare: 0.38,
+        curveX: 0.12,
+      }),
+      barkMat
+    );
+    trunk.castShadow = true;
+    // Dark hollow portal cavity & floating arcane wisps inside
+    const cavity = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.24, 0.28, 0.85, 8),
+      new THREE.MeshBasicMaterial({ color: '#090D16' })
+    );
+    cavity.position.set(0, 0.68, 0.32);
+    const magicCore = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.2, 1),
+      new THREE.MeshStandardMaterial({
+        color: '#38BDF8',
+        emissive: '#0284C7',
+        emissiveIntensity: 1.6,
+        roughness: 0.15,
+      })
+    );
+    magicCore.position.set(0, 0.75, 0.44);
+    magicCore.userData.floatSpin = true;
+
+    const canopy1 = new THREE.Mesh(createSculptedCanopyLobeGeometry(1.45, 1.85, 1.35, 1.05, 4.1, 14, 10, 2.2, 1.6), leafMat);
+    canopy1.position.set(0, 2.45, 0);
+    canopy1.castShadow = true;
+    const canopy2 = new THREE.Mesh(createSculptedCanopyLobeGeometry(1.15, 1.45, 1.15, 0.95, 7.3, 12, 9, 2.1, 1.5), leafMat);
+    canopy2.position.set(0.55, 2.05, -0.35);
+    canopy2.castShadow = true;
+    root.add(trunk, cavity, magicCore, canopy1, canopy2);
+    return root;
+  }
+
+  // 9. Tropical Jungle Vine Tree (Banyan / Palm with hanging liana vines — zero pine cones!)
+  if (lowerName.includes('tropical') || lowerNotes.includes('tropicaltree')) {
+    const barkMat = new THREE.MeshStandardMaterial({ color: '#5C432C', roughness: 0.9 });
+    const jungleLeafMat = new THREE.MeshStandardMaterial({ color: '#2D7A32', roughness: 0.78 });
+    const vineMat = new THREE.MeshStandardMaterial({ color: '#4D7C0F', roughness: 0.88 });
+
+    const trunk = new THREE.Mesh(
+      createOrganicTrunkGeometry({
+        rTop: 0.22,
+        rBottom: 0.56,
+        height: 2.65,
+        yOffset: 0,
+        radialSegs: 12,
+        heightSegs: 8,
+        rootFlare: 0.46,
+        curveX: 0.18,
+        curveZ: -0.12,
+      }),
+      barkMat
+    );
+    trunk.castShadow = true;
+    root.add(trunk);
+
+    // Broad spreading tropical banyan canopy domes
+    const domes = [
+      { x: 0, y: 2.65, z: 0, r: 1.55 },
+      { x: 0.85, y: 2.35, z: 0.42, r: 1.15 },
+      { x: -0.78, y: 2.28, z: -0.38, r: 1.18 },
+    ];
+    for (const d of domes) {
+      const lobe = new THREE.Mesh(
+        createSculptedCanopyLobeGeometry(d.r, d.r * 1.32, d.r * 0.72, 1.1, d.x * 5 + 2.1, 14, 10, 2.3, 1.6),
+        jungleLeafMat
+      );
+      lobe.position.set(d.x, d.y, d.z);
+      lobe.castShadow = true;
+      root.add(lobe);
+    }
+
+    // Hanging liana vines draping from the tropical branches
+    for (const [vx, vz, vh] of [
+      [0.68, 0.35, 1.45],
+      [-0.62, -0.28, 1.35],
+      [0.25, -0.64, 1.55],
+      [-0.38, 0.58, 1.25],
+    ]) {
+      const vine = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.018, vh, 6), vineMat);
+      vine.position.set(vx, 2.25 - vh * 0.5, vz);
+      vine.rotation.z = vx * 0.08;
+      root.add(vine);
+    }
+    return root;
+  }
+
+  // 10. Exotic Giant Jungle Plant / Monstera & Fern Cluster
+  if (lowerName.includes('exotic') || lowerName.includes('fern') || lowerName.includes('monstera') || lowerNotes.includes('exoticplant')) {
+    const frondMat = new THREE.MeshStandardMaterial({ color: '#16A34A', roughness: 0.72 });
+    const bloomMat = new THREE.MeshStandardMaterial({
+      color: '#F43F5E',
+      emissive: '#E11D48',
+      emissiveIntensity: 0.35,
+      roughness: 0.4,
+    });
+    const frondCount = 9;
+    for (let i = 0; i < frondCount; i++) {
+      const ang = (i / frondCount) * Math.PI * 2;
+      const frond = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.98, 5), frondMat);
+      frond.scale.set(1.2, 1, 0.25);
+      frond.position.set(Math.cos(ang) * 0.38, 0.38, Math.sin(ang) * 0.38);
+      frond.rotation.y = -ang + Math.PI / 2;
+      frond.rotation.z = -0.68;
+      frond.castShadow = true;
+      root.add(frond);
+    }
+    const bloom = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16, 0), bloomMat);
+    bloom.position.y = 0.48;
+    root.add(bloom);
+    return root;
+  }
+
+  // 11. Vine-Wrapped Stone Ruin Pillar
+  if (lowerName.includes('pillar') || lowerNotes.includes('stonepillar')) {
+    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.54, 0.26, 7), darkStoneMat);
+    plinth.position.y = 0.13;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, 1.75, 8), stoneMat);
+    shaft.position.y = 1.08;
+    shaft.rotation.z = 0.04;
+    shaft.castShadow = true;
+    const vineWrap = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.055, 6, 14), mossMat);
+    vineWrap.position.y = 0.95;
+    vineWrap.rotation.x = Math.PI / 2 + 0.35;
+    const vineWrap2 = vineWrap.clone();
+    vineWrap2.position.y = 1.45;
+    vineWrap2.rotation.x = Math.PI / 2 - 0.3;
+    root.add(plinth, shaft, vineWrap, vineWrap2);
+    return root;
+  }
+
+  return null;
+}
+
 export function buildEntityMesh(entity: LevelEntity): THREE.Group {
   const group = new THREE.Group();
   group.userData.entityId = entity.id;
@@ -2604,6 +3378,13 @@ export function buildEntityMesh(entity: LevelEntity): THREE.Group {
 
     case 'treasure': {
       addShadow(0.58);
+      if (
+        entity.notes?.toLowerCase().includes('card') ||
+        entity.name.toLowerCase().includes('card')
+      ) {
+        group.add(buildRpgRewardCardsShrineMesh(entity));
+        break;
+      }
       const woodMat = new THREE.MeshStandardMaterial({ color: '#8E5225', roughness: 0.72 });
       const darkWoodMat = new THREE.MeshStandardMaterial({ color: '#3D2210', roughness: 0.88 });
       const goldMat = new THREE.MeshStandardMaterial({ color: '#F2C230', roughness: 0.25, metalness: 0.9 });
@@ -2780,6 +3561,81 @@ export function buildEntityMesh(entity: LevelEntity): THREE.Group {
         hub.rotation.x = Math.PI / 2;
         hub.position.y = 0.26;
         group.add(slot, blade, hub);
+      } else if (trapStyle === 'laserTripwires') {
+        // Twin high-tech pylons with glowing cyan laser beam across them
+        for (const px of [-0.48, 0.48]) {
+          const pylon = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 0.52, 8), baseMat);
+          pylon.position.set(px, 0.26, 0);
+          pylon.castShadow = true;
+          const cap = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), hazardMat);
+          cap.position.set(px, 0.54, 0);
+          group.add(pylon, cap);
+        }
+        const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.96, 6), hazardMat);
+        beam.rotation.z = Math.PI / 2;
+        beam.position.set(0, 0.32, 0);
+        group.add(beam);
+      } else if (trapStyle === 'poisonDartPillars') {
+        // Carved stone dart totem pillar with apertures
+        const totem = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.72, 0.48), baseMat);
+        totem.position.y = 0.42;
+        totem.castShadow = true;
+        const topNozzle = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.22, 6), hazardMat);
+        topNozzle.position.y = 0.86;
+        for (const oz of [-0.25, 0.25]) {
+          const slit = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 0.04), hazardMat);
+          slit.position.set(0, 0.42, oz);
+          group.add(slit);
+        }
+        group.add(totem, topNozzle);
+      } else if (trapStyle === 'fireGeysers') {
+        // Volcanic vent cone with glowing magma core
+        const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.48, 0.34, 10), baseMat);
+        cone.position.y = 0.22;
+        cone.castShadow = true;
+        const magmaCore = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), hazardMat);
+        magmaCore.position.y = 0.34;
+        group.add(cone, magmaCore);
+      } else if (trapStyle === 'frostSpikes') {
+        // Cluster of sharp crystalline frost spikes
+        const spikeOffsets: [number, number, number, number][] = [
+          [0, 0, 0.65, 0.15],
+          [-0.32, -0.32, 0.48, 0.11],
+          [0.32, -0.32, 0.52, 0.12],
+          [-0.32, 0.32, 0.55, 0.12],
+          [0.32, 0.32, 0.46, 0.11],
+        ];
+        for (const [ox, oz, h, r] of spikeOffsets) {
+          const spike = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), hazardMat);
+          spike.position.set(ox, h * 0.5 + 0.08, oz);
+          spike.castShadow = true;
+          group.add(spike);
+        }
+      } else if (trapStyle === 'acidPuddles') {
+        // Sunken basin with toxic bubbling acid vapor
+        const basin = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.56, 0.06, 16), baseMat);
+        basin.position.y = 0.09;
+        const acidSurface = new THREE.Mesh(new THREE.CircleGeometry(0.48, 16), hazardMat);
+        acidSurface.rotation.x = -Math.PI / 2;
+        acidSurface.position.y = 0.13;
+        for (const [bx, bz, br] of [[-0.18, 0.12, 0.09], [0.16, -0.14, 0.08], [0.05, 0.18, 0.06]] as const) {
+          const bubble = new THREE.Mesh(new THREE.SphereGeometry(br, 8, 8), hazardMat);
+          bubble.position.set(bx, 0.15 + br * 0.5, bz);
+          group.add(bubble);
+        }
+        group.add(basin, acidSurface);
+      } else if (trapStyle === 'whirlpoolVortex') {
+        // Swirling water vortex with concentric abyssal rings
+        const outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.045, 8, 20), hazardMat);
+        outerRing.rotation.x = Math.PI / 2;
+        outerRing.position.y = 0.12;
+        const innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.035, 8, 16), hazardMat);
+        innerRing.rotation.x = Math.PI / 2;
+        innerRing.position.y = 0.09;
+        const funnel = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.24, 10), baseMat);
+        funnel.rotation.x = Math.PI;
+        funnel.position.y = 0.18;
+        group.add(outerRing, innerRing, funnel);
       } else {
         const offsets = [-0.32, 0.32];
         for (const ox of offsets) {
@@ -3030,6 +3886,16 @@ export function buildEntityMesh(entity: LevelEntity): THREE.Group {
     }
 
     case 'prop': {
+      const rpgCustom = buildRpgCustomPropOrBuildingMesh(entity);
+      if (rpgCustom) {
+        addShadow(0.75);
+        group.add(rpgCustom);
+        if (rpgCustom.userData.wanderingChicken) {
+          group.userData.wanderingChicken = true;
+          group.userData.wanderPhase = rpgCustom.userData.wanderPhase ?? 0;
+        }
+        break;
+      }
       const preset = resolvePropPreset(entity.name, entity.propPreset);
       if (preset) {
         group.add(buildPropPresetMesh(preset));
@@ -3203,11 +4069,71 @@ export function buildEntityMesh(entity: LevelEntity): THREE.Group {
         break;
       }
       addShadow(0.3);
-      const woodMat = new THREE.MeshStandardMaterial({ color: '#614228', roughness: 0.85 });
-      const flameMat = new THREE.MeshStandardMaterial({ color: '#FF9F1C', emissive: '#FF7A00', emissiveIntensity: 1.5, roughness: 0.2 });
+      const isVolumetricLantern =
+        entity.notes?.toLowerCase().includes('volumetric') ||
+        entity.name.toLowerCase().includes('lantern') ||
+        entity.notes?.toLowerCase().includes('rpg');
+      const woodMat = new THREE.MeshStandardMaterial({ color: '#5A3D24', roughness: 0.85 });
+      const ironMat = new THREE.MeshStandardMaterial({ color: '#2F3540', metalness: 0.78, roughness: 0.35 });
+      const glowHex = entity.styleTint ?? '#FFAE34';
+      const flameMat = new THREE.MeshStandardMaterial({
+        color: glowHex,
+        emissive: glowHex,
+        emissiveIntensity: 1.65,
+        roughness: 0.18,
+      });
+
+      if (isVolumetricLantern) {
+        const stoneBase = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.22, 0.3, 0.38, 7),
+          new THREE.MeshStandardMaterial({ color: '#61666F', roughness: 0.9 })
+        );
+        stoneBase.position.y = 0.19;
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.08, 1.55, 7), woodMat);
+        post.position.y = 0.96;
+        post.castShadow = true;
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, 0.06), woodMat);
+        arm.position.set(0.18, 1.68, 0);
+        const lanternCage = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.11, 0.28, 6), ironMat);
+        lanternCage.position.set(0.36, 1.46, 0);
+        const lanternCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.095, 1), flameMat);
+        lanternCore.position.set(0.36, 1.46, 0);
+
+        // Stylized volumetric light cone & ground pool
+        const volumetricCone = new THREE.Mesh(
+          new THREE.ConeGeometry(1.45, 2.35, 20, 1, true),
+          new THREE.MeshBasicMaterial({
+            color: glowHex,
+            transparent: true,
+            opacity: 0.15,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          })
+        );
+        volumetricCone.position.set(0.36, 0.35, 0);
+
+        const groundGlow = new THREE.Mesh(
+          new THREE.CircleGeometry(1.42, 20),
+          new THREE.MeshBasicMaterial({
+            color: glowHex,
+            transparent: true,
+            opacity: 0.22,
+            depthWrite: false,
+          })
+        );
+        groundGlow.rotation.x = -Math.PI / 2;
+        groundGlow.position.set(0.36, 0.03, 0);
+
+        const ptLight = new THREE.PointLight(glowHex, 1.4, 9.5, 1.8);
+        ptLight.position.set(0.36, 1.42, 0);
+
+        group.add(stoneBase, post, arm, lanternCage, lanternCore, volumetricCone, groundGlow, ptLight);
+        break;
+      }
+
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 1.25, 8), woodMat);
       pole.position.y = 0.62;
-      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.1, 0.16, 8), new THREE.MeshStandardMaterial({ color: '#3A3A40', metalness: 0.7 }));
+      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.1, 0.16, 8), ironMat);
       bowl.position.y = 1.28;
       const flame = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.34, 8), flameMat);
       flame.position.y = 1.5;

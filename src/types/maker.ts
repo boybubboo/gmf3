@@ -704,13 +704,20 @@ export type PropPresetId =
   | 'craftingBench'
   | 'ramp'
   | 'checkpointArch'
-  | 'savePlinth';
+  | 'savePlinth'
+  | 'flightCube'
+  | 'boostPad'
+  | 'roadBarrier';
 
 export type CarPresetId =
   | 'trailBuggy'
   | 'rallyCoupe'
   | 'forestTruck'
-  | 'vintageRoadster';
+  | 'vintageRoadster'
+  | 'flintstones'
+  | 'f1Racer'
+  | 'sportCoupe'
+  | 'motorbike';
 
 export type DrivingPhysicsId =
   | 'arcadeDrift'
@@ -722,7 +729,34 @@ export type DriverTypeId = 'ranger' | 'stunt' | 'skunk' | 'bot';
 
 export type DrivingCameraView = 'driverPov' | 'closeChase' | 'farChase';
 
-export type GameplayMode = 'adventure' | 'buddies' | 'driving' | 'roguelike';
+export type GameplayMode = 'adventure' | 'buddies' | 'driving' | 'roguelike' | 'rpg';
+
+export type RpgScenarioId =
+  | 'medievalVillage'
+  | 'jungleRuins'
+  | 'deepWoodedForest'
+  | 'stoneTemple'
+  | 'coastalVillage'
+  | 'interiorCottage'
+  | 'interiorTavern'
+  | 'interiorCave';
+
+export type RpgLootMode = 'both' | 'traditional' | 'fannedCards';
+
+export type RpgPathStyle =
+  | 'weatheredStone'
+  | 'ropeBridgeSlats'
+  | 'mossyCobble'
+  | 'woodPlankWalkway';
+
+export interface RpgLevelConfig {
+  scenario: RpgScenarioId;
+  lootMode: RpgLootMode;
+  pathStyle: RpgPathStyle;
+  isInterior?: boolean;
+  volumetricLanterns?: boolean;
+  cameraZoom?: number;
+}
 
 export type BuildingShapeId =
   | 'wallCube'
@@ -815,33 +849,68 @@ export interface RoguelikeTorchAnchor {
   light: boolean;
 }
 
+export type RoguelikeScenarioKind =
+  | 'ancientCrypt'
+  | 'cyberpunkLab'
+  | 'overgrownJungle'
+  | 'volcanicAbyss'
+  | 'frostCitadel'
+  | 'sunkenTemple'
+  | 'desertPyramid'
+  | 'astralVoid';
+
 export type DungeonWallStyle =
   | 'dampMasonry'
   | 'obsidianBasalt'
   | 'mossyRuins'
   | 'gildedCrypt'
-  | 'crimsonCatacombs';
+  | 'crimsonCatacombs'
+  | 'cyberPanels'
+  | 'overgrownStone'
+  | 'glacialIce'
+  | 'sunkenCoral'
+  | 'sandstoneHieroglyphs'
+  | 'astralVoid';
 
 export type DungeonFloorStyle =
   | 'flagstone'
   | 'checkerMarble'
   | 'crackedSlate'
   | 'emberBasalt'
-  | 'mossyCobble';
+  | 'mossyCobble'
+  | 'cyberGrid'
+  | 'jungleEarth'
+  | 'frozenPermafrost'
+  | 'abyssalSand'
+  | 'desertSandstone'
+  | 'cosmicTiles';
 
 export type DungeonPropStyle =
   | 'cryptBarrels'
   | 'arcaneBraziers'
   | 'boneRelics'
-  | 'gildedUrns';
+  | 'gildedUrns'
+  | 'cyberTerminals'
+  | 'jungleMonoliths'
+  | 'glacialCrystals'
+  | 'coralRelics'
+  | 'desertSarcophagi'
+  | 'astralPylons';
 
 export type DungeonTrapStyle =
   | 'ironSpikes'
   | 'emberPlates'
   | 'cursedRunes'
-  | 'sawBlades';
+  | 'sawBlades'
+  | 'laserTripwires'
+  | 'poisonDartPillars'
+  | 'fireGeysers'
+  | 'frostSpikes'
+  | 'acidPuddles'
+  | 'whirlpoolVortex';
 
 export interface DungeonStyleConfig {
+  scenarioKind?: RoguelikeScenarioKind;
   wallStyle: DungeonWallStyle;
   floorStyle: DungeonFloorStyle;
   propStyle: DungeonPropStyle;
@@ -870,6 +939,7 @@ export interface DungeonRoomSpec {
 }
 
 export interface RoguelikeConfig {
+  scenarioKind?: RoguelikeScenarioKind;
   bossInterval: number;
   difficultyScale: number;
   relicChoicesPerFloor: number;
@@ -908,11 +978,44 @@ export interface RoguelikeRelicDef {
   };
 }
 
+export type VehicleWheelStyle =
+  | 'standard'
+  | 'thickMag'
+  | 'offroadKnobby'
+  | 'stoneRoller'
+  | 'slick';
+
+export type VehicleRoofStyle =
+  | 'standard'
+  | 'openTop'
+  | 'sunroof'
+  | 'rollCage';
+
+export type VehicleWingStyle =
+  | 'none'
+  | 'gliderWings'
+  | 'aeroFins'
+  | 'jetWing';
+
+export interface VehicleCustomSpec {
+  bodyColor?: string;
+  accentColor?: string;
+  rimColor?: string;
+  wheelStyle?: VehicleWheelStyle;
+  wheelScale?: number;
+  roofStyle?: VehicleRoofStyle;
+  wingStyle?: VehicleWingStyle;
+  hasSpoiler?: boolean;
+  hasBullbar?: boolean;
+  hasTwinExhaust?: boolean;
+}
+
 export interface DrivingConfig {
   carId: CarPresetId;
   physicsId: DrivingPhysicsId;
   driverId: DriverTypeId;
   cameraView?: DrivingCameraView;
+  customVehicle?: VehicleCustomSpec;
 }
 
 export type EntitySection =
@@ -2055,6 +2158,7 @@ export interface GameLevel {
   portalPoint?: BoardPoint;
   drivingConfig?: DrivingConfig;
   roguelikeConfig?: RoguelikeConfig;
+  rpgConfig?: RpgLevelConfig;
   dungeonStyle?: DungeonStyleConfig;
   dungeonRooms?: DungeonRoomSpec[];
   customWallBoxes?: WallColliderBox[];

@@ -2370,6 +2370,9 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
                 <option value="craftingBench">Crafting Bench</option>
                 <option value="signpost">Trail Signpost</option>
                 <option value="ramp">Timber Stunt Ramp</option>
+                <option value="flightCube">Flight Bonus Cube</option>
+                <option value="boostPad">Turbo Boost Pad</option>
+                <option value="roadBarrier">Road Hazard Barrier</option>
                 <option value="checkpointArch">Rally Checkpoint Arch</option>
               </select>
 
