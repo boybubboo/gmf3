@@ -213,6 +213,7 @@ import {
   applyRoadSplineToTerrain,
   applyTerrainBrush,
   carveWaterBodyIntoTerrain,
+  commitCaveSplineStroke,
   createDefaultWaterBodies,
   createInitialTerrain,
   ensureUpgradedTerrain,
@@ -221,13 +222,21 @@ import {
   IslandTerrain,
   levelWorldToBoard,
   normalizeCaveGrotto,
+  type CaveSplineStrokeInput,
   type Overview2DBrushId,
   sampleTerrainHeight,
   smoothOrganicMossLayers,
   uid,
 } from '../utils/terrain';
 
+import {
+  loadProjectsSnapshotFromIDB,
+  saveProjectsSnapshotToIDB,
+} from '../utils/projectStorage';
+
 const STORAGE_KEY = 'maker.projects.v1';
+const MAX_UNDO_HISTORY = 12;
+const LOCAL_STORAGE_FALLBACK_MAX_BYTES = 256 * 1024;
 const THEME_KEY = 'maker.theme.v1';
 const VIEWPORT_QUALITY_KEY = 'maker.viewportQuality.v1';
 const WARM_SKY_MIGRATION_KEY = 'maker.warmForestSky.v1';
@@ -660,66 +669,143 @@ export function useMakerStore() {
   const latestProjectsRef = useRef(projects);
   latestProjectsRef.current = projects;
   const persistDirtyRef = useRef(false);
+  const hasUserMutatedProjectsRef = useRef(false);
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
   const lastContextSwitchMsRef = useRef(0);
-  const serializedProjectCacheRef = useRef(new WeakMap<GameProject, string>());
-  const serializedLevelCacheRef = useRef(new WeakMap<GameLevel, string>());
+  // Active-only serialization caches: pruned on every flush so historical undo snapshots never pin multi-MB strings
+  const serializedProjectCacheRef = useRef(new Map<GameProject, string>());
+  const serializedLevelCacheRef = useRef(new Map<GameLevel, string>());
+  const persistInFlightRef = useRef(false);
+  const persistQueuedRef = useRef(false);
 
   useEffect(() => {
     lastContextSwitchMsRef.current = performance.now();
   }, [currentProjectID, selectedLevelID]);
 
+  // Hydrate projects asynchronously from IndexedDB on initial mount (migrating from legacy localStorage seamlessly)
+  useEffect(() => {
+    let active = true;
+    void loadProjectsSnapshotFromIDB().then((storedProjects) => {
+      if (!active || !storedProjects || storedProjects.length === 0) return;
+      if (hasUserMutatedProjectsRef.current) return;
+      const migrated = storedProjects.map((p) => migrateProject(p));
+      isFirstPersistRef.current = true;
+      setProjects(migrated);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const serializeProjectsPruned = useCallback((list: GameProject[]): string => {
+    const prevProjCache = serializedProjectCacheRef.current;
+    const prevLevelCache = serializedLevelCacheRef.current;
+    const nextProjCache = new Map<GameProject, string>();
+    const nextLevelCache = new Map<GameLevel, string>();
+    const parts = new Array<string>(list.length);
+
+    for (let i = 0; i < list.length; i++) {
+      const proj = list[i];
+      let json = prevProjCache.get(proj);
+      if (json === undefined) {
+        const { levels, worldMap: rawWm, ...rest } = proj;
+        const persistHead = rawWm
+          ? { ...rest, worldMap: compactWorldMapForStorage(rawWm) }
+          : rest;
+        const baseJson = JSON.stringify(persistHead);
+        const levelParts = new Array<string>(levels.length);
+        for (let li = 0; li < levels.length; li++) {
+          const lvl = levels[li];
+          let lj = prevLevelCache.get(lvl);
+          if (lj === undefined) {
+            lj = JSON.stringify(lvl);
+          }
+          nextLevelCache.set(lvl, lj);
+          levelParts[li] = lj;
+        }
+        const prefix = baseJson.slice(0, -1);
+        const sep = prefix.length > 1 ? ',' : '';
+        json = `${prefix}${sep}"levels":[${levelParts.join(',')}]}`;
+      } else {
+        for (let li = 0; li < proj.levels.length; li++) {
+          const lvl = proj.levels[li];
+          const lj = prevLevelCache.get(lvl);
+          if (lj !== undefined) {
+            nextLevelCache.set(lvl, lj);
+          }
+        }
+      }
+      nextProjCache.set(proj, json);
+      parts[i] = json;
+    }
+
+    serializedProjectCacheRef.current = nextProjCache;
+    serializedLevelCacheRef.current = nextLevelCache;
+    return `[${parts.join(',')}]`;
+  }, []);
+
   const flushProjectsToStorage = useCallback((force = false) => {
     if (!force && !persistDirtyRef.current) return;
     if (!force && isPlayingRef.current) return;
+    if (persistInFlightRef.current) {
+      persistQueuedRef.current = true;
+      return;
+    }
     persistDirtyRef.current = false;
+    persistQueuedRef.current = false;
+
+    let serialized = '';
     try {
-      measurePersistence('projects:localStorage', () => {
-        const cache = serializedProjectCacheRef.current;
-        const levelCache = serializedLevelCacheRef.current;
-        const list = latestProjectsRef.current;
-        const parts = new Array<string>(list.length);
-        for (let i = 0; i < list.length; i++) {
-          const proj = list[i];
-          let json = cache.get(proj);
-          if (json === undefined) {
-            const { levels, worldMap: rawWm, ...rest } = proj;
-            const persistHead = rawWm
-              ? { ...rest, worldMap: compactWorldMapForStorage(rawWm) }
-              : rest;
-            const baseJson = JSON.stringify(persistHead);
-            const levelParts = new Array<string>(levels.length);
-            for (let li = 0; li < levels.length; li++) {
-              const lvl = levels[li];
-              let lj = levelCache.get(lvl);
-              if (lj === undefined) {
-                lj = JSON.stringify(lvl);
-                levelCache.set(lvl, lj);
-              }
-              levelParts[li] = lj;
-            }
-            const prefix = baseJson.slice(0, -1);
-            const sep = prefix.length > 1 ? ',' : '';
-            json = `${prefix}${sep}"levels":[${levelParts.join(',')}]}`;
-            cache.set(proj, json);
-          }
-          parts[i] = json;
-        }
-        const serialized = `[${parts.join(',')}]`;
-        localStorage.setItem(STORAGE_KEY, serialized);
-        return { result: undefined, payloadBytes: serialized.length };
+      serialized = measurePersistence('projects:serialize', () => {
+        const text = serializeProjectsPruned(latestProjectsRef.current);
+        return { result: text, payloadBytes: text.length };
       });
     } catch {
-      // ignore quota errors
+      return;
     }
-  }, []);
+
+    persistInFlightRef.current = true;
+    void saveProjectsSnapshotToIDB(serialized)
+      .then(() => {
+        // Once safely stored in IndexedDB, clear any oversized legacy localStorage blob so reloads stay lean
+        if (serialized.length > LOCAL_STORAGE_FALLBACK_MAX_BYTES) {
+          try {
+            localStorage.removeItem(STORAGE_KEY);
+          } catch {
+            // ignore
+          }
+        } else {
+          try {
+            localStorage.setItem(STORAGE_KEY, serialized);
+          } catch {
+            // ignore quota errors
+          }
+        }
+      })
+      .catch(() => {
+        // Fallback to localStorage only if IndexedDB is unavailable
+        try {
+          localStorage.setItem(STORAGE_KEY, serialized);
+        } catch {
+          // ignore quota errors
+        }
+      })
+      .finally(() => {
+        persistInFlightRef.current = false;
+        if (persistQueuedRef.current) {
+          persistQueuedRef.current = false;
+          flushProjectsToStorage(false);
+        }
+      });
+  }, [serializeProjectsPruned]);
 
   useEffect(() => {
     if (isFirstPersistRef.current) {
       isFirstPersistRef.current = false;
       return;
     }
+    hasUserMutatedProjectsRef.current = true;
     persistDirtyRef.current = true;
     if (isPlaying) return;
     let cancelled = false;
@@ -732,20 +818,20 @@ export function useMakerStore() {
       cancelIdleCallback?: (id: number) => void;
     };
     const sinceSwitch = performance.now() - lastContextSwitchMsRef.current;
-    const delayMs = sinceSwitch < 2500 ? Math.max(1500, 2800 - sinceSwitch) : 1350;
+    const delayMs = sinceSwitch < 2500 ? Math.max(2400, 3200 - sinceSwitch) : 2200;
     const scheduleIdleFlush = (retriesLeft: number) => {
       if (cancelled) return;
       if (typeof winWithIdle.requestIdleCallback === 'function') {
         idleId = winWithIdle.requestIdleCallback(
           (deadline) => {
             if (cancelled) return;
-            if (!deadline.didTimeout && deadline.timeRemaining() < 12 && retriesLeft > 0) {
+            if (!deadline.didTimeout && deadline.timeRemaining() < 16 && retriesLeft > 0) {
               scheduleIdleFlush(retriesLeft - 1);
               return;
             }
             flushProjectsToStorage(false);
           },
-          { timeout: 3000 }
+          { timeout: 4000 }
         );
       } else {
         flushProjectsToStorage(false);
@@ -1057,11 +1143,13 @@ export function useMakerStore() {
   const commit = useCallback(
     (label: string, mutator: (prev: GameProject[]) => GameProject[], recordUndo = true) => {
       setProjects((prev) => {
+        const next = measureStateUpdate(`commit:${label}`, () => mutator(prev));
+        if (next === prev) return prev;
         if (recordUndo) {
-          setPast((h) => [...h.slice(-29), { label, projects: prev }]);
+          setPast((h) => [...h.slice(-(MAX_UNDO_HISTORY - 1)), { label, projects: prev }]);
           setFuture([]);
         }
-        return measureStateUpdate(`commit:${label}`, () => mutator(prev));
+        return next;
       });
     },
     []
@@ -1073,7 +1161,7 @@ export function useMakerStore() {
         if (prevPast.length === 0) return prevPast;
         const last = prevPast[prevPast.length - 1];
         setProjects((curr) => {
-          setFuture((f) => [{ label: last.label, projects: curr }, ...f.slice(0, 29)]);
+          setFuture((f) => [{ label: last.label, projects: curr }, ...f.slice(0, MAX_UNDO_HISTORY - 1)]);
           return last.projects;
         });
         return prevPast.slice(0, -1);
@@ -1087,7 +1175,7 @@ export function useMakerStore() {
         if (prevFuture.length === 0) return prevFuture;
         const next = prevFuture[0];
         setProjects((curr) => {
-          setPast((p) => [...p.slice(-29), { label: next.label, projects: curr }]);
+          setPast((p) => [...p.slice(-(MAX_UNDO_HISTORY - 1)), { label: next.label, projects: curr }]);
           return next.projects;
         });
         return prevFuture.slice(1);
@@ -1651,6 +1739,30 @@ export function useMakerStore() {
       );
     },
     [currentLevel, currentProject, updateLevel, updateProject]
+  );
+
+  const commitCaveStroke = useCallback(
+    (stroke: CaveSplineStrokeInput) => {
+      if (!stroke.points || stroke.points.length === 0) return;
+      let committedCaveId = stroke.targetCaveId ?? '';
+      updateLevel(
+        'carve cave tunnel',
+        (lvl) => {
+          const base = lvl.terrain ?? createInitialTerrain();
+          const { terrain: nextTerrain, caveId } = commitCaveSplineStroke(base, stroke);
+          committedCaveId = caveId;
+          return {
+            ...lvl,
+            terrain: nextTerrain,
+          };
+        },
+        true
+      );
+      if (committedCaveId) {
+        setSelectedCaveId(committedCaveId);
+      }
+    },
+    [updateLevel]
   );
 
   const resetTerrain = useCallback(() => {
@@ -4340,6 +4452,7 @@ export function useMakerStore() {
     addLevel,
     deleteCurrentLevel,
     applyBrush,
+    commitCaveStroke,
     resetTerrain,
     addEntity,
     addEntitiesBatch,

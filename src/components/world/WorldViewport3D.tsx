@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Hand } from 'lucide-react';
 import * as THREE from 'three';
 import type { WebGPURenderer } from 'three/webgpu';
@@ -35,7 +35,13 @@ import {
   levelWorldToBoard,
   PlatformMotion,
   sampleLevelHeight,
+  type CaveSplineStrokeInput,
 } from '../../utils/terrain';
+import {
+  buildLiveCavePreviewGeometry,
+  resampleCaveStrokePath,
+  type CaveStrokePoint,
+} from '../../three/caveSplineBuilder';
 import {
   getWorldMapRadius,
   sampleWorldMapAtWorld,
@@ -232,6 +238,23 @@ const savedCameraPoseMap = new Map<
   { pos: [number, number, number]; target: [number, number, number] }
 >();
 
+function hasVillageAnimation(obj: THREE.Object3D): boolean {
+  const ud = obj.userData;
+  if (!ud) return false;
+  return Boolean(
+    ud.wanderingChicken ||
+      ud.blacksmithHammerer ||
+      ud.tavernPatrons ||
+      ud.bartenderNpc ||
+      ud.rakingVillager ||
+      ud.tetheredHorses ||
+      ud.spinningWaterwheel ||
+      ud.spinningWindmillRotor ||
+      ud.grazingCow ||
+      ud.rootingPig
+  );
+}
+
 interface WorldViewport3DProps {
   project: GameProject;
   level: GameLevel;
@@ -241,6 +264,7 @@ interface WorldViewport3DProps {
   tool: ViewportTool;
   brush: TerrainBrush;
   brushRadius: number;
+  brushStrength?: number;
   brushFalloff?: TerrainBrushFalloff;
   gridSnap?: 0 | 0.5 | 1 | 2;
   isPlacingBuildingBlock?: boolean;
@@ -274,6 +298,7 @@ interface WorldViewport3DProps {
   onRotateActiveTool?: (deltaDeg: number) => void;
   onScaleEntity: (id: string, scale: number) => void;
   onBrushStroke: (x: number, z: number, meta?: TerrainBrushStrokeMeta) => void;
+  onCommitCaveStroke?: (stroke: CaveSplineStrokeInput) => void;
   onWorldMapBrushStroke?: (x: number, z: number, meta?: { isStart: boolean }) => void;
   onSelectWorldLandFrom3D?: (regionCode: number | null) => void;
   onAddAtPoint: (pos: { x: number; y: number }, elevationY?: number) => void;
@@ -291,6 +316,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
   tool,
   brush,
   brushRadius,
+  brushStrength = 1,
   brushFalloff = 'smooth',
   gridSnap = 0,
   isPlacingBuildingBlock = false,
@@ -323,6 +349,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
   onRotateActiveTool,
   onScaleEntity,
   onBrushStroke,
+  onCommitCaveStroke,
   onWorldMapBrushStroke,
   onSelectWorldLandFrom3D,
   onAddAtPoint,
@@ -354,6 +381,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
   const compactFpsDotRef = useRef<HTMLSpanElement | null>(null);
   const compactFpsTextRef = useRef<HTMLSpanElement | null>(null);
   const compactMsTextRef = useRef<HTMLSpanElement | null>(null);
+  const caveDrawHudRef = useRef<HTMLDivElement | null>(null);
+  const caveDrawHudTextRef = useRef<HTMLSpanElement | null>(null);
   const latestPerfSnapshotRef = useRef(perfStats);
 
   const lastSculptAreaRef = useRef<{ x: number; z: number; radius: number } | null>(null);
@@ -364,7 +393,14 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
   const lastWorldMapRevRef = useRef<number>(-1);
   const lastEntityStructKeyRef = useRef<string>('');
   const islandBuildAbortRef = useRef<AbortController | null>(null);
+  const scatterReseatAbortRef = useRef<AbortController | null>(null);
   const entityBuildAbortRef = useRef<AbortController | null>(null);
+  const dragRaycastScratchRef = useRef<{
+    ndc: THREE.Vector2;
+    raycaster: THREE.Raycaster;
+    fallbackPlane: THREE.Plane;
+    hitPt: THREE.Vector3;
+  } | null>(null);
 
   useEffect(() => {
     return subscribeCustomTextureInvalidation(() => setTexInvalidationTick((t) => t + 1));
@@ -380,6 +416,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     tool,
     brush,
     brushRadius,
+    brushStrength,
     brushFalloff,
     gridSnap,
     isPlacingBuildingBlock,
@@ -397,6 +434,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     onRotateActiveTool,
     onScaleEntity,
     onBrushStroke,
+    onCommitCaveStroke,
     onWorldMapBrushStroke,
     onSelectWorldLandFrom3D,
     onAddAtPoint,
@@ -424,6 +462,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     tool,
     brush,
     brushRadius,
+    brushStrength,
     brushFalloff,
     gridSnap,
     isPlacingBuildingBlock,
@@ -441,6 +480,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     onRotateActiveTool,
     onScaleEntity,
     onBrushStroke,
+    onCommitCaveStroke,
     onWorldMapBrushStroke,
     onSelectWorldLandFrom3D,
     onAddAtPoint,
@@ -490,6 +530,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     buildGridHelper: THREE.GridHelper;
     curveGuideGroup: THREE.Group;
     entityGroups: Map<string, THREE.Group>;
+    animatedVillageGroups: THREE.Object3D[];
     floatSpinObjects: THREE.Object3D[];
     torchFlameObjects: Array<{ mesh: THREE.Object3D; baseY: number; phase: number }>;
     groundMeshes: THREE.Object3D[];
@@ -690,10 +731,12 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     const ghostPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.96, 1.96), ghostFloorMat);
     ghostPlane.rotation.x = -Math.PI / 2;
     ghostPlane.position.y = 0.03;
+    const ghostBoxTmp = new THREE.BoxGeometry(2.0, 2.0, 2.0);
     const ghostWire = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(2.0, 2.0, 2.0)),
+      new THREE.EdgesGeometry(ghostBoxTmp),
       new THREE.LineBasicMaterial({ color: '#38BDF8', transparent: true, opacity: 0.72 })
     );
+    ghostBoxTmp.dispose();
     ghostWire.position.y = 1.0;
     snapGhostGroup.add(ghostPlane, ghostWire);
     snapGhostGroup.visible = false;
@@ -701,6 +744,90 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
     const curveGuideGroup = new THREE.Group();
     scene.add(curveGuideGroup);
+
+    // Pre-allocated, zero-shader-recompile live 3D spline preview for carving caves at a locked 60 FPS!
+    const caveDrawPreviewGroup = new THREE.Group();
+    const cavePreviewVaultMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.32,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const cavePreviewWireMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.86,
+      depthTest: false,
+      depthWrite: false,
+      wireframe: true,
+    });
+    const cavePreviewFloorMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.42,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const cavePreviewLineMat = new THREE.LineBasicMaterial({
+      color: '#E0F2FE',
+      transparent: true,
+      opacity: 0.96,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const cavePreviewStartMat = new THREE.MeshBasicMaterial({
+      color: '#34D399',
+      transparent: true,
+      opacity: 0.92,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const cavePreviewTipMat = new THREE.MeshBasicMaterial({
+      color: '#67E8F9',
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const cavePreviewVaultMesh = new THREE.Mesh(new THREE.BufferGeometry(), cavePreviewVaultMat);
+    cavePreviewVaultMesh.renderOrder = 51;
+    cavePreviewVaultMesh.frustumCulled = false;
+    const cavePreviewWireMesh = new THREE.Mesh(cavePreviewVaultMesh.geometry, cavePreviewWireMat);
+    cavePreviewWireMesh.renderOrder = 53;
+    cavePreviewWireMesh.frustumCulled = false;
+    const cavePreviewFloorMesh = new THREE.Mesh(new THREE.BufferGeometry(), cavePreviewFloorMat);
+    cavePreviewFloorMesh.renderOrder = 52;
+    cavePreviewFloorMesh.frustumCulled = false;
+    const cavePreviewSplineLine = new THREE.Line(new THREE.BufferGeometry(), cavePreviewLineMat);
+    cavePreviewSplineLine.renderOrder = 55;
+    cavePreviewSplineLine.frustumCulled = false;
+    const cavePreviewStartRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.84, 1.0, 32),
+      cavePreviewStartMat
+    );
+    cavePreviewStartRing.rotation.x = -Math.PI / 2;
+    cavePreviewStartRing.renderOrder = 54;
+    const cavePreviewTipRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.86, 1.0, 32),
+      cavePreviewTipMat
+    );
+    cavePreviewTipRing.rotation.x = -Math.PI / 2;
+    cavePreviewTipRing.renderOrder = 54;
+    caveDrawPreviewGroup.add(
+      cavePreviewVaultMesh,
+      cavePreviewWireMesh,
+      cavePreviewFloorMesh,
+      cavePreviewSplineLine,
+      cavePreviewStartRing,
+      cavePreviewTipRing
+    );
+    caveDrawPreviewGroup.visible = false;
+    scene.add(caveDrawPreviewGroup);
 
     sceneRefs.current = {
       scene,
@@ -731,6 +858,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       buildGridHelper,
       curveGuideGroup,
       entityGroups: new Map(),
+      animatedVillageGroups: [],
       floatSpinObjects: [],
       torchFlameObjects: [],
       groundMeshes: [],
@@ -788,7 +916,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     const _planeHit = new THREE.Vector3();
     const _worldNormal = new THREE.Vector3();
 
-    let activeMode: 'none' | 'dragEntity' | 'rotateEntity' | 'scaleEntity' | 'brush' = 'none';
+    let activeMode: 'none' | 'dragEntity' | 'rotateEntity' | 'scaleEntity' | 'brush' | 'caveDraw' =
+      'none';
     let activeEntityId: string | null = null;
     let dragStartX = 0;
     let startVal = 0;
@@ -798,6 +927,75 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     let strokeModifiedHeight = false;
     let lastStrokeTimeMs = 0;
     let lockedCaveFloorY: number | null = null;
+    let caveDrawPoints: CaveStrokePoint[] = [];
+    let caveDrawTargetId: string | null = null;
+    let caveDrawLastTip: { x: number; z: number } | null = null;
+
+    const clearLiveCavePreview = () => {
+      caveDrawPreviewGroup.visible = false;
+      const oldVault = cavePreviewVaultMesh.geometry;
+      const oldFloor = cavePreviewFloorMesh.geometry;
+      const oldLine = cavePreviewSplineLine.geometry;
+      const emptyVault = new THREE.BufferGeometry();
+      cavePreviewVaultMesh.geometry = emptyVault;
+      cavePreviewWireMesh.geometry = emptyVault;
+      cavePreviewFloorMesh.geometry = new THREE.BufferGeometry();
+      cavePreviewSplineLine.geometry = new THREE.BufferGeometry();
+      oldVault.dispose();
+      oldFloor.dispose();
+      oldLine.dispose();
+      caveDrawPoints = [];
+      caveDrawTargetId = null;
+      caveDrawLastTip = null;
+      if (caveDrawHudRef.current) {
+        caveDrawHudRef.current.classList.add('hidden');
+      }
+    };
+
+    const updateLiveCavePreview = (
+      pts: CaveStrokePoint[],
+      floorY: number,
+      tipX: number,
+      tipZ: number,
+      tipRadius: number,
+      tipHeight: number
+    ) => {
+      if (pts.length === 0) return;
+      const curLevel = propsRef.current.level;
+      const lastStored = pts[pts.length - 1];
+      const withLiveTip: CaveStrokePoint[] =
+        Math.hypot(tipX - lastStored.x, tipZ - lastStored.z) >= 0.35
+          ? [...pts, { x: tipX, z: tipZ, radius: tipRadius, height: tipHeight, floorY }]
+          : pts;
+
+      const preview = buildLiveCavePreviewGeometry(withLiveTip, floorY, (wx, wz) =>
+        sampleLevelHeight(curLevel, wx, wz)
+      );
+
+      const oldVault = cavePreviewVaultMesh.geometry;
+      const oldFloor = cavePreviewFloorMesh.geometry;
+      const oldLine = cavePreviewSplineLine.geometry;
+      cavePreviewVaultMesh.geometry = preview.vaultGeo;
+      cavePreviewWireMesh.geometry = preview.vaultGeo;
+      cavePreviewFloorMesh.geometry = preview.floorGeo;
+      cavePreviewSplineLine.geometry = preview.centerlineGeo;
+      oldVault.dispose();
+      oldFloor.dispose();
+      oldLine.dispose();
+
+      const p0 = withLiveTip[0];
+      cavePreviewStartRing.position.set(p0.x, floorY + 0.14, p0.z);
+      cavePreviewStartRing.scale.setScalar(p0.radius);
+      cavePreviewTipRing.position.set(tipX, floorY + 0.16, tipZ);
+      cavePreviewTipRing.scale.setScalar(tipRadius);
+      caveDrawPreviewGroup.visible = true;
+
+      if (caveDrawHudRef.current && caveDrawHudTextRef.current) {
+        caveDrawHudRef.current.classList.remove('hidden');
+        const modeTag = caveDrawTargetId ? 'Extending cave' : 'Carving tunnel';
+        caveDrawHudTextRef.current.textContent = `${modeTag} · ${preview.totalLength.toFixed(1)}m · Floor Y ${floorY.toFixed(1)}m · Release to carve (Esc cancels)`;
+      }
+    };
 
     const syncSculptSceneryVisibility = (isDraggingBrush: boolean) => {
       const refs = sceneRefs.current;
@@ -806,7 +1004,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         __makerHideSceneryOnSculpt?: boolean;
         __makerMinimalSculptAlways?: boolean;
       };
-      const hideOnDrag = winFlags.__makerHideSceneryOnSculpt !== false;
+      // Opt-in only so starting/stopping a brush stroke doesn't stall WebGPU render-list rebuilding
+      const hideOnDrag = winFlags.__makerHideSceneryOnSculpt === true;
       const alwaysHide = Boolean(winFlags.__makerMinimalSculptAlways);
       const visible = !alwaysHide && !(isDraggingBrush && hideOnDrag);
       refs.islandHandles?.setSceneryVisible?.(visible);
@@ -820,6 +1019,57 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       pointerNdc.y = -((clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
     };
 
+    const raycastCavePlane = (
+      clientX: number,
+      clientY: number,
+      floorY: number
+    ): THREE.Vector3 | null => {
+      updatePointer(clientX, clientY);
+      raycaster.setFromCamera(pointerNdc, camera);
+      _waterPlane.constant = -floorY;
+      if (raycaster.ray.intersectPlane(_waterPlane, _planeHit)) {
+        const rMax = getTerrainRadius(propsRef.current.level.terrain);
+        if (Math.abs(_planeHit.x) <= rMax + 4 && Math.abs(_planeHit.z) <= rMax + 4) {
+          _planeHit.x = Math.max(-rMax, Math.min(rMax, _planeHit.x));
+          _planeHit.z = Math.max(-rMax, Math.min(rMax, _planeHit.z));
+          _planeHit.y = floorY;
+          return _planeHit;
+        }
+      }
+      return null;
+    };
+
+    const findExistingCaveHitOnPlane = (
+      clientX: number,
+      clientY: number
+    ): { caveId: string; x: number; z: number; floorY: number } | null => {
+      const caves = propsRef.current.level.terrain?.caves ?? [];
+      if (caves.length === 0) return null;
+      updatePointer(clientX, clientY);
+      raycaster.setFromCamera(pointerNdc, camera);
+      const rMax = getTerrainRadius(propsRef.current.level.terrain);
+      let best: { caveId: string; x: number; z: number; floorY: number; dist: number } | null = null;
+      for (let ci = 0; ci < caves.length; ci++) {
+        const c = caves[ci];
+        const fy = c.floorElevation ?? c.tunnelNodes?.[0]?.floorY ?? 1.55;
+        _waterPlane.constant = -fy;
+        if (!raycaster.ray.intersectPlane(_waterPlane, _planeHit)) continue;
+        if (Math.abs(_planeHit.x) > rMax + 2 || Math.abs(_planeHit.z) > rMax + 2) continue;
+        const px = _planeHit.x;
+        const pz = _planeHit.z;
+        const nodes = c.tunnelNodes && c.tunnelNodes.length > 0 ? c.tunnelNodes : [{ x: c.x, z: c.z, radius: 4.0 * (c.scale || 1) }];
+        for (let ni = 0; ni < nodes.length; ni++) {
+          const nd = nodes[ni];
+          const d = Math.hypot(px - nd.x, pz - nd.z);
+          const snapR = Math.max(4.2, (nd.radius || 3.6) * 1.15);
+          if (d <= snapR && (!best || d < best.dist)) {
+            best = { caveId: c.id, x: px, z: pz, floorY: fy, dist: d };
+          }
+        }
+      }
+      return best ? { caveId: best.caveId, x: best.x, z: best.z, floorY: best.floorY } : null;
+    };
+
     const raycastGround = (clientX: number, clientY: number): THREE.Vector3 | null => {
       const refs = sceneRefs.current;
       if (!refs || refs.groundMeshes.length === 0) return null;
@@ -828,13 +1078,10 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       const curState = propsRef.current;
       const isWm = curState.worldEditorScope === 'worldMap';
 
-      // When carving or painting caves inside a tall mountain, intersect the horizontal cave floor plane
-      // instead of getting deflected by the steep front exterior slope of the mountain!
-      const isCaveBrush =
-        !isWm &&
-        curState.tool === 'terrain' &&
-        (curState.brush === 'carveCave' || curState.brush.startsWith('cave'));
-      if (isCaveBrush) {
+      // When hand-painting inside an existing cave (moss/puddles/crystals/etc.), intersect its floor plane directly
+      const isCavePaintBrush =
+        !isWm && curState.tool === 'terrain' && curState.brush.startsWith('cave');
+      if (isCavePaintBrush) {
         const caves = curState.level.terrain?.caves ?? [];
         const selCave =
           caves.find((c) => c.id === curState.selectedCaveId) ?? caves[caves.length - 1] ?? null;
@@ -852,7 +1099,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
             const surfH = sampleLevelHeight(curState.level, _planeHit.x, _planeHit.z);
             if (activeMode === 'brush' || surfH >= targetFloorY - 0.45) {
               _planeHit.y = targetFloorY;
-              return _planeHit.clone();
+              return _planeHit;
             }
           }
         }
@@ -1188,8 +1435,76 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         return WORLD_TERRAIN_YELLOW;
       };
 
-      // Left-click sculpts terrain or paints World Map; right/middle-click still orbits smoothly
+      // Left-click sculpts terrain, draws live 3D cave spline, or paints World Map; right/middle-click still orbits smoothly
       if (curTool === 'terrain' && e.button === 0) {
+        // Fast 60 FPS Live Spline Cave Carver: ZERO React state updates or heavy rebuilds during drag!
+        if (propsRef.current.worldEditorScope !== 'worldMap' && curBrush === 'carveCave') {
+          const existingHit = findExistingCaveHitOnPlane(e.clientX, e.clientY);
+          let startX = 0;
+          let startZ = 0;
+          let floorY = 1.55;
+          let validStart = false;
+
+          if (existingHit) {
+            caveDrawTargetId = existingHit.caveId;
+            startX = existingHit.x;
+            startZ = existingHit.z;
+            floorY = existingHit.floorY;
+            validStart = true;
+          } else {
+            caveDrawTargetId = null;
+            const surfHit = raycastGround(e.clientX, e.clientY);
+            if (surfHit) {
+              startX = surfHit.x;
+              startZ = surfHit.z;
+              // Clicking on a hillside/base starts right at that height; clicking high on a mountain top carves inside the mountain
+              floorY =
+                surfHit.y <= 3.8
+                  ? Math.max(IslandTerrain.waterLevel + 0.55, surfHit.y - 0.1)
+                  : Math.max(IslandTerrain.waterLevel + 0.65, Math.min(surfHit.y - 2.6, 4.5));
+              validStart = true;
+            } else {
+              const planeHit = raycastCavePlane(e.clientX, e.clientY, 1.55);
+              if (planeHit) {
+                startX = planeHit.x;
+                startZ = planeHit.z;
+                floorY = 1.55;
+                validStart = true;
+              }
+            }
+          }
+
+          if (validStart) {
+            const nodeRadius = Math.max(2.6, Math.min(11.0, r * 0.82));
+            const nodeHeight = Math.max(3.4, Math.min(7.2, 3.8 + r * 0.25));
+            lockedCaveFloorY = Number(floorY.toFixed(2));
+            activeMode = 'caveDraw';
+            controls.enabled = false;
+            if (sceneRefs.current) {
+              sceneRefs.current.brushGroup.visible = false;
+            }
+            caveDrawPoints = [
+              {
+                x: startX,
+                z: startZ,
+                radius: nodeRadius,
+                height: nodeHeight,
+                floorY: lockedCaveFloorY,
+              },
+            ];
+            caveDrawLastTip = { x: startX, z: startZ };
+            updateLiveCavePreview(
+              caveDrawPoints,
+              lockedCaveFloorY,
+              startX,
+              startZ,
+              nodeRadius,
+              nodeHeight
+            );
+          }
+          return;
+        }
+
         const hit = raycastGround(e.clientX, e.clientY);
         if (hit) {
           activeMode = 'brush';
@@ -1204,8 +1519,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
             propsRef.current.onWorldMapBrushStroke?.(hit.x, hit.z, { isStart: true });
             return;
           }
-          const isCaveStroke = curBrush === 'carveCave' || curBrush.startsWith('cave');
-          if (isCaveStroke) {
+          const isCavePaintStroke = curBrush.startsWith('cave');
+          if (isCavePaintStroke) {
             lockedCaveFloorY = hit.y;
             strokeSampledHeight = hit.y;
           } else {
@@ -1297,9 +1612,48 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         return;
       }
 
+      // Zero-lag 60 FPS live cave spline drawing: pure O(1) horizontal floor-plane intersection!
+      if (activeMode === 'caveDraw' && lockedCaveFloorY !== null) {
+        const planeHit = raycastCavePlane(e.clientX, e.clientY, lockedCaveFloorY);
+        if (planeHit && caveDrawPoints.length > 0) {
+          const nodeRadius = Math.max(2.6, Math.min(11.0, r * 0.82));
+          const nodeHeight = Math.max(3.4, Math.min(7.2, 3.8 + r * 0.25));
+          const last = caveDrawPoints[caveDrawPoints.length - 1];
+          const minStep = Math.max(0.85, r * 0.22);
+          if (
+            caveDrawPoints.length < 240 &&
+            Math.hypot(planeHit.x - last.x, planeHit.z - last.z) >= minStep
+          ) {
+            caveDrawPoints.push({
+              x: planeHit.x,
+              z: planeHit.z,
+              radius: nodeRadius,
+              height: nodeHeight,
+              floorY: lockedCaveFloorY,
+            });
+          }
+          caveDrawLastTip = { x: planeHit.x, z: planeHit.z };
+          updateLiveCavePreview(
+            caveDrawPoints,
+            lockedCaveFloorY,
+            planeHit.x,
+            planeHit.z,
+            nodeRadius,
+            nodeHeight
+          );
+        }
+        return;
+      }
+
       if (curTool === 'terrain' && refs) {
         const isWorldMapEdit = propsRef.current.worldEditorScope === 'worldMap';
-        const hit = raycastGround(e.clientX, e.clientY);
+        const existingCaveHover =
+          !isWorldMapEdit && curBrush === 'carveCave'
+            ? findExistingCaveHitOnPlane(e.clientX, e.clientY)
+            : null;
+        const hit = existingCaveHover
+          ? _planeHit.set(existingCaveHover.x, existingCaveHover.floorY, existingCaveHover.z)
+          : raycastGround(e.clientX, e.clientY);
         if (hit) {
           let accent = getBrushAccentHex(curBrush);
           if (isWorldMapEdit) {
@@ -1429,6 +1783,51 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         sceneRefs.current.snapGhostGroup.visible = false;
       }
 
+      if (wasMode === 'caveDraw') {
+        const commitFloorY = lockedCaveFloorY ?? 1.55;
+        const commitTargetId = caveDrawTargetId;
+        const rawPts = [...caveDrawPoints];
+        const tip = caveDrawLastTip;
+        const rNow = propsRef.current.brushRadius;
+        const nodeRadius = Math.max(2.6, Math.min(11.0, rNow * 0.82));
+        const nodeHeight = Math.max(3.4, Math.min(7.2, 3.8 + rNow * 0.25));
+        if (tip && rawPts.length > 0) {
+          const last = rawPts[rawPts.length - 1];
+          if (Math.hypot(tip.x - last.x, tip.z - last.z) >= 0.45) {
+            rawPts.push({
+              x: tip.x,
+              z: tip.z,
+              radius: nodeRadius,
+              height: nodeHeight,
+              floorY: commitFloorY,
+            });
+          }
+        }
+        clearLiveCavePreview();
+        lockedCaveFloorY = null;
+
+        if (rawPts.length > 0) {
+          const resampled = resampleCaveStrokePath(rawPts, 48);
+          if (propsRef.current.onCommitCaveStroke) {
+            propsRef.current.onCommitCaveStroke({
+              points: resampled,
+              floorY: commitFloorY,
+              strength: propsRef.current.brushStrength ?? 1.0,
+              targetCaveId: commitTargetId,
+            });
+          } else {
+            // Legacy fallback if caller didn't wire onCommitCaveStroke
+            for (let i = 0; i < resampled.length; i++) {
+              propsRef.current.onBrushStroke(resampled[i].x, resampled[i].z, {
+                isStart: i === 0,
+                sampledHeight: commitFloorY,
+              });
+            }
+          }
+        }
+        return;
+      }
+
       if (wasMode === 'brush') {
         isSculptDraggingRef.current = false;
         lockedCaveFloorY = null;
@@ -1516,6 +1915,13 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
         return;
       }
+      if (e.key === 'Escape' && activeMode === 'caveDraw') {
+        activeMode = 'none';
+        lockedCaveFloorY = null;
+        clearLiveCavePreview();
+        controls.enabled = true;
+        return;
+      }
       if (e.key === 'Shift' || e.shiftKey) {
         shiftHeldRef.current = true;
         setShiftHeld(true);
@@ -1562,6 +1968,12 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     };
 
     const onWindowBlur = () => {
+      if (activeMode === 'caveDraw') {
+        activeMode = 'none';
+        lockedCaveFloorY = null;
+        clearLiveCavePreview();
+        controls.enabled = true;
+      }
       shiftHeldRef.current = false;
       isPanDragRef.current = false;
       setShiftHeld(false);
@@ -1747,14 +2159,15 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         for (let fi = 0; fi < refs.floatSpinObjects.length; fi++) {
           refs.floatSpinObjects[fi].rotation.y += dt * 1.4;
         }
-        refs.entityGroups.forEach((grp) => {
+        for (let vi = 0; vi < refs.animatedVillageGroups.length; vi++) {
+          const grp = refs.animatedVillageGroups[vi];
           if (grp.userData?.wanderingChicken) {
             const ph = Number(grp.userData.wanderPhase ?? 0);
             grp.rotation.y += Math.sin(t * 0.9 + ph) * dt * 0.65;
             grp.rotation.x = Math.max(0, Math.sin(t * 4.5 + ph)) * 0.22;
           }
           updateRpgLivingVillageAnimations(grp, t);
-        });
+        }
         for (let ti = 0; ti < refs.torchFlameObjects.length; ti++) {
           const tf = refs.torchFlameObjects[ti];
           tf.mesh.position.y = tf.baseY + Math.sin(t * 9.2 + tf.phase) * 0.025;
@@ -2123,6 +2536,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       disposed = true;
       islandBuildAbortRef.current?.abort();
       islandBuildAbortRef.current = null;
+      scatterReseatAbortRef.current?.abort();
+      scatterReseatAbortRef.current = null;
       entityBuildAbortRef.current?.abort();
       entityBuildAbortRef.current = null;
       resumeLoopRef.current = null;
@@ -2143,7 +2558,11 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       timer.dispose();
       if (sceneRefs.current) {
         sceneRefs.current.rendererInitialized = false;
+        sceneRefs.current.islandHandles?.chunkedTerrain?.dispose();
         sceneRefs.current.islandHandles?.grassSystem?.dispose();
+        sceneRefs.current.islandHandles = null;
+        sceneRefs.current.groundMeshes = [];
+        sceneRefs.current.animatedVillageGroups = [];
         sceneRefs.current.fxEmitters.forEach((fx) => fx.dispose());
         sceneRefs.current.fxEmitters.clear();
         sceneRefs.current = null;
@@ -2310,6 +2729,40 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     }
   }, [level.weather, level.id]);
 
+  // Memoize expensive structural JSON signatures so 45Hz terrain sculpt revisions do zero JSON.stringify churn
+  const cavesSig = useMemo(
+    () => JSON.stringify(level.terrain?.caves ?? []),
+    [level.terrain?.caves]
+  );
+  const roadsSig = useMemo(
+    () => JSON.stringify(level.terrain?.roads ?? []),
+    [level.terrain?.roads]
+  );
+  const mountainCfgSig = useMemo(
+    () => JSON.stringify(level.terrain?.mountainConfig ?? null),
+    [level.terrain?.mountainConfig]
+  );
+  const waterBodiesGeoSig = useMemo(
+    () =>
+      JSON.stringify(
+        (level.terrain?.waterBodies ?? []).map((wb) => [
+          wb.id,
+          wb.kind,
+          wb.center,
+          wb.points,
+          wb.radiusX,
+          wb.radiusZ,
+          wb.width,
+          wb.shoreNoise,
+        ])
+      ),
+    [level.terrain?.waterBodies]
+  );
+  const entitiesCoreSig = useMemo(
+    () => JSON.stringify(stripLiveVariantFieldsForStructKey(level.entities)),
+    [level.entities]
+  );
+
   // Rebuild island mesh OR perform fast in-place GPU sculpt update during live brush strokes
   useEffect(() => {
     const refs = sceneRefs.current;
@@ -2426,25 +2879,10 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     const scatterSig = `${scatterArr.length}:${scatterArr[0]?.id ?? ''}:${
       scatterArr[scatterArr.length - 1]?.id ?? ''
     }`;
-    const cavesSig = JSON.stringify(level.terrain?.caves ?? []);
-    const roadsSig = JSON.stringify(level.terrain?.roads ?? []);
-    const mountainCfgSig = JSON.stringify(level.terrain?.mountainConfig ?? null);
     const grassFieldKey = `${level.grass?.quality ?? 'lush'}:${level.grass?.viewDistance ?? 55}:${level.grass?.underlayerOverhang ?? true}:${level.grass?.underlayerThickness ?? 0.88}`;
     const pebbleSig = level.terrain?.dirtAndRoadConfig
       ? `${level.terrain.dirtAndRoadConfig.pebbleDensity}:${level.terrain.dirtAndRoadConfig.pebbleSpread}:${level.terrain.dirtAndRoadConfig.pebbleShapeRandomness}:${level.terrain.dirtAndRoadConfig.pebbleColor}:${level.terrain.dirtAndRoadConfig.pebbleHueVariance}:${level.terrain.dirtAndRoadConfig.heroColor}:${level.terrain.dirtAndRoadConfig.secondaryColor}`
       : 'default';
-    const waterBodiesGeoSig = JSON.stringify(
-      (level.terrain?.waterBodies ?? []).map((wb) => [
-        wb.id,
-        wb.kind,
-        wb.center,
-        wb.points,
-        wb.radiusX,
-        wb.radiusZ,
-        wb.width,
-        wb.shoreNoise,
-      ])
-    );
 
     const isWorldMapMode = worldEditorScope === 'worldMap' && Boolean(worldMap);
     const activeRegion = worldMap?.regions.find((r) => r.code === activeWorldRegionCode);
@@ -2495,7 +2933,6 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       scatterSig,
       customAssets.length,
       texInvalidationTick,
-      sculptFinalizeNonce,
     ]);
 
     const liveTerrain = level.terrain ?? createInitialTerrain();
@@ -2504,7 +2941,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       __makerMinimalSculptAlways?: boolean;
       __makerDisableCaveXRay?: boolean;
     };
-    const hideOnDragFlag = winSculptFlags.__makerHideSceneryOnSculpt !== false;
+    const hideOnDragFlag = winSculptFlags.__makerHideSceneryOnSculpt === true;
     const alwaysHideFlag = Boolean(winSculptFlags.__makerMinimalSculptAlways);
     const shouldShowSceneryNow = !alwaysHideFlag && !(isSculptDraggingRef.current && hideOnDragFlag);
 
@@ -2573,10 +3010,13 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     lastTerrainRevRef.current = curTerrainRev;
     lastWorldMapRevRef.current = curWorldMapRev;
 
+    scatterReseatAbortRef.current?.abort();
+    scatterReseatAbortRef.current = null;
     islandBuildAbortRef.current?.abort();
     const abortController = new AbortController();
     islandBuildAbortRef.current = abortController;
 
+    refs.islandHandles?.chunkedTerrain?.dispose();
     refs.islandHandles?.grassSystem?.dispose();
     disposeObject3D(refs.islandContainer);
     refs.islandContainer.clear();
@@ -2651,10 +3091,47 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     activeWorldRegionCode,
     worldMap?.revision,
     worldMap?.regions,
+    cavesSig,
+    roadsSig,
+    mountainCfgSig,
+    waterBodiesGeoSig,
     customAssets,
     texInvalidationTick,
-    sculptFinalizeNonce,
   ]);
+
+  // Lightweight scatter, pebble & cave reseat after height sculpting finishes (avoids 1.5-2.4s full island teardown/rebuild!)
+  useEffect(() => {
+    if (sculptFinalizeNonce === 0) return;
+    const refs = sceneRefs.current;
+    const curLevel = propsRef.current.level;
+    if (!refs?.islandHandles) return;
+    const env = getEnvironmentType(curLevel);
+    if (env !== 'openWorld' || propsRef.current.worldEditorScope === 'worldMap') return;
+
+    if ((curLevel.terrain?.caves?.length ?? 0) > 0) {
+      refs.islandHandles.updateCavesInPlace?.(curLevel);
+    }
+
+    if (!refs.islandHandles.reseatScatterInPlace) {
+      refs.markShadowDirty();
+      return;
+    }
+
+    scatterReseatAbortRef.current?.abort();
+    const ac = new AbortController();
+    scatterReseatAbortRef.current = ac;
+
+    void refs.islandHandles
+      .reseatScatterInPlace(curLevel, propsRef.current.customAssets, ac.signal)
+      .then(() => {
+        if (!ac.signal.aborted) {
+          refs.markShadowDirty();
+        }
+      })
+      .catch(() => {
+        // ignore if aborted mid-reseat
+      });
+  }, [sculptFinalizeNonce]);
 
   // Camera angle lock & Shift pan sync
   useEffect(() => {
@@ -2787,7 +3264,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       level.hasPortal,
       level.visualStyle ?? 'painterlyPBR',
       level.sceneryTextures,
-      stripLiveVariantFieldsForStructKey(level.entities),
+      entitiesCoreSig,
       project.heroBody,
       project.heroColors,
       project.heroCustomAssetId,
@@ -2806,6 +3283,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         disposeObject3D(refs.entitiesContainer);
         refs.entitiesContainer.clear();
         refs.entityGroups.clear();
+        refs.animatedVillageGroups = [];
         refs.fxEmitters.forEach((fx) => fx.dispose());
         refs.fxEmitters.clear();
         refs.fxContainer.clear();
@@ -2878,6 +3356,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     disposeObject3D(refs.entitiesContainer);
     refs.entitiesContainer.clear();
     refs.entityGroups.clear();
+    refs.animatedVillageGroups = [];
     refs.floatSpinObjects = [];
     refs.torchFlameObjects = [];
     refs.customUpdaters = [];
@@ -3105,6 +3584,9 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       }
       refs.entitiesContainer.add(mesh);
       refs.entityGroups.set(ent.id, mesh);
+      if (hasVillageAnimation(mesh)) {
+        refs.animatedVillageGroups.push(mesh);
+      }
       if (ent.mechanisms && ent.mechanisms.length > 0) {
         const mechRoot = (mesh.userData.mechRoot as THREE.Object3D | undefined) ?? mesh;
         const editorMechCtrl = new MechanismRuntimeController(mechRoot, ent.mechanisms);
@@ -3363,6 +3845,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     project.heroModelOffsetY,
     project.savePlinthAssetId,
     customAssets,
+    entitiesCoreSig,
     texInvalidationTick,
   ]);
 
@@ -3378,20 +3861,28 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
   const raycastClientToGround = (clientX: number, clientY: number): THREE.Vector3 | null => {
     const refs = sceneRefs.current;
     if (!refs || refs.groundMeshes.length === 0) return null;
+    if (!dragRaycastScratchRef.current) {
+      dragRaycastScratchRef.current = {
+        ndc: new THREE.Vector2(),
+        raycaster: new THREE.Raycaster(),
+        fallbackPlane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+        hitPt: new THREE.Vector3(),
+      };
+    }
+    const scratch = dragRaycastScratchRef.current;
     const rect = refs.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
+    scratch.ndc.set(
       ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1,
       -((clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
     );
-    const rc = new THREE.Raycaster();
-    rc.setFromCamera(ndc, refs.camera);
-    const hits = rc.intersectObjects(refs.groundMeshes, false);
+    scratch.raycaster.setFromCamera(scratch.ndc, refs.camera);
+    const hits = scratch.raycaster.intersectObjects(refs.groundMeshes, false);
     if (hits[0]?.point) return hits[0].point;
 
     // Fallback intersection against Y=0 plane if dragging near terrain edges
-    const fallbackPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    const hitPt = new THREE.Vector3();
-    return rc.ray.intersectPlane(fallbackPlane, hitPt) ? hitPt : null;
+    return scratch.raycaster.ray.intersectPlane(scratch.fallbackPlane, scratch.hitPt)
+      ? scratch.hitPt
+      : null;
   };
 
   // Sync Building Curve Guide spline, anchor markers & ghost blocks in 3D world
@@ -3426,7 +3917,9 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       Math.max(2, buildingCurveGuide.blockCount),
       true
     );
-    const ghostBoxGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(bw, bh, bd));
+    const curveBoxTmp = new THREE.BoxGeometry(bw, bh, bd);
+    const ghostBoxGeo = new THREE.EdgesGeometry(curveBoxTmp);
+    curveBoxTmp.dispose();
     const ghostMat = new THREE.LineBasicMaterial({
       color: '#38BDF8',
       transparent: true,
@@ -3615,6 +4108,14 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
             {showPerfHud ? '▲' : `${perfStats.frameMs.toFixed(0)}ms`}
           </span>
         </button>
+      </div>
+
+      <div
+        ref={caveDrawHudRef}
+        className="hidden pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3.5 py-1.5 rounded-xl bg-slate-950/88 text-cyan-100 text-xs font-extrabold border border-cyan-400/50 shadow-lg flex items-center gap-2 tabular-nums"
+      >
+        <span className="inline-block w-2 h-2 rounded-full bg-cyan-400" />
+        <span ref={caveDrawHudTextRef}>Carving tunnel</span>
       </div>
 
       {isDragOver && (

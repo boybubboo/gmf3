@@ -1843,6 +1843,7 @@ export type CaveSurfacePresetId =
 
 export interface CaveTunnelNode {
   id: string;
+  parentNodeId?: string;
   x: number;
   z: number;
   floorY?: number;
@@ -1858,6 +1859,13 @@ export interface CaveTunnelNode {
   hasBats?: boolean;
   batCount?: number;
   hasTorch?: boolean;
+}
+
+export interface CaveStrokeSamplePoint {
+  x: number;
+  z: number;
+  floorY: number;
+  radius: number;
 }
 
 export interface CaveGrotto {

@@ -311,7 +311,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     if (currentEntity.buildingBlock || currentEntity.kind === 'door') {
       captureEntityIntoActiveTool(currentEntity);
     }
-  });
+  }, [store.selectedEntityID, keepToolAdjustments, currentEntity]);
 
   const placementGhostSize: [number, number, number] = useMemo(() => {
     if (tool === 'add' && addPaletteMode === 'entities' && dropPreset === 'heroStart') {
@@ -332,13 +332,89 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
 
   const placementGhostRotation = keepToolAdjustments ? activeBlockAdjustments.rotation : 0;
 
+  const fallbackTerrain = useMemo(() => createInitialTerrain(), []);
+  const defaultWaterBodies = useMemo(() => createDefaultWaterBodies(), []);
+  const terrain = currentLevel?.terrain ?? fallbackTerrain;
+  const searchQ = contentsSearch.trim().toLowerCase();
+
+  const heroCustomAsset = useMemo(
+    () =>
+      currentProject?.heroCustomAssetId
+        ? store.customAssets.find((a) => a.id === currentProject.heroCustomAssetId) ?? null
+        : null,
+    [currentProject?.heroCustomAssetId, store.customAssets]
+  );
+
+  const actorsInLevel = useMemo(
+    () =>
+      (currentLevel?.entities ?? []).filter(
+        (e) =>
+          (e.kind === 'hero' || e.kind === 'npc' || e.kind === 'baddie') &&
+          (!searchQ || e.name.toLowerCase().includes(searchQ))
+      ),
+    [currentLevel?.entities, searchQ]
+  );
+
+  const objectsInLevel = useMemo(
+    () =>
+      (currentLevel?.entities ?? []).filter(
+        (e) =>
+          e.kind !== 'hero' &&
+          e.kind !== 'npc' &&
+          e.kind !== 'baddie' &&
+          (!searchQ || e.name.toLowerCase().includes(searchQ))
+      ),
+    [currentLevel?.entities, searchQ]
+  );
+
+  const waterBodiesInLevel = useMemo(
+    () =>
+      (terrain.waterBodies ?? defaultWaterBodies).filter(
+        (wb) => !searchQ || wb.name.toLowerCase().includes(searchQ)
+      ),
+    [terrain.waterBodies, defaultWaterBodies, searchQ]
+  );
+
+  const cavesInLevel = useMemo(
+    () =>
+      (terrain.caves ?? []).filter(
+        (c, idx) => !searchQ || (c.name || `Cave ${idx + 1}`).toLowerCase().includes(searchQ)
+      ),
+    [terrain.caves, searchQ]
+  );
+
+  const roadsInLevel = useMemo(
+    () =>
+      (terrain.roads ?? []).filter(
+        (r) => !searchQ || r.name.toLowerCase().includes(searchQ)
+      ),
+    [terrain.roads, searchQ]
+  );
+
+  const extraNonRegionLevels = useMemo(() => {
+    const regions = store.resolvedWorldMap?.regions ?? [];
+    return (currentProject?.levels ?? []).filter((lvl) => {
+      if (regions.some((r) => r.levelId === lvl.id)) return false;
+      const lvlEnv = getEnvironmentType(lvl);
+      // Keep custom non-openWorld levels visible, and hide empty scratch placeholder until named
+      if (
+        regions.length === 0 &&
+        lvlEnv === 'openWorld' &&
+        lvl.entities.length === 0 &&
+        (lvl.terrain?.scatter.length ?? 0) === 0
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [currentProject?.levels, store.resolvedWorldMap?.regions]);
+
   if (!currentProject || !currentLevel) return null;
 
   const envType = getEnvironmentType(currentLevel);
   const cameraMode: CameraMode =
     currentLevel.cameraMode ?? (envType === 'sideScroller' ? 'sideScroll' : 'front');
   const activeTool: ViewportTool = envType !== 'openWorld' && tool === 'terrain' ? 'move' : tool;
-  const terrain = currentLevel.terrain ?? createInitialTerrain();
 
   const triggerFxBurst = (entityId: string) =>
     setFxBurstSignal((prev) => ({ entityId, nonce: (prev?.nonce ?? 0) + 1 }));
@@ -748,37 +824,12 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     });
   };
 
-  const searchQ = contentsSearch.trim().toLowerCase();
-  const heroCustomAsset = currentProject.heroCustomAssetId
-    ? store.customAssets.find((a) => a.id === currentProject.heroCustomAssetId) ?? null
-    : null;
   const showHeroInContents =
     !searchQ ||
     currentProject.heroName.toLowerCase().includes(searchQ) ||
     'hero'.includes(searchQ) ||
     'player'.includes(searchQ) ||
     'start'.includes(searchQ);
-  const actorsInLevel = currentLevel.entities.filter(
-    (e) =>
-      (e.kind === 'hero' || e.kind === 'npc' || e.kind === 'baddie') &&
-      (!searchQ || e.name.toLowerCase().includes(searchQ))
-  );
-  const objectsInLevel = currentLevel.entities.filter(
-    (e) =>
-      e.kind !== 'hero' &&
-      e.kind !== 'npc' &&
-      e.kind !== 'baddie' &&
-      (!searchQ || e.name.toLowerCase().includes(searchQ))
-  );
-  const waterBodiesInLevel = (terrain.waterBodies ?? createDefaultWaterBodies()).filter(
-    (wb) => !searchQ || wb.name.toLowerCase().includes(searchQ)
-  );
-  const cavesInLevel = (terrain.caves ?? []).filter(
-    (c, idx) => !searchQ || (c.name || `Cave ${idx + 1}`).toLowerCase().includes(searchQ)
-  );
-  const roadsInLevel = (terrain.roads ?? []).filter(
-    (r) => !searchQ || r.name.toLowerCase().includes(searchQ)
-  );
 
   const visibleDomains = WORLD_DOMAINS.filter(
     (d) =>
@@ -789,20 +840,6 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
   const wm = store.resolvedWorldMap;
   const wmRegions = wm?.regions ?? [];
   const activeRegion = wmRegions.find((r) => r.levelId === currentLevel.id) ?? null;
-  const extraNonRegionLevels = currentProject.levels.filter((lvl) => {
-    if (wmRegions.some((r) => r.levelId === lvl.id)) return false;
-    const lvlEnv = getEnvironmentType(lvl);
-    // Keep custom non-openWorld levels visible, and hide empty scratch placeholder until named
-    if (
-      wmRegions.length === 0 &&
-      lvlEnv === 'openWorld' &&
-      lvl.entities.length === 0 &&
-      (lvl.terrain?.scatter.length ?? 0) === 0
-    ) {
-      return false;
-    }
-    return true;
-  });
 
   return (
     <div className="h-full min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden maker-scroll">
@@ -3026,6 +3063,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                     meta?.isStart ?? false
                   )
                 }
+                brushStrength={store.terrainBrushStrength}
                 onBrushStroke={(x, z, meta) =>
                   store.applyBrush(
                     brush,
@@ -3044,6 +3082,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                     }
                   )
                 }
+                onCommitCaveStroke={(stroke) => store.commitCaveStroke(stroke)}
                 fxBurstSignal={fxBurstSignal}
                 fxPaused={store.isPlaying}
                 draggingFxTemplate={

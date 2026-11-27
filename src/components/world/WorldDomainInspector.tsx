@@ -716,7 +716,7 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
               <span>Auto-hide scenery while painting</span>
               <input
                 type="checkbox"
-                checked={(window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt !== false}
+                checked={(window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt === true}
                 onChange={(e) => {
                   (window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt =
                     e.target.checked;
@@ -1314,14 +1314,14 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
             </button>
           </div>
           <p className="text-[10px] text-slate-600 dark:text-slate-400 leading-snug">
-            Projects your brush directly onto the interior cave floor plane inside the mountain with see-through X-Ray tunnel vaults.
+            Click a mountain and drag smoothly to sketch a live 3D tunnel curve (<span className="text-cyan-500 font-bold">cyan</span> = deep inside, <span className="text-amber-500 font-bold">amber</span> = thin wall, <span className="text-emerald-500 font-bold">green</span> = open exit). Release to build the full cavern; press <span className="font-bold">Esc</span> to cancel mid-drag.
           </p>
           <div className="pt-1.5 border-t border-cyan-500/20 space-y-1">
             <label className="flex items-center justify-between text-[11px] font-bold cursor-pointer">
-              <span>Auto-hide scenery while carving</span>
+              <span>Auto-hide scenery while sculpting</span>
               <input
                 type="checkbox"
-                checked={(window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt !== false}
+                checked={(window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt === true}
                 onChange={(e) => {
                   (window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt =
                     e.target.checked;

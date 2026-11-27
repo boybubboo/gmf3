@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express, { type Request, type Response } from 'express';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -124,6 +125,61 @@ interface AiGenerateBody {
 async function startServer(): Promise<void> {
   const app = express();
   app.use(express.json({ limit: '8mb' }));
+
+  const passwordHashFilePath = path.resolve(__dirname, 'src/data/appPasswordHash.json');
+
+  const readStoredPasswordHash = (): string => {
+    try {
+      if (fs.existsSync(passwordHashFilePath)) {
+        const parsed = JSON.parse(fs.readFileSync(passwordHashFilePath, 'utf-8')) as {
+          passwordSha256?: unknown;
+        };
+        if (typeof parsed.passwordSha256 === 'string') {
+          return parsed.passwordSha256.trim().toLowerCase();
+        }
+      }
+    } catch {
+      // ignore read errors
+    }
+    return '';
+  };
+
+  app.get('/api/auth/status', (_req: Request, res: Response) => {
+    const hash = readStoredPasswordHash();
+    res.json({
+      hasPassword: Boolean(hash),
+      passwordSha256: hash,
+    });
+  });
+
+  app.post('/api/auth/setup', (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as { passwordSha256?: unknown; currentSha256?: unknown };
+    const nextHash =
+      typeof body.passwordSha256 === 'string' ? body.passwordSha256.trim().toLowerCase() : '';
+    if (!/^[a-f0-9]{64}$/.test(nextHash)) {
+      res.status(400).json({ error: 'Invalid SHA-256 password hash.' });
+      return;
+    }
+    const existingHash = readStoredPasswordHash();
+    const currentHash =
+      typeof body.currentSha256 === 'string' ? body.currentSha256.trim().toLowerCase() : '';
+    if (existingHash && existingHash !== nextHash && currentHash !== existingHash) {
+      res.status(403).json({ error: 'Password is already configured.' });
+      return;
+    }
+    try {
+      fs.writeFileSync(
+        passwordHashFilePath,
+        `${JSON.stringify({ passwordSha256: nextHash }, null, 2)}\n`,
+        'utf-8'
+      );
+      res.json({ ok: true, passwordSha256: nextHash });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to save password hash.',
+      });
+    }
+  });
 
   app.get('/api/ai/status', (_req: Request, res: Response) => {
     const defaultOpenAiBaseUrl =
@@ -327,11 +383,16 @@ async function startServer(): Promise<void> {
     }
   });
 
+  const httpServer = http.createServer(app);
   const isProd = process.env.NODE_ENV === 'production';
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: hmrDisabled ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -348,7 +409,7 @@ async function startServer(): Promise<void> {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Maker studio server listening on http://0.0.0.0:${PORT}`);
   });
 }

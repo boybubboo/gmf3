@@ -78,18 +78,16 @@ const STAGE_TABS: {
   { id: 'interface', title: 'Interface', symbol: 'slider.horizontal.3', accent: '#F59E0B' },
 ];
 
-const AUTO_SAVE_DEBOUNCE_MS = 600;
+const AUTO_SAVE_META_DEBOUNCE_MS = 2500;
 const EDITOR_AUTOSAVE_META_KEY = 'maker.autosave.meta.v1';
 
 export const EditorShell: React.FC<{ store: MakerStore }> = ({ store }) => {
-  const { currentProject, currentLevel, saveProjectStateNow } = store;
+  const { currentProject, currentLevel } = store;
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [showingExportZip, setShowingExportZip] = useState(false);
   const aiPanelState = useContextualAiPanelState();
 
-  const lastProjectIdRef = useRef<string | null>(null);
-  const lastSeenProjectRef = useRef(currentProject);
-  const pendingAutoSaveRef = useRef(false);
+  const lastMetaSigRef = useRef<string>('');
   const autoSaveTimerRef = useRef<number | null>(null);
 
   useEditorResourceMonitor({
@@ -97,40 +95,26 @@ export const EditorShell: React.FC<{ store: MakerStore }> = ({ store }) => {
     projectId: currentProject?.id ?? null,
   });
 
-  // Debounced auto-save: persists project state to localStorage after edits settle
+  // Lightweight debounced session metadata marker (full project persistence runs asynchronously in useMakerStore)
   useEffect(() => {
     if (!currentProject) {
-      lastProjectIdRef.current = null;
-      lastSeenProjectRef.current = null;
-      pendingAutoSaveRef.current = false;
+      lastMetaSigRef.current = '';
       return;
-    }
-
-    if (lastProjectIdRef.current !== currentProject.id) {
-      lastProjectIdRef.current = currentProject.id;
-      lastSeenProjectRef.current = currentProject;
-      pendingAutoSaveRef.current = false;
-      return;
-    }
-
-    if (lastSeenProjectRef.current === currentProject) {
-      return;
-    }
-    lastSeenProjectRef.current = currentProject;
-    pendingAutoSaveRef.current = true;
-
-    if (autoSaveTimerRef.current !== null) {
-      window.clearTimeout(autoSaveTimerRef.current);
     }
 
     const levelId = currentLevel?.id ?? null;
     const tab = store.selectedTab;
     const projectId = currentProject.id;
+    const sig = `${projectId}:${levelId ?? ''}:${tab}`;
+    if (lastMetaSigRef.current === sig) return;
+    lastMetaSigRef.current = sig;
+
+    if (autoSaveTimerRef.current !== null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
 
     autoSaveTimerRef.current = window.setTimeout(() => {
       autoSaveTimerRef.current = null;
-      pendingAutoSaveRef.current = false;
-      saveProjectStateNow(true);
       try {
         localStorage.setItem(
           EDITOR_AUTOSAVE_META_KEY,
@@ -144,7 +128,7 @@ export const EditorShell: React.FC<{ store: MakerStore }> = ({ store }) => {
       } catch {
         // ignore localStorage quota errors
       }
-    }, AUTO_SAVE_DEBOUNCE_MS);
+    }, AUTO_SAVE_META_DEBOUNCE_MS);
 
     return () => {
       if (autoSaveTimerRef.current !== null) {
@@ -152,24 +136,7 @@ export const EditorShell: React.FC<{ store: MakerStore }> = ({ store }) => {
         autoSaveTimerRef.current = null;
       }
     };
-  }, [currentProject, currentLevel?.id, store.selectedTab, saveProjectStateNow]);
-
-  useEffect(() => {
-    const flushPending = () => {
-      if (!pendingAutoSaveRef.current) return;
-      if (autoSaveTimerRef.current !== null) {
-        window.clearTimeout(autoSaveTimerRef.current);
-        autoSaveTimerRef.current = null;
-      }
-      pendingAutoSaveRef.current = false;
-      saveProjectStateNow(true);
-    };
-    window.addEventListener('pagehide', flushPending);
-    return () => {
-      window.removeEventListener('pagehide', flushPending);
-      flushPending();
-    };
-  }, [saveProjectStateNow]);
+  }, [currentProject?.id, currentLevel?.id, store.selectedTab]);
 
   if (!currentProject) return null;
 
@@ -569,8 +536,8 @@ export const EditorShell: React.FC<{ store: MakerStore }> = ({ store }) => {
 
       {/* Global Overlays, Drawers & Maker Studios */}
       <Profiler id="EditorShell.Overlays" onRender={onEditorProfilerRender}>
-        <AtmosphereDrawer store={store} />
-        <EntityAttributeModal store={store} />
+        {store.showingAtmosphereDrawer && <AtmosphereDrawer store={store} />}
+        {store.attributeModifierTarget !== null && <EntityAttributeModal store={store} />}
 
         {store.showingIdeas && (
           <IdeasModal store={store} onClose={() => store.setShowingIdeas(false)} />

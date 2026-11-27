@@ -3249,25 +3249,15 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
       activeRuntimeEntities = runtimeEntities;
 
-      const spawnBossRewardChest = (bossRt: RuntimeEntity) => {
-        const chestId = `boss_chest_${bossRt.id}_${Math.round(performance.now())}`;
-        const chestName = `${bossRt.name} Great Chest`;
-        const [cx, cz] = resolveHorizontalCollision(
-          activeLevel,
-          bossRt.x,
-          bossRt.z,
-          0.9,
-          false,
-          collisionCtx
-        );
-        const cy = sampleLevelHeight(activeLevel, cx, cz);
-        const tempChestEnt: LevelEntity = {
-          id: chestId,
-          name: chestName,
+      // Pre-warm a Boss Reward Chest mesh at boot so its TSL/WebGPU shaders compile during initial scene precompile
+      let prewarmedBossChestMesh: THREE.Group | null = (() => {
+        const templateChestEnt: LevelEntity = {
+          id: 'prewarm_boss_chest',
+          name: 'Great Chest',
           kind: 'treasure',
-          position: levelWorldToBoard(activeLevel, cx, cz),
+          position: { x: 0, y: 0 },
           scale: 1.35,
-          rotation: Math.round((Math.atan2(heroX - cx, heroZ - cz) * 180) / Math.PI),
+          rotation: 0,
           speed: 0,
           health: 1,
           damage: 0,
@@ -3286,11 +3276,67 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           styleTint: '#FACC15',
           cards: [],
         };
-        const chestMesh = buildEntityMesh(tempChestEnt);
-        applyVisualStyleToObject(chestMesh, style);
-        chestMesh.position.set(cx, cy, cz);
-        chestMesh.rotation.y = Math.atan2(heroX - cx, heroZ - cz);
-        scene.add(chestMesh);
+        const m = buildEntityMesh(templateChestEnt);
+        applyVisualStyleToObject(m, style);
+        m.position.set(0, -500, 0);
+        m.scale.setScalar(0.0001);
+        m.traverse((child) => {
+          child.frustumCulled = false;
+        });
+        scene.add(m);
+        return m;
+      })();
+
+      const spawnBossRewardChest = (bossRt: RuntimeEntity) => {
+        const chestId = `boss_chest_${bossRt.id}_${Math.round(performance.now())}`;
+        const chestName = `${bossRt.name} Great Chest`;
+        const [cx, cz] = resolveHorizontalCollision(
+          activeLevel,
+          bossRt.x,
+          bossRt.z,
+          0.9,
+          false,
+          collisionCtx
+        );
+        const cy = sampleLevelHeight(activeLevel, cx, cz);
+        let chestMesh: THREE.Group;
+        if (prewarmedBossChestMesh) {
+          chestMesh = prewarmedBossChestMesh;
+          prewarmedBossChestMesh = null;
+          chestMesh.scale.setScalar(1.35);
+          chestMesh.position.set(cx, cy, cz);
+          chestMesh.rotation.y = Math.atan2(heroX - cx, heroZ - cz);
+        } else {
+          const tempChestEnt: LevelEntity = {
+            id: chestId,
+            name: chestName,
+            kind: 'treasure',
+            position: levelWorldToBoard(activeLevel, cx, cz),
+            scale: 1.35,
+            rotation: Math.round((Math.atan2(heroX - cx, heroZ - cz) * 180) / Math.PI),
+            speed: 0,
+            health: 1,
+            damage: 0,
+            brain: 'Guardian',
+            isBoss: false,
+            loot: 'treasure',
+            puzzleType: 'none',
+            dialogue: '',
+            platformPreset: 'stoneLift',
+            platformMotion: 'slide',
+            platformSpeed: 0,
+            platformWait: 0,
+            platformRunning: false,
+            conversation: [],
+            notes: '',
+            styleTint: '#FACC15',
+            cards: [],
+          };
+          chestMesh = buildEntityMesh(tempChestEnt);
+          chestMesh.position.set(cx, cy, cz);
+          chestMesh.rotation.y = Math.atan2(heroX - cx, heroZ - cz);
+          scene.add(chestMesh);
+        }
 
         const chestAnim =
           (chestMesh.userData.chestAnim as TreasureChestAnimRig | undefined) ?? null;
@@ -3625,9 +3671,6 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         shadow.rotation.x = -Math.PI / 2;
         shadow.position.y = 0.02;
         const itemMesh = buildPickupItemMesh(def?.meshKind ?? 'woodLog', def?.colorHex ?? '#92400E');
-        if (style !== 'painterlyPBR') {
-          applyVisualStyleToObject(itemMesh, style);
-        }
         wrapper.add(shadow, itemMesh);
         wrapper.position.set(x, y, z);
         scene.add(wrapper);
@@ -3795,12 +3838,38 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       const sparkGeo = new THREE.OctahedronGeometry(0.11, 0);
       const combatSparks: {
         mesh: THREE.Mesh;
+        mat: THREE.MeshBasicMaterial;
         vx: number;
         vy: number;
         vz: number;
         life: number;
         maxLife: number;
+        active: boolean;
       }[] = [];
+      for (let i = 0; i < 32; i++) {
+        const mat = new THREE.MeshBasicMaterial({
+          color: '#FFD166',
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        });
+        const shard = new THREE.Mesh(sparkGeo, mat);
+        shard.visible = true;
+        shard.frustumCulled = false;
+        shard.position.set(0, -500, 0);
+        shard.scale.setScalar(0.0001);
+        scene.add(shard);
+        combatSparks.push({
+          mesh: shard,
+          mat,
+          vx: 0,
+          vy: 0,
+          vz: 0,
+          life: 0,
+          maxLife: 0.3,
+          active: false,
+        });
+      }
 
       const spawnCombatSparks = (
         x: number,
@@ -3810,27 +3879,26 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         count: number,
         speed = 6.5
       ) => {
-        for (let i = 0; i < count; i++) {
-          const mat = new THREE.MeshBasicMaterial({
-            color: colorHex,
-            transparent: true,
-            opacity: 0.95,
-          });
-          const shard = new THREE.Mesh(sparkGeo, mat);
-          shard.position.set(x, y, z);
-          shard.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
-          scene.add(shard);
-          const ang = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
+        let spawned = 0;
+        const limit = Math.min(count, 14);
+        for (let i = 0; i < combatSparks.length && spawned < limit; i++) {
+          const sp = combatSparks[i];
+          if (sp.active) continue;
+          sp.active = true;
+          sp.mat.color.set(colorHex);
+          sp.mat.opacity = 0.95;
+          sp.mesh.position.set(x, y, z);
+          sp.mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+          sp.mesh.scale.setScalar(1.0);
+          const ang = (spawned / limit) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
           const spd = speed * (0.55 + Math.random() * 0.7);
           const maxLife = 0.24 + Math.random() * 0.22;
-          combatSparks.push({
-            mesh: shard,
-            vx: Math.cos(ang) * spd,
-            vy: 2.2 + Math.random() * 4.5,
-            vz: Math.sin(ang) * spd,
-            life: maxLife,
-            maxLife,
-          });
+          sp.vx = Math.cos(ang) * spd;
+          sp.vy = 2.2 + Math.random() * 4.5;
+          sp.vz = Math.sin(ang) * spd;
+          sp.life = maxLife;
+          sp.maxLife = maxLife;
+          spawned++;
         }
       };
 
@@ -4880,7 +4948,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             rt.vz = knockZ * (rt.isBoss ? 5.2 : 10.2);
             rt.vy = rt.isBoss ? 1.1 : 3.4;
             rt.defeatSpin = rt.quadrupedRig ? 0 : (Math.random() > 0.5 ? 1 : -1) * 7.5;
-            hitStopTimer = rt.isBoss ? 0.085 : 0.055;
+            hitStopTimer = 0;
             shakeTimer = Math.max(shakeTimer, rt.isBoss ? 0.36 : 0.2);
 
             if (rt.hpBar) {
@@ -4888,7 +4956,6 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               rt.hpBar.mat.opacity = 0;
               rt.hpBar.group.visible = false;
               rt.hpBar.mesh.visible = false;
-              scene.remove(rt.hpBar.group);
             }
             const deathY = Math.max(-0.5, sampleLevelHeight(activeLevel, rt.x, rt.z)) + rt.flightY;
             heroEffects.emitBossDeathBurst(
@@ -8588,14 +8655,16 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           updateEvaporatingDamageNumbers(scene, evaporatingDamages, camera, dt);
           updateRpgVisualFx(scene, rpgVisualFx, dt);
 
-          // Update 3D combat impact sparks
-          for (let i = combatSparks.length - 1; i >= 0; i--) {
+          // Update 3D combat impact sparks (zero-allocation pooled meshes)
+          for (let i = 0; i < combatSparks.length; i++) {
             const sp = combatSparks[i];
+            if (!sp.active) continue;
             sp.life -= dt;
             if (sp.life <= 0) {
-              scene.remove(sp.mesh);
-              (sp.mesh.material as THREE.Material).dispose();
-              combatSparks.splice(i, 1);
+              sp.active = false;
+              sp.mat.opacity = 0;
+              sp.mesh.scale.setScalar(0.0001);
+              sp.mesh.position.set(0, -500, 0);
               continue;
             }
             sp.vy -= 16 * dt;
@@ -8606,7 +8675,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             sp.mesh.rotation.y += dt * 9;
             const frac = sp.life / sp.maxLife;
             sp.mesh.scale.setScalar(Math.max(0.01, frac * 1.15));
-            (sp.mesh.material as THREE.MeshBasicMaterial).opacity = frac;
+            sp.mat.opacity = frac;
           }
 
           // Interact action (also reels/casts fishing pole if holding it and no NPC/door nearby)

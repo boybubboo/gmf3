@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { EntityKindMeta } from '../../data/registries';
 import {
+  getEntityThumbnailKey,
+  getHeroThumbnailKey,
   getOrLoadCustomAssetThumbnail,
   getOrQueueEntityThumbnail,
   getOrQueueHeroThumbnail,
-  subscribeAssetThumbnails,
+  subscribeAssetThumbnailKey,
 } from '../../three/assetThumbnailer';
 import type { CustomAssetMeta, EntityKind, LevelEntity } from '../../types/maker';
 import { MakerIcon } from './IconMap';
@@ -31,7 +33,7 @@ export interface AssetThumbnailProps {
   alt?: string;
 }
 
-export const AssetThumbnail: React.FC<AssetThumbnailProps> = ({
+export const AssetThumbnail: React.FC<AssetThumbnailProps> = React.memo(({
   kind,
   entity,
   customAsset,
@@ -43,29 +45,35 @@ export const AssetThumbnail: React.FC<AssetThumbnailProps> = ({
 }) => {
   const [, setTick] = useState(0);
 
-  useEffect(() => {
-    return subscribeAssetThumbnails(() => setTick((t) => t + 1));
-  }, []);
-
   const resolvedKind: EntityKind | undefined = entity?.kind ?? kind;
 
+  let thumbKey: string | null = null;
   let dataUrl: string | undefined;
   if (customAsset) {
+    thumbKey = `glb:${customAsset.id}`;
     dataUrl = getOrLoadCustomAssetThumbnail(
       customAsset.id,
       customAsset.category,
       customAsset.thumbnailDataUrl
     );
   } else if (hero) {
+    thumbKey = getHeroThumbnailKey(hero.body, hero.colors);
     dataUrl = getOrQueueHeroThumbnail(hero.body, hero.colors);
   } else if (resolvedKind) {
-    dataUrl = getOrQueueEntityThumbnail(resolvedKind, {
+    const opts = {
       isBoss: entity?.isBoss,
       platformPreset: entity?.platformPreset,
       name: entity?.name,
       monsterConfig: entity?.monsterConfig,
-    });
+    };
+    thumbKey = getEntityThumbnailKey(resolvedKind, opts);
+    dataUrl = getOrQueueEntityThumbnail(resolvedKind, opts);
   }
+
+  useEffect(() => {
+    if (!thumbKey || dataUrl) return;
+    return subscribeAssetThumbnailKey(thumbKey, () => setTick((t) => t + 1));
+  }, [thumbKey, dataUrl]);
 
   const meta = resolvedKind ? EntityKindMeta[resolvedKind] : null;
   const customFallbackTint =
@@ -114,4 +122,4 @@ export const AssetThumbnail: React.FC<AssetThumbnailProps> = ({
       )}
     </div>
   );
-};
+});

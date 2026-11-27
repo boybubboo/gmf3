@@ -16,10 +16,17 @@ const inflightCustom = new Map<string, Promise<string | undefined>>();
 const pendingQueue: { key: string; render: () => Promise<string | undefined> }[] = [];
 const queuedKeys = new Set<string>();
 const listeners = new Set<() => void>();
+const keyListeners = new Map<string, Set<() => void>>();
 let rafScheduled = false;
 let isFlushing = false;
 
-function notifyThumbListeners() {
+function notifyThumbListeners(key?: string) {
+  if (key) {
+    const scoped = keyListeners.get(key);
+    if (scoped) {
+      scoped.forEach((fn) => fn());
+    }
+  }
   listeners.forEach((fn) => fn());
 }
 
@@ -27,6 +34,23 @@ export function subscribeAssetThumbnails(fn: () => void): () => void {
   listeners.add(fn);
   return () => {
     listeners.delete(fn);
+  };
+}
+
+export function subscribeAssetThumbnailKey(key: string, fn: () => void): () => void {
+  let set = keyListeners.get(key);
+  if (!set) {
+    set = new Set();
+    keyListeners.set(key, set);
+  }
+  set.add(fn);
+  return () => {
+    const current = keyListeners.get(key);
+    if (!current) return;
+    current.delete(fn);
+    if (current.size === 0) {
+      keyListeners.delete(key);
+    }
   };
 }
 
@@ -56,7 +80,7 @@ async function flushThumbnailQueue() {
   if (isFlushing) return;
   isFlushing = true;
   try {
-    let didRender = false;
+    let renderedKey: string | undefined;
     while (pendingQueue.length > 0) {
       const job = pendingQueue.shift();
       if (!job) break;
@@ -65,12 +89,12 @@ async function flushThumbnailQueue() {
       const url = await job.render();
       if (url) {
         thumbCache.set(job.key, url);
-        didRender = true;
+        renderedKey = job.key;
       }
       break; // max 1 offscreen render per scheduled turn to avoid UI frame blocks
     }
-    if (didRender) {
-      notifyThumbListeners();
+    if (renderedKey) {
+      notifyThumbListeners(renderedKey);
     }
   } finally {
     isFlushing = false;
@@ -305,7 +329,7 @@ export function getOrLoadCustomAssetThumbnail(
       .then((url) => {
         if (url) {
           thumbCache.set(key, url);
-          notifyThumbListeners();
+          notifyThumbListeners(key);
         }
         return url;
       })
@@ -318,6 +342,7 @@ export function getOrLoadCustomAssetThumbnail(
 }
 
 export function setCustomAssetThumbnailCache(assetId: string, dataUrl: string) {
-  thumbCache.set(`glb:${assetId}`, dataUrl);
-  notifyThumbListeners();
+  const key = `glb:${assetId}`;
+  thumbCache.set(key, dataUrl);
+  notifyThumbListeners(key);
 }

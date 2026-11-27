@@ -59,6 +59,7 @@ import {
   getSharedWeatheringBaseMaterial,
   upgradeToNodeMaterial,
 } from './nodeMaterialUtils';
+import { buildCarvedCaveTunnelGeometry } from './caveSplineBuilder';
 import {
   applyBotwStyleToObject,
   attachBotwPainterlyShader,
@@ -299,6 +300,11 @@ export interface IslandSceneHandles {
   updateUnderlayerUniforms?: (contrast?: number) => void;
   setCaveXRayMode?: (enabled: boolean) => void;
   updateCavesInPlace?: (level: GameLevel) => void;
+  reseatScatterInPlace?: (
+    level: GameLevel,
+    customAssets: CustomAssetMeta[],
+    signal?: AbortSignal
+  ) => Promise<void>;
   setSceneryVisible?: (visible: boolean) => void;
   updateWaterBodiesUniforms?: (bodies?: WaterBodyConfig[], selectedWaterBodyId?: string | null) => void;
   updateWorldMapUniforms?: (ctx?: WorldMapRenderContext) => void;
@@ -3656,7 +3662,7 @@ export function buildIslandMesh(
   }
 
   // Procedural Dirt, Shore & Trail Pebble Scatter
-  const dirtPebbleMesh = buildDirtPebblesGroup(terrain, terrain.dirtAndRoadConfig);
+  let dirtPebbleMesh = buildDirtPebblesGroup(terrain, terrain.dirtAndRoadConfig);
   if (dirtPebbleMesh) {
     islandGroup.add(dirtPebbleMesh);
   }
@@ -3724,6 +3730,7 @@ export function buildIslandMesh(
     updateDirtUniforms: (cfg) => terrainMatBundle.updateDirtUniforms(cfg),
     updateUnderlayerUniforms: (contrast) => terrainMatBundle.updateUnderlayerUniforms(contrast),
     setCaveXRayMode: (enabled) => {
+      if (enabled === activeCaveXRayMode) return;
       activeCaveXRayMode = enabled;
       terrainMatBundle.setCaveXRayMode(enabled);
       if (caveInteractiveHandles.xRayOverlays) {
@@ -3733,8 +3740,9 @@ export function buildIslandMesh(
       }
     },
     updateCavesInPlace: (nextLevel: GameLevel) => {
-      while (cavesContainer.children.length > 0) {
-        cavesContainer.remove(cavesContainer.children[0]);
+      if (cavesContainer.children.length > 0) {
+        disposeObject3D(cavesContainer);
+        cavesContainer.clear();
       }
       torchLights.length = 0;
       flameMeshes.length = 0;
@@ -3760,6 +3768,108 @@ export function buildIslandMesh(
         for (const overlay of caveInteractiveHandles.xRayOverlays) {
           overlay.visible = activeCaveXRayMode;
         }
+      }
+    },
+    reseatScatterInPlace: async (
+      nextLevel: GameLevel,
+      nextCustomAssets: CustomAssetMeta[],
+      signal?: AbortSignal
+    ) => {
+      if (signal?.aborted) return;
+      const nextTerrain = ensureUpgradedTerrain(nextLevel.terrain ?? createInitialTerrain());
+      const nextStyle: VisualStyleId = nextLevel.visualStyle ?? style;
+
+      // Refresh dirt/shore pebbles cleanly in place
+      if (dirtPebbleMesh) {
+        islandGroup.remove(dirtPebbleMesh);
+        disposeObject3D(dirtPebbleMesh);
+        dirtPebbleMesh = null;
+      }
+      const nextPebbles = buildDirtPebblesGroup(nextTerrain, nextTerrain.dirtAndRoadConfig);
+      if (nextPebbles) {
+        applyBotwStyleToObject(nextPebbles, nextStyle, { rimStrengthScale: 0.82, shadowLiftScale: 0.85 });
+        nextPebbles.visible = instancedGroup.visible;
+        dirtPebbleMesh = nextPebbles;
+        islandGroup.add(nextPebbles);
+      }
+
+      // Dispose and rebuild only scatter trees/rocks/flora without tearing down terrain, water, grass, or vista
+      disposeObject3D(instancedGroup);
+      instancedGroup.clear();
+      disposeObject3D(customScatterGroups);
+      customScatterGroups.clear();
+      choppableTrees.length = 0;
+      harvestableScatter.length = 0;
+
+      const nextPlan = createScatterBuildPlan(
+        nextLevel,
+        nextTerrain,
+        nextTerrain.scatter,
+        nextStyle,
+        timeUniform,
+        windUniform,
+        nextCustomAssets,
+        instancedGroup,
+        customScatterGroups,
+        choppableTrees,
+        harvestableScatter,
+        worldMapContext
+      );
+
+      const convertedCache = new Map<THREE.Material, THREE.Material>();
+      if (nextPlan.stylizedCanopyTrees.length > 0) {
+        const ok = await runDeferredChunks({
+          items: nextPlan.stylizedCanopyTrees,
+          chunkSize: 1,
+          frameBudgetMs: 4,
+          maxItemsPerFrame: 2,
+          yieldBeforeFirst: true,
+          signal,
+          onChunk: (chunk) => {
+            if (signal?.aborted || chunk.length === 0) return;
+            const builtForest = buildProceduralCanopyForest(
+              chunk,
+              nextStyle,
+              timeUniform,
+              nextPlan.fallbackLeafHex,
+              nextLevel.sceneryTextures,
+              windUniform
+            );
+            if (signal?.aborted) {
+              disposeObject3D(builtForest.group);
+              return;
+            }
+            applyBotwStyleToObject(
+              builtForest.group,
+              nextStyle,
+              { rimStrengthScale: 0.82, shadowLiftScale: 0.85 },
+              convertedCache
+            );
+            instancedGroup.add(builtForest.group);
+            nextPlan.pushForestRecords(builtForest.records);
+          },
+        });
+        if (!ok || signal?.aborted) return;
+      }
+
+      if (nextPlan.batchSteps.length > 0) {
+        const ok = await runDeferredSteps(nextPlan.batchSteps, {
+          frameBudgetMs: 4,
+          yieldBeforeFirst: true,
+          signal,
+        });
+        if (!ok || signal?.aborted) return;
+      }
+
+      if (nextPlan.customItems.length > 0) {
+        await hydrateCustomScatterListAsync(
+          nextPlan.customItems,
+          nextCustomAssets,
+          customScatterGroups,
+          nextStyle,
+          (item) => nextPlan.groundAt(item.x, item.z, 0.3 * item.size).y,
+          signal
+        );
       }
     },
     setSceneryVisible: (visible: boolean) => {
@@ -5070,30 +5180,6 @@ function buildCavesGroup(
     depthWrite: false,
     wireframe: true,
   });
-  const xRayWarnDomeMat = new THREE.MeshBasicMaterial({
-    color: '#F59E0B',
-    transparent: true,
-    opacity: 0.28,
-    depthTest: false,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  const xRayWarnWireMat = new THREE.MeshBasicMaterial({
-    color: '#FBBF24',
-    transparent: true,
-    opacity: 0.72,
-    depthTest: false,
-    depthWrite: false,
-    wireframe: true,
-  });
-  const xRayThinSkinWireMat = new THREE.MeshBasicMaterial({
-    color: '#F43F5E',
-    transparent: true,
-    opacity: 0.85,
-    depthTest: false,
-    depthWrite: false,
-    wireframe: true,
-  });
   const xRayFloorDiscMat = new THREE.MeshBasicMaterial({
     color: '#0EA5E9',
     transparent: true,
@@ -5101,30 +5187,6 @@ function buildCavesGroup(
     depthTest: false,
     depthWrite: false,
     side: THREE.DoubleSide,
-  });
-  const xRayFloorRingMat = new THREE.MeshBasicMaterial({
-    color: '#67E8F9',
-    transparent: true,
-    opacity: 0.82,
-    depthTest: false,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  const xRayMossRingMat = new THREE.MeshBasicMaterial({
-    color: '#34D399',
-    transparent: true,
-    opacity: 0.65,
-    depthTest: false,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  const xRayCrystalMarkerMat = new THREE.MeshBasicMaterial({
-    color: '#C084FC',
-    transparent: true,
-    opacity: 0.78,
-    depthTest: false,
-    depthWrite: false,
-    wireframe: true,
   });
 
   const registerXRayOverlay = (overlay: THREE.Object3D) => {
@@ -5466,363 +5528,304 @@ function buildCavesGroup(
 
     const tunnelGroup = new THREE.Group();
     const xRayTunnelGroup = new THREE.Group();
-    const rockGeo = createFacetedRockGeometry(1.0, 1.0, 1.0, 1.0, 73);
-    const stGeo = new THREE.ConeGeometry(0.17, 0.88, 7);
-    const smGeo = new THREE.ConeGeometry(0.21, 0.98, 7);
-    const cryGeo = new THREE.OctahedronGeometry(0.26, 0);
+    const baseFloorY =
+      cave.floorElevation ??
+      cave.tunnelNodes[0]?.floorY ??
+      sampleLevelHeight(level, cave.x, cave.z);
 
-    // Subtle proximity warning material when carving near the mountain's exterior skin
-    const thinShellMat = new THREE.MeshStandardMaterial({
-      color: '#F59E0B',
-      emissive: '#D97706',
-      emissiveIntensity: 0.35,
-      roughness: 0.7,
+    // 1. Continuous organically sculpted rock tunnel shell, walkable floor & unified vertex-colored X-ray vault
+    const tunnelGeo = buildCarvedCaveTunnelGeometry(
+      cave.tunnelNodes,
+      baseFloorY,
+      (x, z) => sampleTerrainHeight(level.terrain, x, z)
+    );
+
+    const wallMat = (mats.stone as THREE.MeshStandardMaterial).clone();
+    wallMat.vertexColors = true;
+    wallMat.side = THREE.DoubleSide;
+    const floorMat = (mats.dark as THREE.MeshStandardMaterial).clone();
+    floorMat.vertexColors = true;
+    floorMat.side = THREE.DoubleSide;
+
+    const rockWallMesh = new THREE.Mesh(tunnelGeo.rockWallGeo, wallMat);
+    rockWallMesh.castShadow = true;
+    rockWallMesh.receiveShadow = true;
+    tunnelGroup.add(rockWallMesh);
+
+    const rockFloorMesh = new THREE.Mesh(tunnelGeo.rockFloorGeo, floorMat);
+    rockFloorMesh.receiveShadow = true;
+    rockFloorMesh.userData.isGround = true;
+    tunnelGroup.add(rockFloorMesh);
+
+    // Unified X-ray see-through vault + wireframe + floor ribbon (vertex-colored by mountain clearance)
+    const xRayVaultMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
       transparent: true,
-      opacity: 0.45,
+      opacity: 0.24,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const xRayVaultWireMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.64,
+      depthTest: false,
+      depthWrite: false,
       wireframe: true,
     });
+    const xRayRibbonMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.36,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+
+    const xVaultMesh = new THREE.Mesh(tunnelGeo.xRayVaultGeo, xRayVaultMat);
+    markXRayMesh(xVaultMesh, 41);
+    const xWireMesh = new THREE.Mesh(tunnelGeo.xRayVaultGeo, xRayVaultWireMat);
+    markXRayMesh(xWireMesh, 43);
+    const xFloorMesh = new THREE.Mesh(tunnelGeo.xRayFloorGeo, xRayRibbonMat);
+    markXRayMesh(xFloorMesh, 42);
+    xRayTunnelGroup.add(xVaultMesh, xWireMesh, xFloorMesh);
+
+    // 2. Collect instanced matrices across tunnel nodes so stalactites, stalagmites, crystals, moss & grass render in 5 draw calls!
+    const mossMatrices: THREE.Matrix4[] = [];
+    const stalactiteMatrices: THREE.Matrix4[] = [];
+    const stalagmiteMatrices: THREE.Matrix4[] = [];
+    const crystalMatrices: THREE.Matrix4[] = [];
+    const grassMatrices: THREE.Matrix4[] = [];
+    const dummy = new THREE.Object3D();
+    let torchLightCount = 0;
 
     cave.tunnelNodes.forEach((node, nIdx) => {
-      const nodeFloorY =
-        cave.floorElevation ?? node.floorY ?? sampleLevelHeight(level, cave.x, cave.z);
-      const nodeG = new THREE.Group();
-      nodeG.position.set(node.x, nodeFloorY, node.z);
-
+      const nodeFloorY = cave.floorElevation ?? node.floorY ?? baseFloorY;
       const rad = Math.max(2.0, node.radius || 3.4);
-      const ceilH = Math.max(2.8, node.height || 3.8);
-      const terrainRoofY = sampleTerrainHeight(level.terrain, node.x, node.z);
-      const shellClearance = terrainRoofY - (nodeFloorY + ceilH);
+      const ceilH = Math.max(2.8, node.height || 4.0);
 
-      // Walkable subterranean floor slab (staggered per node & recessed near cave mouth to prevent Z-fighting)
-      const nearMouth = terrainRoofY - nodeFloorY < 1.35;
-      const floorYOff = nearMouth ? -0.22 : -0.115 - (nIdx % 7) * 0.005;
-      const floorDisc = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.96, rad * 1.02, 0.24, 16), mats.dark);
-      floorDisc.position.y = floorYOff;
-      floorDisc.receiveShadow = true;
-      floorDisc.userData.isGround = true;
-      nodeG.add(floorDisc);
-
-      // --- X-RAY SEE-THROUGH CHAMBER OVERLAY (Visible right through the solid mountain!) ---
-      const xRayNodeG = new THREE.Group();
-      xRayNodeG.position.set(node.x, nodeFloorY, node.z);
-      const domeGeo = new THREE.SphereGeometry(rad * 0.98, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.52);
-      const isThinWall = shellClearance < 0.85;
-      const isNearWall = shellClearance < 2.25;
-      const xDome = new THREE.Mesh(
-        domeGeo,
-        isNearWall ? xRayWarnDomeMat : xRaySafeDomeMat
-      );
-      xDome.scale.y = ceilH / Math.max(1, rad);
-      markXRayMesh(xDome, 41);
-
-      const xWire = new THREE.Mesh(
-        domeGeo,
-        isThinWall ? xRayThinSkinWireMat : isNearWall ? xRayWarnWireMat : xRaySafeWireMat
-      );
-      xWire.scale.y = ceilH / Math.max(1, rad);
-      markXRayMesh(xWire, 43);
-
-      const xFloor = new THREE.Mesh(new THREE.CircleGeometry(rad * 0.94, 24), xRayFloorDiscMat);
-      xFloor.rotation.x = -Math.PI / 2;
-      xFloor.position.y = 0.08;
-      markXRayMesh(xFloor, 42);
-
-      const xRing = new THREE.Mesh(new THREE.RingGeometry(rad * 0.86, rad * 0.97, 28), xRayFloorRingMat);
-      xRing.rotation.x = -Math.PI / 2;
-      xRing.position.y = 0.1;
-      markXRayMesh(xRing, 44);
-
-      xRayNodeG.add(xDome, xWire, xFloor, xRing);
-
-      // Connect consecutive tunnel nodes with a continuous 3D stone tunnel vault AND X-Ray half-cylinder tube
-      if (nIdx > 0) {
-        const prev = cave.tunnelNodes![nIdx - 1];
-        const prevY = cave.floorElevation ?? prev.floorY ?? nodeFloorY;
-        const dx = node.x - prev.x;
-        const dz = node.z - prev.z;
-        const dist = Math.hypot(dx, dz);
-        if (dist > 0.25 && dist < Math.max(rad, prev.radius || 3.4) * 4.5) {
-          const prevRad = Math.max(2.0, prev.radius || 3.4);
-          const avgRad = (rad + prevRad) * 0.5;
-          const corridorW = avgRad * 1.72;
-          const yaw = Math.atan2(dx, dz);
-          const midX = -dx * 0.5;
-          const midY = (prevY - nodeFloorY) * 0.5;
-          const midZ = -dz * 0.5;
-
-          // 1. Continuous 3D Stone Corridor Floor, Side Walls & Vaulted Ceiling Arch
-          const corridorG = new THREE.Group();
-          corridorG.position.set(midX, midY, midZ);
-          corridorG.rotation.y = yaw;
-
-          const corrFloor = new THREE.Mesh(
-            new THREE.BoxGeometry(corridorW, 0.24, dist + 0.6),
-            mats.dark
-          );
-          corrFloor.position.y = floorYOff - 0.004;
-          corrFloor.receiveShadow = true;
-          corrFloor.userData.isGround = true;
-          corridorG.add(corrFloor);
-
-          const wallSegs = Math.max(1, Math.ceil(dist / 2.2));
-          for (let ws = 0; ws < wallSegs; ws++) {
-            const zOff = -dist * 0.5 + ((ws + 0.5) / wallSegs) * dist;
-            for (const side of [-1, 1]) {
-              const sideWall = new THREE.Mesh(
-                rockGeo,
-                (ws + (side > 0 ? 1 : 0)) % 2 === 0 ? mats.dark : mats.stone
-              );
-              sideWall.position.set(side * (avgRad * 0.94), ceilH * 0.48, zOff);
-              sideWall.scale.set(avgRad * 0.36, ceilH * 0.58, (dist / wallSegs) * 0.68 + 0.45);
-              corridorG.add(sideWall);
-            }
-            const corrRoof = new THREE.Mesh(rockGeo, mats.stone);
-            corrRoof.position.set(0, ceilH + 0.12, zOff);
-            corrRoof.scale.set(avgRad * 0.96, 0.52, (dist / wallSegs) * 0.68 + 0.45);
-            corridorG.add(corrRoof);
-          }
-          nodeG.add(corridorG);
-
-          // 2. Continuous X-Ray See-Through Arched Tunnel Tube + Floor Ribbon
-          const xCorrGroup = new THREE.Group();
-          xCorrGroup.position.set(midX, midY, midZ);
-          xCorrGroup.rotation.y = yaw;
-
-          const corridorPlane = new THREE.Mesh(
-            new THREE.PlaneGeometry(corridorW * 0.96, dist, 2, 4),
-            xRayFloorDiscMat
-          );
-          corridorPlane.rotation.x = -Math.PI / 2;
-          corridorPlane.position.y = 0.085;
-          markXRayMesh(corridorPlane, 41);
-          xCorrGroup.add(corridorPlane);
-
-          // Half-cylinder arched tunnel tube along local Z
-          const tubeGeo = new THREE.CylinderGeometry(
-            avgRad * 0.94,
-            avgRad * 0.94,
-            dist,
-            12,
-            2,
-            true,
-            -Math.PI * 0.5,
-            Math.PI
-          );
-          tubeGeo.rotateX(Math.PI / 2);
-          const xTubeShell = new THREE.Mesh(
-            tubeGeo,
-            isNearWall ? xRayWarnDomeMat : xRaySafeDomeMat
-          );
-          xTubeShell.scale.y = ceilH / Math.max(1, avgRad);
-          markXRayMesh(xTubeShell, 41);
-
-          const xTubeWire = new THREE.Mesh(
-            tubeGeo,
-            isThinWall ? xRayThinSkinWireMat : isNearWall ? xRayWarnWireMat : xRaySafeWireMat
-          );
-          xTubeWire.scale.y = ceilH / Math.max(1, avgRad);
-          markXRayMesh(xTubeWire, 43);
-
-          xCorrGroup.add(xTubeShell, xTubeWire);
-          xRayNodeG.add(xCorrGroup);
-        }
-      }
-
-      // Ring of craggy cave wall ribs & vaulted ceiling arch segments around the chamber
-      const wallPillars = 7;
-      for (let k = 0; k < wallPillars; k++) {
-        const ang = (k / wallPillars) * Math.PI * 2 + nIdx * 0.4;
-        const wx = Math.cos(ang) * (rad * 0.96);
-        const wz = Math.sin(ang) * (rad * 0.96);
-        // Leave entrance portal open on the first node facing outward
-        if (nIdx === 0 && Math.abs(ang - Math.PI * 0.5) < 0.55) continue;
-        const wallRock = new THREE.Mesh(rockGeo, k % 2 === 0 ? mats.dark : mats.stone);
-        wallRock.position.set(wx, ceilH * 0.48, wz);
-        wallRock.scale.set(rad * 0.38, ceilH * 0.58, rad * 0.38);
-        wallRock.rotation.y = ang;
-        nodeG.add(wallRock);
-      }
-
-      const roofCap = new THREE.Mesh(rockGeo, mats.stone);
-      roofCap.position.set(0, ceilH + 0.15, 0);
-      roofCap.scale.set(rad * 0.98, 0.55, rad * 0.98);
-      nodeG.add(roofCap);
-
-      // Proximity guide ring when carved chamber is within 1.8m of the exterior mountain surface
-      if (shellClearance < 1.8) {
-        const warnDome = new THREE.Mesh(
-          new THREE.SphereGeometry(rad * 0.98, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
-          thinShellMat
-        );
-        warnDome.scale.y = ceilH / Math.max(1, rad);
-        nodeG.add(warnDome);
-      }
-
-      // 1. Multi-Surface Moss Carpets
+      // Moss carpets
       const mossAmt = node.moss ?? cave.mossDensity ?? 0.65;
       if (mossAmt > 0.08) {
-        const mossCount = Math.max(1, Math.round(mossAmt * 5));
+        const mossCount = Math.max(1, Math.min(5, Math.round(mossAmt * 4)));
         for (let m = 0; m < mossCount; m++) {
           const ang = (m / mossCount) * Math.PI * 2 + nIdx * 1.1;
-          const dist = ((m * 0.37) % 0.65) * rad;
-          const pad = new THREE.Mesh(rockGeo, m % 2 === 0 ? mossMat : mossBrightMat);
-          pad.position.set(Math.cos(ang) * dist, 0.085 + (m % 3) * 0.004, Math.sin(ang) * dist);
-          pad.scale.set(0.65 + mossAmt * 0.55, 0.1, 0.55 + mossAmt * 0.5);
-          pad.rotation.y = ang;
-          nodeG.add(pad);
+          const dist = ((m * 0.37) % 0.68) * rad;
+          dummy.position.set(
+            node.x + Math.cos(ang) * dist,
+            nodeFloorY + 0.05 + (m % 3) * 0.004,
+            node.z + Math.sin(ang) * dist
+          );
+          dummy.rotation.set(0, ang, 0);
+          dummy.scale.set(0.65 + mossAmt * 0.5, 0.09, 0.55 + mossAmt * 0.48);
+          dummy.updateMatrix();
+          mossMatrices.push(dummy.matrix.clone());
         }
-        const xMossRing = new THREE.Mesh(
-          new THREE.RingGeometry(rad * 0.25, rad * Math.min(0.78, 0.32 + mossAmt * 0.42), 18),
-          xRayMossRingMat
-        );
-        xMossRing.rotation.x = -Math.PI / 2;
-        xMossRing.position.y = 0.12;
-        markXRayMesh(xMossRing, 44);
-        xRayNodeG.add(xMossRing);
       }
 
-      // 2. Reflective Cave Floor Water Puddles
+      // Reflective floor puddles (spaced gently to avoid clutter)
       const puddleAmt = node.puddle ?? cave.puddleDensity ?? 0.45;
-      if (puddleAmt > 0.08) {
+      if (puddleAmt > 0.12 && nIdx % 2 === 0) {
         const puddleDisc = new THREE.Mesh(
-          new THREE.CircleGeometry(Math.min(rad * 0.72, (0.75 + puddleAmt * 1.25) * (rad / 3.2)), 20),
+          new THREE.CircleGeometry(Math.min(rad * 0.66, (0.7 + puddleAmt * 1.1) * (rad / 3.2)), 18),
           puddleWaterMat
         );
         puddleDisc.rotation.x = -Math.PI / 2;
-        puddleDisc.position.set(0.15 * Math.sin(nIdx), 0.065 + (nIdx % 3) * 0.003, -0.15 * Math.cos(nIdx));
-        nodeG.add(puddleDisc);
+        puddleDisc.position.set(
+          node.x + 0.15 * Math.sin(nIdx),
+          nodeFloorY + 0.04 + (nIdx % 3) * 0.003,
+          node.z - 0.15 * Math.cos(nIdx)
+        );
+        tunnelGroup.add(puddleDisc);
       }
 
-      // 3. Subterranean Cave Grass Tufts
+      // Cave grass tufts (instanced)
       const grassAmt = node.grass ?? cave.grassDensity ?? 0.25;
       if (grassAmt > 0.08) {
-        const tuftCount = Math.max(2, Math.round(grassAmt * 7));
+        const tuftCount = Math.max(1, Math.min(5, Math.round(grassAmt * 4)));
         for (let gi = 0; gi < tuftCount; gi++) {
           const ang = (gi / tuftCount) * Math.PI * 2 + nIdx * 0.7;
-          const dist = (0.25 + ((gi * 0.29) % 0.55)) * rad;
-          spawnCaveGrassTuft(nodeG, Math.cos(ang) * dist, 0.03, Math.sin(ang) * dist, 0.85 + (gi % 3) * 0.2, gi + nIdx);
+          const dist = (0.28 + ((gi * 0.29) % 0.52)) * rad;
+          const gx = node.x + Math.cos(ang) * dist;
+          const gz = node.z + Math.sin(ang) * dist;
+          const sc = 0.82 + (gi % 3) * 0.2;
+          for (let b = 0; b < 3; b++) {
+            const bAng = (b / 3) * Math.PI * 2 + gi + nIdx;
+            dummy.position.set(
+              gx + Math.cos(bAng) * 0.08 * sc,
+              nodeFloorY + 0.16 * sc,
+              gz + Math.sin(bAng) * 0.08 * sc
+            );
+            dummy.rotation.set(Math.sin(bAng) * 0.25, bAng, Math.cos(bAng) * 0.25);
+            dummy.scale.setScalar(sc);
+            dummy.updateMatrix();
+            grassMatrices.push(dummy.matrix.clone());
+          }
         }
       }
 
-      // 4. Ceiling Stalactites & Floor Stalagmites
+      // Ceiling stalactites (instanced)
       const stalAmt = node.stalactites ?? cave.stalactiteDensity ?? 0.65;
-      const stalCount = Math.round(stalAmt * 6);
+      const stalCount = Math.min(6, Math.round(stalAmt * 5));
       for (let si = 0; si < stalCount; si++) {
         const ang = (si / Math.max(1, stalCount)) * Math.PI * 2 + nIdx * 0.9;
-        const dist = (0.2 + ((si * 0.31) % 0.6)) * rad;
-        const st = new THREE.Mesh(stGeo, mats.dark);
-        st.position.set(Math.cos(ang) * dist, ceilH - 0.32, Math.sin(ang) * dist);
-        st.rotation.x = Math.PI;
-        st.scale.setScalar(0.75 + (si % 3) * 0.24);
-        nodeG.add(st);
+        const dist = (0.18 + ((si * 0.31) % 0.56)) * rad;
+        const sc = 0.75 + (si % 3) * 0.26;
+        dummy.position.set(
+          node.x + Math.cos(ang) * dist,
+          nodeFloorY + ceilH * (0.94 - (dist / rad) * 0.18) - 0.25,
+          node.z + Math.sin(ang) * dist
+        );
+        dummy.rotation.set(Math.PI, ang, 0);
+        dummy.scale.set(sc, sc * 1.15, sc);
+        dummy.updateMatrix();
+        stalactiteMatrices.push(dummy.matrix.clone());
       }
 
+      // Floor stalagmites (instanced)
       const stagAmt = node.stalagmites ?? cave.stalagmiteDensity ?? 0.5;
-      const stagCount = Math.round(stagAmt * 4);
+      const stagCount = Math.min(4, Math.round(stagAmt * 3.5));
       for (let smi = 0; smi < stagCount; smi++) {
         const ang = (smi / Math.max(1, stagCount)) * Math.PI * 2 + nIdx * 1.4 + 0.5;
-        const dist = (0.45 + ((smi * 0.23) % 0.38)) * rad;
-        const sm = new THREE.Mesh(smGeo, mats.dark);
-        sm.position.set(Math.cos(ang) * dist, 0.44, Math.sin(ang) * dist);
-        sm.scale.setScalar(0.72 + (smi % 3) * 0.22);
-        nodeG.add(sm);
+        const dist = (0.58 + ((smi * 0.19) % 0.28)) * rad;
+        const sc = 0.72 + (smi % 3) * 0.22;
+        dummy.position.set(
+          node.x + Math.cos(ang) * dist,
+          nodeFloorY + 0.4 * sc,
+          node.z + Math.sin(ang) * dist
+        );
+        dummy.rotation.set(0, ang, 0);
+        dummy.scale.set(sc, sc * 1.08, sc);
+        dummy.updateMatrix();
+        stalagmiteMatrices.push(dummy.matrix.clone());
       }
 
-      // 5. Glowing Crystal Clusters
+      // Glowing crystal clusters (instanced)
       const cryAmt = node.crystals ?? cave.crystalDensity ?? 0.5;
-      const cryCount = Math.round(cryAmt * 5);
+      const cryCount = Math.min(4, Math.round(cryAmt * 3.5));
       for (let ci = 0; ci < cryCount; ci++) {
         const ang = (ci / Math.max(1, cryCount)) * Math.PI * 2 + nIdx * 1.9;
-        const dist = (0.35 + ((ci * 0.27) % 0.48)) * rad;
-        const crys = new THREE.Mesh(cryGeo, crystalMat);
-        crys.position.set(Math.cos(ang) * dist, 0.42 + (ci % 2) * 0.2, Math.sin(ang) * dist);
-        crys.scale.set(0.75, 1.55, 0.75);
-        crys.rotation.set(0.2, ang, 0.18);
-        nodeG.add(crys);
-
-        const xCrys = new THREE.Mesh(cryGeo, xRayCrystalMarkerMat);
-        xCrys.position.copy(crys.position);
-        xCrys.scale.copy(crys.scale);
-        xCrys.rotation.copy(crys.rotation);
-        markXRayMesh(xCrys, 45);
-        xRayNodeG.add(xCrys);
+        const dist = (0.55 + ((ci * 0.23) % 0.32)) * rad;
+        dummy.position.set(
+          node.x + Math.cos(ang) * dist,
+          nodeFloorY + 0.38 + (ci % 2) * 0.18,
+          node.z + Math.sin(ang) * dist
+        );
+        dummy.rotation.set(0.2, ang, 0.18);
+        dummy.scale.set(0.75, 1.55, 0.75);
+        dummy.updateMatrix();
+        crystalMatrices.push(dummy.matrix.clone());
       }
 
-      // 6. Ceiling Drips -> Puddles Below
-      const hasDrips = node.hasDrips ?? (cave.hasCeilingDrips !== false);
-      if (hasDrips && (cave.dripRate ?? 0.6) > 0.05) {
-        const dripsInNode = Math.max(1, Math.round((cave.dripRate ?? 0.6) * 2.5));
+      // Animated ceiling drips (capped sensibly per tunnel)
+      const hasDrips = node.hasDrips ?? cave.hasCeilingDrips !== false;
+      if (hasDrips && (cave.dripRate ?? 0.6) > 0.05 && nIdx % 2 === 0) {
+        const dripsInNode = Math.max(1, Math.min(2, Math.round((cave.dripRate ?? 0.6) * 2)));
         for (let di = 0; di < dripsInNode; di++) {
           const ang = di * 2.2 + nIdx * 1.3;
-          const dist = (0.12 + (di % 3) * 0.2) * rad;
-          const lx = Math.cos(ang) * dist;
-          const lz = Math.sin(ang) * dist;
+          const dist = (0.14 + (di % 3) * 0.2) * rad;
+          const wx = node.x + Math.cos(ang) * dist;
+          const wz = node.z + Math.sin(ang) * dist;
           spawnCeilingDrip(
-            nodeG,
-            lx,
-            ceilH - 0.35,
-            0.02,
-            lz,
-            node.x + lx,
-            node.z + lz,
+            tunnelGroup,
+            wx,
+            nodeFloorY + ceilH - 0.35,
+            nodeFloorY + 0.02,
+            wz,
+            wx,
+            wz,
             cave.dripRate ?? 0.6,
             nIdx * 1.7 + di * 2.3
           );
         }
       }
 
-      // 7. Upside-Down Hanging Bats with Scare & Fly-Away Rule
+      // Upside-down hanging bats
       const nodeBats =
         typeof node.batCount === 'number'
           ? node.batCount
           : node.hasBats || cave.hasHangingBats !== false
-          ? Math.max(1, Math.round((cave.batCount ?? 5) / Math.max(1, cave.tunnelNodes!.length)))
+          ? Math.max(
+              0,
+              Math.min(
+                2,
+                Math.round((cave.batCount ?? 5) / Math.max(1, cave.tunnelNodes!.length))
+              )
+            )
           : 0;
       for (let bi = 0; bi < nodeBats; bi++) {
         const ang = (bi / Math.max(1, nodeBats)) * Math.PI * 2 + nIdx * 1.5;
-        const dist = (0.18 + ((bi * 0.27) % 0.45)) * rad;
-        const lx = Math.cos(ang) * dist;
-        const lz = Math.sin(ang) * dist;
-        const hangY = ceilH - 0.38;
+        const dist = (0.16 + ((bi * 0.25) % 0.4)) * rad;
+        const wx = node.x + Math.cos(ang) * dist;
+        const wz = node.z + Math.sin(ang) * dist;
+        const hangY = nodeFloorY + ceilH - 0.38;
         spawnHangingBat(
-          nodeG,
+          tunnelGroup,
           cave.id,
-          lx,
+          wx,
           hangY,
-          lz,
-          node.x + lx,
-          nodeFloorY + hangY,
-          node.z + lz,
+          wz,
+          wx,
+          hangY,
+          wz,
           cave.batScareRadius ?? 6.5,
           nIdx * 2.1 + bi * 1.4
         );
       }
 
-      // 8. Flickering Cave Wall Torches
+      // Flickering cave wall torches (cap dynamic PointLights to keep WebGPU light count fast!)
       const wantsTorch =
         Boolean(node.hasTorch) ||
-        ((cave.torchCount ?? 2) > 0 && nIdx % Math.max(1, Math.floor(cave.tunnelNodes!.length / Math.max(1, cave.torchCount ?? 2))) === 0);
+        ((cave.torchCount ?? 2) > 0 &&
+          nIdx % Math.max(2, Math.floor(cave.tunnelNodes!.length / Math.max(1, cave.torchCount ?? 2))) === 0);
       if (wantsTorch) {
         const tAng = nIdx * 1.8 + 0.6;
-        const tx = Math.cos(tAng) * (rad * 0.76);
-        const tz = Math.sin(tAng) * (rad * 0.76);
+        const tx = node.x + Math.cos(tAng) * (rad * 0.84);
+        const tz = node.z + Math.sin(tAng) * (rad * 0.84);
+        const addLight = torchLightCount < 3;
+        if (addLight) torchLightCount++;
         addWallTorch(
-          nodeG,
+          tunnelGroup,
           tx,
-          Math.min(ceilH * 0.62, 2.15),
+          nodeFloorY + Math.min(ceilH * 0.58, 2.05),
           tz,
           -Math.cos(tAng),
           -Math.sin(tAng),
           flameMeshes,
           torchLights,
-          nIdx < 4,
+          addLight,
           nIdx * 1.9
         );
       }
-
-      tunnelGroup.add(nodeG);
-      xRayTunnelGroup.add(xRayNodeG);
     });
+
+    const addInstancedBatch = (
+      geo: THREE.BufferGeometry,
+      mat: THREE.Material,
+      matrices: THREE.Matrix4[],
+      castShadow = false
+    ) => {
+      if (matrices.length === 0) {
+        geo.dispose();
+        return;
+      }
+      const inst = new THREE.InstancedMesh(geo, mat, matrices.length);
+      for (let i = 0; i < matrices.length; i++) {
+        inst.setMatrixAt(i, matrices[i]);
+      }
+      inst.instanceMatrix.needsUpdate = true;
+      inst.computeBoundingSphere();
+      inst.castShadow = castShadow;
+      inst.receiveShadow = true;
+      tunnelGroup.add(inst);
+    };
+
+    addInstancedBatch(createFacetedRockGeometry(1.0, 1.0, 1.0, 1.0, 73), mossMat, mossMatrices);
+    addInstancedBatch(new THREE.ConeGeometry(0.17, 0.88, 7), mats.dark, stalactiteMatrices);
+    addInstancedBatch(new THREE.ConeGeometry(0.21, 0.98, 7), mats.dark, stalagmiteMatrices);
+    addInstancedBatch(new THREE.OctahedronGeometry(0.26, 0), crystalMat, crystalMatrices);
+    addInstancedBatch(new THREE.ConeGeometry(0.06, 0.42, 4), caveGrassMat, grassMatrices);
 
     registerXRayOverlay(xRayTunnelGroup);
     tunnelGroup.add(xRayTunnelGroup);
@@ -5991,21 +5994,23 @@ function buildCavesGroup(
     const archSharp = cave.archSharpness ?? 0.45;
     const hasCarvedTunnel = Boolean(cave.tunnelNodes && cave.tunnelNodes.length > 0);
 
-    // X-Ray see-through interior overlay for standard cave grotto
-    const grottoXRayG = new THREE.Group();
-    const grottoDomeGeo = new THREE.SphereGeometry(1.65 * Math.max(cw, cd), 14, 9, 0, Math.PI * 2, 0, Math.PI * 0.52);
-    const grottoXDome = new THREE.Mesh(grottoDomeGeo, xRaySafeDomeMat);
-    grottoXDome.position.set(0, 0.1, -0.95 * cd);
-    grottoXDome.scale.set(cw / Math.max(cw, cd), (1.8 * eh) / Math.max(1, 1.65 * Math.max(cw, cd)), cd / Math.max(cw, cd));
-    const grottoXWire = new THREE.Mesh(grottoDomeGeo, xRaySafeWireMat);
-    grottoXWire.position.copy(grottoXDome.position);
-    grottoXWire.scale.copy(grottoXDome.scale);
-    const grottoXFloor = new THREE.Mesh(new THREE.CircleGeometry(1.45 * Math.min(cw, cd), 20), xRayFloorDiscMat);
-    grottoXFloor.rotation.x = -Math.PI / 2;
-    grottoXFloor.position.set(0, 0.09, -0.9 * cd);
-    grottoXRayG.add(grottoXDome, grottoXWire, grottoXFloor);
-    registerXRayOverlay(grottoXRayG);
-    g.add(grottoXRayG);
+    // X-Ray see-through interior overlay for standard non-tunnel grotto (carved tunnels draw their own unified continuous X-ray vault!)
+    if (!hasCarvedTunnel) {
+      const grottoXRayG = new THREE.Group();
+      const grottoDomeGeo = new THREE.SphereGeometry(1.65 * Math.max(cw, cd), 14, 9, 0, Math.PI * 2, 0, Math.PI * 0.52);
+      const grottoXDome = new THREE.Mesh(grottoDomeGeo, xRaySafeDomeMat);
+      grottoXDome.position.set(0, 0.1, -0.95 * cd);
+      grottoXDome.scale.set(cw / Math.max(cw, cd), (1.8 * eh) / Math.max(1, 1.65 * Math.max(cw, cd)), cd / Math.max(cw, cd));
+      const grottoXWire = new THREE.Mesh(grottoDomeGeo, xRaySafeWireMat);
+      grottoXWire.position.copy(grottoXDome.position);
+      grottoXWire.scale.copy(grottoXDome.scale);
+      const grottoXFloor = new THREE.Mesh(new THREE.CircleGeometry(1.45 * Math.min(cw, cd), 20), xRayFloorDiscMat);
+      grottoXFloor.rotation.x = -Math.PI / 2;
+      grottoXFloor.position.set(0, 0.09, -0.9 * cd);
+      grottoXRayG.add(grottoXDome, grottoXWire, grottoXFloor);
+      registerXRayOverlay(grottoXRayG);
+      g.add(grottoXRayG);
+    }
 
     const pillarGeo = createFacetedRockGeometry(1.45, 1.0, 1.0, 1.0, 31);
     const leftP = new THREE.Mesh(pillarGeo, mats.stone);
@@ -8498,9 +8503,41 @@ export function buildWeatherParticles(weather: GameLevel['weather']): THREE.Poin
   return pts;
 }
 
+const OWNED_TEXTURE_KEYS = [
+  'map',
+  'normalMap',
+  'roughnessMap',
+  'metalnessMap',
+  'bumpMap',
+  'emissiveMap',
+  'aoMap',
+  'alphaMap',
+] as const;
+
 export function disposeObject3D(root: THREE.Object3D) {
   const disposedGeometries = new Set<THREE.BufferGeometry>();
   const disposedMaterials = new Set<THREE.Material>();
+  const disposedTextures = new Set<THREE.Texture>();
+
+  const disposeMaterialSafe = (mat: THREE.Material) => {
+    if (disposedMaterials.has(mat)) return;
+    disposedMaterials.add(mat);
+    const matRec = mat as unknown as Record<string, unknown>;
+    for (let i = 0; i < OWNED_TEXTURE_KEYS.length; i++) {
+      const candidate = matRec[OWNED_TEXTURE_KEYS[i]];
+      if (
+        candidate &&
+        typeof candidate === 'object' &&
+        (candidate as THREE.Texture).isTexture &&
+        (candidate as THREE.Texture).userData?.ownedByMaterial === true &&
+        !disposedTextures.has(candidate as THREE.Texture)
+      ) {
+        disposedTextures.add(candidate as THREE.Texture);
+        (candidate as THREE.Texture).dispose();
+      }
+    }
+    mat.dispose();
+  };
 
   root.traverse((obj) => {
     if (typeof obj.userData?.disposeExtra === 'function') {
@@ -8512,22 +8549,25 @@ export function disposeObject3D(root: THREE.Object3D) {
     if ((obj as THREE.BatchedMesh).isBatchedMesh) {
       (obj as THREE.BatchedMesh).dispose?.();
     }
-    if ((obj as THREE.Mesh).isMesh || (obj as THREE.Points).isPoints) {
-      const mesh = obj as THREE.Mesh;
-      if (mesh.geometry && !disposedGeometries.has(mesh.geometry)) {
-        disposedGeometries.add(mesh.geometry);
-        mesh.geometry.dispose();
+    if (
+      (obj as THREE.Mesh).isMesh ||
+      (obj as THREE.Points).isPoints ||
+      (obj as THREE.Line).isLine ||
+      (obj as THREE.Sprite).isSprite
+    ) {
+      const renderable = obj as THREE.Mesh | THREE.Points | THREE.Line | THREE.Sprite;
+      const geom = (renderable as { geometry?: THREE.BufferGeometry }).geometry;
+      if (geom && !disposedGeometries.has(geom)) {
+        disposedGeometries.add(geom);
+        geom.dispose();
       }
-      if (Array.isArray(mesh.material)) {
-        for (const m of mesh.material) {
-          if (m && !disposedMaterials.has(m)) {
-            disposedMaterials.add(m);
-            m.dispose();
-          }
+      const mat = renderable.material;
+      if (Array.isArray(mat)) {
+        for (const m of mat) {
+          if (m) disposeMaterialSafe(m);
         }
-      } else if (mesh.material && !disposedMaterials.has(mesh.material)) {
-        disposedMaterials.add(mesh.material);
-        mesh.material.dispose();
+      } else if (mat) {
+        disposeMaterialSafe(mat);
       }
     }
   });

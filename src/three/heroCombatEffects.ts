@@ -62,7 +62,7 @@ export class HeroCombatEffectsController {
     this.shardGeo = new THREE.OctahedronGeometry(0.14, 0);
     this.puffGeo = new THREE.DodecahedronGeometry(0.16, 0);
 
-    const maxMotes = 130;
+    const maxMotes = 48;
     for (let i = 0; i < maxMotes; i++) {
       const geo = i % 3 === 0 ? this.shardGeo : i % 3 === 1 ? this.puffGeo : this.sphereGeo;
       const mat = new THREE.MeshBasicMaterial({
@@ -72,7 +72,10 @@ export class HeroCombatEffectsController {
         depthWrite: false,
       });
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.visible = false;
+      mesh.visible = true;
+      mesh.frustumCulled = false;
+      mesh.position.set(0, -500, 0);
+      mesh.scale.setScalar(0.0001);
       this.container.add(mesh);
       this.motes.push({
         mesh,
@@ -87,7 +90,7 @@ export class HeroCombatEffectsController {
       });
     }
 
-    const maxArcs = 14;
+    const maxArcs = 10;
     for (let i = 0; i < maxArcs; i++) {
       const positions = new Float32Array(8 * 3);
       const geo = new THREE.BufferGeometry();
@@ -99,7 +102,7 @@ export class HeroCombatEffectsController {
         opacity: 0,
       });
       const line = new THREE.Line(geo, mat);
-      line.visible = false;
+      line.visible = true;
       line.frustumCulled = false;
       this.container.add(line);
       this.arcs.push({ line, mat, posAttr, age: 0, life: 0.16, active: false });
@@ -132,7 +135,6 @@ export class HeroCombatEffectsController {
       m.mesh.scale.setScalar(startScale);
       m.mat.color.set(colorHex);
       m.mat.opacity = 0.9;
-      m.mesh.visible = true;
       return;
     }
   }
@@ -173,7 +175,6 @@ export class HeroCombatEffectsController {
       a.posAttr.needsUpdate = true;
       a.mat.color.set(colorHex);
       a.mat.opacity = 0.96;
-      a.line.visible = true;
       return;
     }
   }
@@ -334,7 +335,7 @@ export class HeroCombatEffectsController {
   }
 
   public emitBossDeathBurst(bx: number, by: number, bz: number, primaryHex = '#EA580C', accentHex = '#FBBF24') {
-    for (let i = 0; i < 28; i++) {
+    for (let i = 0; i < 12; i++) {
       const ang = Math.random() * Math.PI * 2;
       const spd = 1.4 + Math.random() * 4.2;
       const isSmoke = i % 3 === 0;
@@ -384,7 +385,9 @@ export class HeroCombatEffectsController {
       m.age += dt;
       if (m.age >= m.life) {
         m.active = false;
-        m.mesh.visible = false;
+        m.mat.opacity = 0;
+        m.mesh.scale.setScalar(0.0001);
+        m.mesh.position.set(0, -500, 0);
         continue;
       }
       const u = m.age / m.life;
@@ -400,7 +403,7 @@ export class HeroCombatEffectsController {
       a.age += dt;
       if (a.age >= a.life) {
         a.active = false;
-        a.line.visible = false;
+        a.mat.opacity = 0;
         continue;
       }
       a.mat.opacity = 1 - a.age / a.life;
@@ -410,11 +413,13 @@ export class HeroCombatEffectsController {
   public clear() {
     for (const m of this.motes) {
       m.active = false;
-      m.mesh.visible = false;
+      m.mat.opacity = 0;
+      m.mesh.scale.setScalar(0.0001);
+      m.mesh.position.set(0, -500, 0);
     }
     for (const a of this.arcs) {
       a.active = false;
-      a.line.visible = false;
+      a.mat.opacity = 0;
     }
   }
 
