@@ -35,6 +35,7 @@ import {
   primeCustomTextureCanvas,
 } from '../three/customTextureManager';
 import { measurePersistence, measureStateUpdate } from '../utils/resourceMonitor';
+import { HERO_START_ENTITY_ID } from '../types/maker';
 import type {
   AssetCategory,
   BehaviorCard,
@@ -92,6 +93,7 @@ import type {
   TerrainBrushFalloff,
   TerrainBrushOptions,
   TerrainData,
+  TerrainQualityTier,
   TreeSpeciesType,
   VertexPaintStroke,
   ViewportResolutionScale,
@@ -497,6 +499,7 @@ function loadInitialTheme(): StudioTheme {
 function loadInitialViewportQuality(): {
   resolutionScale: ViewportResolutionScale;
   shadowQuality: ViewportShadowQuality;
+  terrainQuality: TerrainQualityTier;
 } {
   try {
     const raw = localStorage.getItem(VIEWPORT_QUALITY_KEY);
@@ -504,6 +507,7 @@ function loadInitialViewportQuality(): {
       const parsed = JSON.parse(raw) as {
         resolutionScale?: number;
         shadowQuality?: string;
+        terrainQuality?: string;
       };
       const validScales: ViewportResolutionScale[] = [0.5, 0.75, 1, 1.25, 1.5];
       const resolutionScale = validScales.includes(parsed.resolutionScale as ViewportResolutionScale)
@@ -513,12 +517,16 @@ function loadInitialViewportQuality(): {
       const shadowQuality = validShadows.includes(parsed.shadowQuality as ViewportShadowQuality)
         ? (parsed.shadowQuality as ViewportShadowQuality)
         : 'medium';
-      return { resolutionScale, shadowQuality };
+      const validTerrainQualities: TerrainQualityTier[] = ['performance', 'balanced', 'ultra'];
+      const terrainQuality = validTerrainQualities.includes(parsed.terrainQuality as TerrainQualityTier)
+        ? (parsed.terrainQuality as TerrainQualityTier)
+        : 'balanced';
+      return { resolutionScale, shadowQuality, terrainQuality };
     }
   } catch {
     // ignore
   }
-  return { resolutionScale: 1, shadowQuality: 'medium' };
+  return { resolutionScale: 1, shadowQuality: 'medium', terrainQuality: 'balanced' };
 }
 
 export function useMakerStore() {
@@ -529,6 +537,9 @@ export function useMakerStore() {
   );
   const [viewportShadowQuality, setViewportShadowQuality] = useState<ViewportShadowQuality>(
     () => loadInitialViewportQuality().shadowQuality
+  );
+  const [terrainQuality, setTerrainQuality] = useState<TerrainQualityTier>(
+    () => loadInitialViewportQuality().terrainQuality
   );
   const [customAssets, setCustomAssets] = useState<CustomAssetMeta[]>([]);
   const [customTextures, setCustomTextures] = useState<CustomTextureAssetMeta[]>([]);
@@ -781,12 +792,13 @@ export function useMakerStore() {
         JSON.stringify({
           resolutionScale: viewportResolutionScale,
           shadowQuality: viewportShadowQuality,
+          terrainQuality,
         })
       );
     } catch {
       // ignore
     }
-  }, [viewportResolutionScale, viewportShadowQuality]);
+  }, [viewportResolutionScale, viewportShadowQuality, terrainQuality]);
 
   useEffect(() => {
     let active = true;
@@ -2769,6 +2781,19 @@ export function useMakerStore() {
 
   const moveEntity = useCallback(
     (id: string, pos: { x: number; y: number }, recordUndo = false, elevationY?: number) => {
+      if (id === HERO_START_ENTITY_ID) {
+        setPlayFromPoint(null);
+        updateLevel(
+          'move hero',
+          (lvl) => ({
+            ...lvl,
+            hasStart: true,
+            startPoint: pos,
+          }),
+          recordUndo
+        );
+        return;
+      }
       updateEntity(
         id,
         'move item',
@@ -2780,7 +2805,23 @@ export function useMakerStore() {
         recordUndo
       );
     },
-    [updateEntity]
+    [updateEntity, updateLevel]
+  );
+
+  const rotateHeroStart = useCallback(
+    (rotationDeg: number, recordUndo = false) => {
+      const normalized = ((Math.round(rotationDeg) % 360) + 360) % 360;
+      updateLevel(
+        'rotate hero',
+        (lvl) => ({
+          ...lvl,
+          hasStart: true,
+          startRotation: normalized,
+        }),
+        recordUndo
+      );
+    },
+    [updateLevel]
   );
 
   const deleteEntity = useCallback(
@@ -4014,6 +4055,8 @@ export function useMakerStore() {
     setViewportResolutionScale,
     viewportShadowQuality,
     setViewportShadowQuality,
+    terrainQuality,
+    setTerrainQuality,
     showingAssetVault,
     setShowingAssetVault,
     showingPresets,
@@ -4308,6 +4351,7 @@ export function useMakerStore() {
     addMechanicalEntityToLevel,
     updateEntity,
     moveEntity,
+    rotateHeroStart,
     deleteEntity,
     addEmptyCard,
     applyRecipe,

@@ -1,6 +1,8 @@
 import type {
   BoardPoint,
   CaveGrotto,
+  CaveSurfacePresetId,
+  CaveTunnelNode,
   DirtAndRoadConfig,
   EnvironmentType,
   GameLevel,
@@ -23,6 +25,11 @@ import type {
   WaterBodyConfig,
 } from '../types/maker';
 export type { SidePlatformSegment, WallColliderBox } from '../types/maker';
+import {
+  applyProceduralTerrainStamp,
+  createDefaultProceduralConfig,
+  normalizeProceduralConfig,
+} from './proceduralTerrain';
 
 export function createDefaultMountainConfig(): MountainProfileConfig {
   return {
@@ -39,17 +46,20 @@ export function createDefaultMountainConfig(): MountainProfileConfig {
 
 export function createDefaultDirtAndRoadConfig(): DirtAndRoadConfig {
   return {
-    heroColor: '#9C734B',
-    secondaryColor: '#6F4F32',
+    heroColor: '#765239',
+    secondaryColor: '#523724',
+    shoreEarthColor: '#5C3E2B',
     noiseKind: 'fineLoam',
-    noiseContrast: 0.48,
-    bumpStrength: 0.55,
-    degradeAmount: 0.28,
-    pebbleDensity: 0.55,
-    pebbleSpread: 0.65,
-    pebbleShapeRandomness: 0.62,
+    noiseContrast: 0.56,
+    bumpStrength: 0.65,
+    degradeAmount: 0.34,
+    puddleDensity: 0.48,
+    puddleScale: 1.0,
+    pebbleDensity: 0.68,
+    pebbleSpread: 0.68,
+    pebbleShapeRandomness: 0.66,
     pebbleColor: '#8B877E',
-    pebbleHueVariance: 0.28,
+    pebbleHueVariance: 0.3,
     defaultRoadWidth: 2.4,
     defaultRoadRecess: 0.32,
     defaultRoadBankAngle: 0.5,
@@ -116,6 +126,84 @@ export function createDefaultWaterBodies(): WaterBodyConfig[] {
   ];
 }
 
+export function applyCaveSurfacePresetValues(
+  preset: CaveSurfacePresetId
+): Partial<CaveGrotto> {
+  switch (preset) {
+    case 'crystalSanctum':
+      return {
+        surfacePreset: 'crystalSanctum',
+        mossDensity: 0.25,
+        puddleDensity: 0.35,
+        grassDensity: 0.08,
+        stalactiteDensity: 0.85,
+        stalagmiteDensity: 0.75,
+        crystalDensity: 1.35,
+        crystalColor: '#38BDF8',
+        hasCeilingDrips: true,
+        dripRate: 0.75,
+        hasHangingBats: true,
+      };
+    case 'floodedPuddle':
+      return {
+        surfacePreset: 'floodedPuddle',
+        mossDensity: 0.72,
+        puddleDensity: 1.35,
+        grassDensity: 0.22,
+        stalactiteDensity: 0.9,
+        stalagmiteDensity: 0.6,
+        crystalDensity: 0.4,
+        hasSpring: true,
+        springFlow: 1.1,
+        hasCeilingDrips: true,
+        dripRate: 1.65,
+      };
+    case 'stalactiteVault':
+      return {
+        surfacePreset: 'stalactiteVault',
+        mossDensity: 0.2,
+        puddleDensity: 0.3,
+        grassDensity: 0.0,
+        stalactiteDensity: 1.45,
+        stalagmiteDensity: 1.35,
+        crystalDensity: 0.25,
+        hasCeilingDrips: true,
+        dripRate: 0.95,
+        hasHangingBats: true,
+        batCount: 10,
+      };
+    case 'lushGrotto':
+      return {
+        surfacePreset: 'lushGrotto',
+        mossDensity: 1.35,
+        puddleDensity: 0.75,
+        grassDensity: 1.2,
+        stalactiteDensity: 0.55,
+        stalagmiteDensity: 0.45,
+        crystalDensity: 0.5,
+        crystalColor: '#4ADE80',
+        hasCeilingDrips: true,
+        dripRate: 1.15,
+      };
+    case 'mossyDrip':
+    default:
+      return {
+        surfacePreset: 'mossyDrip',
+        mossDensity: 0.78,
+        puddleDensity: 0.65,
+        grassDensity: 0.35,
+        stalactiteDensity: 0.75,
+        stalagmiteDensity: 0.65,
+        crystalDensity: 0.45,
+        crystalColor: '#5EEAD4',
+        hasCeilingDrips: true,
+        dripRate: 1.1,
+        hasHangingBats: true,
+        batCount: 6,
+      };
+  }
+}
+
 export function normalizeCaveGrotto(cave: CaveGrotto, index = 0): CaveGrotto {
   return {
     ...cave,
@@ -125,12 +213,24 @@ export function normalizeCaveGrotto(cave: CaveGrotto, index = 0): CaveGrotto {
     archSharpness: cave.archSharpness ?? 0.5,
     cavityDepth: cave.cavityDepth ?? 1.0,
     cavityWidth: cave.cavityWidth ?? 1.0,
+    surfacePreset: cave.surfacePreset ?? 'mossyDrip',
+    mossDensity: cave.mossDensity ?? 0.72,
+    puddleDensity: cave.puddleDensity ?? 0.6,
+    grassDensity: cave.grassDensity ?? 0.3,
     stalactiteDensity: cave.stalactiteDensity ?? 0.65,
     stalagmiteDensity: cave.stalagmiteDensity ?? 0.55,
     crystalDensity: cave.crystalDensity ?? 0.35,
     crystalColor: cave.crystalColor ?? '#5EEAD4',
     hasSpring: cave.hasSpring ?? false,
     springFlow: cave.springFlow ?? 0.65,
+    hasCeilingDrips: cave.hasCeilingDrips ?? true,
+    dripRate: cave.dripRate ?? 1.0,
+    hasHangingBats: cave.hasHangingBats ?? true,
+    batCount: cave.batCount ?? 6,
+    batScareRadius: cave.batScareRadius ?? 6.5,
+    torchCount: cave.torchCount ?? 4,
+    floorElevation: cave.floorElevation,
+    tunnelNodes: cave.tunnelNodes,
   };
 }
 
@@ -245,6 +345,42 @@ export function isLocalInsideMountainCave(lx: number, lz: number, pad = 0): bool
 export function isInsideMountainCave(x: number, z: number): boolean {
   const { lx, lz } = toMountainCaveLocal(x, z);
   return isLocalInsideMountainCave(lx, lz, 0.25);
+}
+
+export function isInsideCarvedCave(
+  terrain: TerrainData | undefined | null,
+  x: number,
+  z: number,
+  pad = 0
+): { inside: boolean; floorY: number; ceilingY: number; caveId?: string } {
+  if (!terrain?.caves || terrain.caves.length === 0) {
+    return { inside: false, floorY: 0, ceilingY: 0 };
+  }
+  for (let ci = 0; ci < terrain.caves.length; ci++) {
+    const c = terrain.caves[ci];
+    const nodes = c.tunnelNodes;
+    if (nodes && nodes.length > 0) {
+      for (let ni = 0; ni < nodes.length; ni++) {
+        const nd = nodes[ni];
+        const d = Math.hypot(x - nd.x, z - nd.z);
+        if (d <= nd.radius + pad) {
+          const baseF = Math.max(IslandTerrain.waterLevel + 0.45, MountainCave.floorY);
+          return {
+            inside: true,
+            floorY: baseF,
+            ceilingY: baseF + (nd.height || 4.4),
+            caveId: c.id,
+          };
+        }
+      }
+    }
+  }
+  return { inside: false, floorY: 0, ceilingY: 0 };
+}
+
+export function isInsideAnyCave(terrain: TerrainData | undefined | null, x: number, z: number): boolean {
+  if (terrainHasMainMountainCave(terrain) && isInsideMountainCave(x, z)) return true;
+  return isInsideCarvedCave(terrain, x, z, 0.15).inside;
 }
 
 export function isNearMountainCaveEntrance(x: number, z: number): boolean {
@@ -2511,6 +2647,7 @@ export function createInitialTerrain(): TerrainData {
       ),
     ],
     mountainConfig: createDefaultMountainConfig(),
+    proceduralConfig: createDefaultProceduralConfig(),
     waterBodies: createDefaultWaterBodies(),
     dirtAndRoadConfig: createDefaultDirtAndRoadConfig(),
     roads: [],
@@ -2530,6 +2667,7 @@ export function ensureUpgradedTerrain(terrain: TerrainData | undefined): Terrain
   ) {
     if (
       terrain.mountainConfig &&
+      terrain.proceduralConfig &&
       terrain.waterBodies &&
       terrain.dirtAndRoadConfig &&
       terrain.roads &&
@@ -2540,6 +2678,7 @@ export function ensureUpgradedTerrain(terrain: TerrainData | undefined): Terrain
     return {
       ...terrain,
       mountainConfig: terrain.mountainConfig ?? createDefaultMountainConfig(),
+      proceduralConfig: normalizeProceduralConfig(terrain.proceduralConfig),
       waterBodies: terrain.waterBodies ?? createDefaultWaterBodies(),
       dirtAndRoadConfig: terrain.dirtAndRoadConfig ?? createDefaultDirtAndRoadConfig(),
       roads: terrain.roads ?? [],
@@ -2825,6 +2964,14 @@ export function applyTerrainBrush(
   options?: TerrainBrushOptions
 ): TerrainData {
   const terrain = ensureUpgradedTerrain(rawTerrain);
+  if (
+    brush === 'proceduralRidge' ||
+    brush === 'proceduralMesa' ||
+    brush === 'proceduralCrag' ||
+    brush === 'hydraulicErosion'
+  ) {
+    return applyProceduralTerrainStamp(terrain, brush, x, z, radius, options);
+  }
   const size = terrain.size;
   const width = size + 1;
   const worldRadius = getTerrainRadius(terrain);
@@ -2917,38 +3064,275 @@ export function applyTerrainBrush(
     };
   }
 
-  if (brush === 'carveCave') {
-    const caves: CaveGrotto[] = [...(terrain.caves ?? [])];
-    const tooClose = caves.some((c) => Math.hypot(c.x - x, c.z - z) < 7.0);
+  const isCavePaintBrush =
+    brush === 'cavePaintMoss' ||
+    brush === 'cavePaintPuddles' ||
+    brush === 'cavePaintGrass' ||
+    brush === 'cavePaintStalactites' ||
+    brush === 'cavePaintCrystals' ||
+    brush === 'cavePlaceDrips' ||
+    brush === 'cavePlaceBats' ||
+    brush === 'cavePlaceTorch';
+
+  if (brush === 'carveCave' || isCavePaintBrush) {
+    const caves: CaveGrotto[] = [...(terrain.caves ?? [])].map((c, idx) =>
+      normalizeCaveGrotto(c, idx)
+    );
     const updatedHeights = [...terrain.heights];
     const updatedLayers = [...terrain.layers];
+    const nodeRadius = Math.max(2.6, Math.min(11.0, radius * 0.82));
+    const nodeHeight = Math.max(3.4, Math.min(7.2, 3.8 + radius * 0.25));
 
+    // Find closest existing cave (either by center or by any existing tunnelNode)
+    let targetCaveIdx = -1;
+    let minCaveDist = Infinity;
+    for (let ci = 0; ci < caves.length; ci++) {
+      const c = caves[ci];
+      let d = Math.hypot(c.x - x, c.z - z);
+      for (const nd of c.tunnelNodes ?? []) {
+        const ndDist = Math.hypot(nd.x - x, nd.z - z);
+        if (ndDist < d) d = ndDist;
+      }
+      if (d < minCaveDist) {
+        minCaveDist = d;
+        targetCaveIdx = ci;
+      }
+    }
+
+    if (isCavePaintBrush) {
+      if (targetCaveIdx < 0 || minCaveDist > Math.max(18, radius * 2.5)) {
+        return terrain;
+      }
+      const targetCave = { ...caves[targetCaveIdx] };
+      const existingNodes: CaveTunnelNode[] =
+        targetCave.tunnelNodes && targetCave.tunnelNodes.length > 0
+          ? targetCave.tunnelNodes.map((n) => ({ ...n }))
+          : [
+              {
+                id: uid(),
+                x: targetCave.x,
+                z: targetCave.z,
+                radius: 4.5 * (targetCave.scale || 1),
+                height: 4.4,
+                moss: targetCave.mossDensity ?? 0.7,
+                puddle: targetCave.puddleDensity ?? 0.6,
+                grass: targetCave.grassDensity ?? 0.3,
+                stalactites: targetCave.stalactiteDensity ?? 0.65,
+                stalagmites: targetCave.stalagmiteDensity ?? 0.55,
+                crystals: targetCave.crystalDensity ?? 0.35,
+                hasDrips: Boolean(targetCave.hasCeilingDrips),
+                hasBats: Boolean(targetCave.hasHangingBats),
+                hasTorch: true,
+              },
+            ];
+
+      let closestNodeIdx = 0;
+      let closestNodeDist = Infinity;
+      for (let ni = 0; ni < existingNodes.length; ni++) {
+        const nd = existingNodes[ni];
+        const d = Math.hypot(nd.x - x, nd.z - z);
+        if (d < closestNodeDist) {
+          closestNodeDist = d;
+          closestNodeIdx = ni;
+        }
+      }
+
+      // If painting slightly away from existing node centers inside the cave, create a sub-node or update nearby nodes
+      for (let ni = 0; ni < existingNodes.length; ni++) {
+        const nd = existingNodes[ni];
+        const d = Math.hypot(nd.x - x, nd.z - z);
+        if (d <= Math.max(radius * 1.35, nd.radius * 1.15) || ni === closestNodeIdx) {
+          const boost = 0.25 * strength;
+          if (brush === 'cavePaintMoss') {
+            nd.moss = Math.min(1.5, (nd.moss ?? 0.4) + boost);
+            targetCave.mossDensity = Math.min(1.5, (targetCave.mossDensity ?? 0.5) + boost * 0.4);
+          } else if (brush === 'cavePaintPuddles') {
+            nd.puddle = Math.min(1.5, (nd.puddle ?? 0.4) + boost);
+            targetCave.puddleDensity = Math.min(1.5, (targetCave.puddleDensity ?? 0.5) + boost * 0.4);
+            targetCave.hasSpring = true;
+          } else if (brush === 'cavePaintGrass') {
+            nd.grass = Math.min(1.5, (nd.grass ?? 0.25) + boost);
+            targetCave.grassDensity = Math.min(1.5, (targetCave.grassDensity ?? 0.3) + boost * 0.4);
+          } else if (brush === 'cavePaintStalactites') {
+            nd.stalactites = Math.min(1.5, (nd.stalactites ?? 0.5) + boost);
+            nd.stalagmites = Math.min(1.5, (nd.stalagmites ?? 0.45) + boost);
+            targetCave.stalactiteDensity = Math.min(1.5, (targetCave.stalactiteDensity ?? 0.65) + boost * 0.35);
+            targetCave.stalagmiteDensity = Math.min(1.5, (targetCave.stalagmiteDensity ?? 0.55) + boost * 0.35);
+          } else if (brush === 'cavePaintCrystals') {
+            nd.crystals = Math.min(1.5, (nd.crystals ?? 0.35) + boost);
+            targetCave.crystalDensity = Math.min(1.5, (targetCave.crystalDensity ?? 0.35) + boost * 0.4);
+          } else if (brush === 'cavePlaceDrips') {
+            nd.hasDrips = true;
+            nd.puddle = Math.max(0.75, nd.puddle ?? 0.6);
+            targetCave.hasCeilingDrips = true;
+            targetCave.dripRate = Math.min(2.0, (targetCave.dripRate ?? 1.0) + 0.15);
+          } else if (brush === 'cavePlaceBats') {
+            nd.hasBats = true;
+            targetCave.hasHangingBats = true;
+            targetCave.batCount = Math.min(24, (targetCave.batCount ?? 6) + 2);
+          } else if (brush === 'cavePlaceTorch') {
+            nd.hasTorch = true;
+            targetCave.torchCount = Math.min(16, (targetCave.torchCount ?? 4) + 1);
+          }
+        }
+      }
+
+      targetCave.surfacePreset = 'custom';
+      targetCave.tunnelNodes = existingNodes;
+      caves[targetCaveIdx] = targetCave;
+      return {
+        ...terrain,
+        caves,
+        revision: terrain.revision + 1,
+      };
+    }
+
+    // brush === 'carveCave': Carve tunnel/chamber inside mountain without flattening exterior mountain roof!
     for (let row = minRow; row <= maxRow; row++) {
       for (let col = minCol; col <= maxCol; col++) {
         const vx = -worldRadius + col * step;
         const vz = -worldRadius + row * step;
         const d = Math.hypot(vx - x, vz - z);
         if (d > radius) continue;
-        const soft = quinticSmooth(1 - d / radius);
         const idx = row * width + col;
-        if (d < radius * 0.58) {
-          updatedHeights[idx] = Math.max(-1.0, terrain.heights[idx] - soft * 0.55 * strength);
-          updatedLayers[idx] = 2; // rock floor
-        } else {
-          updatedLayers[idx] = 4; // mossy cave entrance
+        // Keep high mountain roof intact above carved chambers; only grade low foothills near portal mouth
+        if (terrain.heights[idx] < 3.4) {
+          const soft = quinticSmooth(1 - d / radius);
+          if (d < radius * 0.58) {
+            updatedHeights[idx] = Math.max(
+              IslandTerrain.waterLevel + 0.45,
+              terrain.heights[idx] - soft * 0.35 * strength
+            );
+            updatedLayers[idx] = 2; // rock floor
+          } else {
+            updatedLayers[idx] = 4; // mossy cave entrance
+          }
         }
       }
     }
 
-    if (!tooClose && caves.length < 18) {
+    // Connect to existing cave if within 26m of any node, otherwise start a new CaveGrotto
+    if (targetCaveIdx >= 0 && minCaveDist <= Math.max(26.0, nodeRadius * 3.8)) {
+      const targetCave = { ...caves[targetCaveIdx] };
+      const baseFloorY =
+        targetCave.floorElevation ??
+        targetCave.tunnelNodes?.[0]?.floorY ??
+        Math.max(
+          IslandTerrain.waterLevel + 0.55,
+          Math.min(sampleTerrainHeight(terrain, targetCave.x, targetCave.z), 2.5)
+        );
+      targetCave.floorElevation = baseFloorY;
+
+      const nodes: CaveTunnelNode[] =
+        targetCave.tunnelNodes && targetCave.tunnelNodes.length > 0
+          ? targetCave.tunnelNodes.map((n) => ({ ...n, floorY: n.floorY ?? baseFloorY }))
+          : [
+              {
+                id: uid(),
+                x: targetCave.x,
+                z: targetCave.z,
+                floorY: baseFloorY,
+                radius: Math.max(3.6, 4.2 * (targetCave.scale || 1)),
+                height: 4.5,
+                moss: targetCave.mossDensity ?? 0.72,
+                puddle: targetCave.puddleDensity ?? 0.6,
+                grass: targetCave.grassDensity ?? 0.3,
+                stalactites: targetCave.stalactiteDensity ?? 0.65,
+                stalagmites: targetCave.stalagmiteDensity ?? 0.55,
+                crystals: targetCave.crystalDensity ?? 0.35,
+                hasDrips: Boolean(targetCave.hasCeilingDrips),
+                hasBats: Boolean(targetCave.hasHangingBats),
+                hasTorch: true,
+              },
+            ];
+
+      // Find nearest existing node to interpolate a smooth continuous tunnel toward (x, z)
+      let nearestIdx = nodes.length - 1;
+      let nearestDist = Infinity;
+      for (let ni = 0; ni < nodes.length; ni++) {
+        const nd = nodes[ni];
+        const d = Math.hypot(nd.x - x, nd.z - z);
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearestIdx = ni;
+        }
+      }
+
+      const mergeThreshold = Math.max(1.35, nodeRadius * 0.36);
+      if (nearestDist < mergeThreshold) {
+        const nd = nodes[nearestIdx];
+        nd.radius = Math.min(13.5, Math.max(nd.radius, nodeRadius) + 0.14 * strength);
+        nd.height = Math.min(8.5, Math.max(nd.height, nodeHeight));
+      } else if (nodes.length < 160) {
+        // Interpolate along the stroke from the anchor node (preferring the last carved node if reasonably close so tunnels chain in stroke order)
+        const lastNode = nodes[nodes.length - 1];
+        const distFromLast = Math.hypot(lastNode.x - x, lastNode.z - z);
+        const anchorNode = distFromLast <= Math.max(22, nodeRadius * 3.5) ? lastNode : nodes[nearestIdx];
+        const segDist = Math.hypot(x - anchorNode.x, z - anchorNode.z);
+        const stepLen = Math.max(1.6, nodeRadius * 0.52);
+        const steps = Math.min(8, Math.max(1, Math.ceil(segDist / stepLen)));
+
+        for (let s = 1; s <= steps; s++) {
+          if (nodes.length >= 160) break;
+          const t = s / steps;
+          const nx = anchorNode.x + (x - anchorNode.x) * t;
+          const nz = anchorNode.z + (z - anchorNode.z) * t;
+          nodes.push({
+            id: uid(),
+            x: nx,
+            z: nz,
+            floorY: baseFloorY,
+            radius: nodeRadius,
+            height: nodeHeight,
+            moss: targetCave.mossDensity ?? 0.72,
+            puddle: targetCave.puddleDensity ?? 0.6,
+            grass: targetCave.grassDensity ?? 0.3,
+            stalactites: targetCave.stalactiteDensity ?? 0.65,
+            stalagmites: targetCave.stalagmiteDensity ?? 0.55,
+            crystals: targetCave.crystalDensity ?? 0.35,
+            hasDrips: Boolean(targetCave.hasCeilingDrips),
+            hasBats: nodes.length % 2 === 0 && Boolean(targetCave.hasHangingBats),
+            hasTorch: nodes.length % 2 === 1,
+          });
+        }
+      }
+      targetCave.tunnelNodes = nodes;
+      caves[targetCaveIdx] = targetCave;
+    } else if (caves.length < 24) {
+      const initialFloorY =
+        options?.flattenHeight !== undefined && options?.flattenHeight !== null
+          ? Math.max(IslandTerrain.waterLevel + 0.55, Math.min(options.flattenHeight, 12.0))
+          : Math.max(
+              IslandTerrain.waterLevel + 0.55,
+              Math.min(sampleTerrainHeight(terrain, x, z), 2.4)
+            );
+      const firstNode: CaveTunnelNode = {
+        id: uid(),
+        x,
+        z,
+        floorY: initialFloorY,
+        radius: nodeRadius,
+        height: nodeHeight,
+        moss: 0.75,
+        puddle: 0.6,
+        grass: 0.3,
+        stalactites: 0.7,
+        stalagmites: 0.55,
+        crystals: 0.4,
+        hasDrips: true,
+        hasBats: true,
+        hasTorch: true,
+      };
       caves.push(
         normalizeCaveGrotto(
           {
             id: uid(),
             x,
             z,
+            floorElevation: initialFloorY,
             rotation: Math.atan2(-x, -z),
             scale: Math.max(0.95, Math.min(1.8, radius / 4)),
+            tunnelNodes: [firstNode],
           },
           caves.length
         )

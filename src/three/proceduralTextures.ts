@@ -169,27 +169,46 @@ function createSandTexture(): THREE.CanvasTexture {
   const [canvas, ctx] = makeTileCanvas(size);
   const rand = mulberry32(303);
 
-  ctx.fillStyle = '#F1DFB2';
+  // Rich chocolate / mid-to-dark brown riverbank & shore earth base
+  ctx.fillStyle = '#6A4933';
   ctx.fillRect(0, 0, size, size);
 
-  // Wind-swept sand ripples
-  for (let y = 0; y < size; y += 16) {
-    ctx.strokeStyle = 'rgba(212, 178, 122, 0.42)';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    for (let x = 0; x <= size; x += 16) {
-      const wy = y + Math.sin((x / size) * Math.PI * 4) * 3.5;
-      if (x === 0) ctx.moveTo(x, wy);
-      else ctx.lineTo(x, wy);
-    }
-    ctx.stroke();
-  }
-
-  for (let i = 0; i < 1100; i++) {
+  // Organic damp earth & silt strata waves
+  for (let i = 0; i < 180; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    ctx.fillStyle = rand() > 0.5 ? 'rgba(255,250,234,0.45)' : 'rgba(184,148,96,0.35)';
-    ctx.fillRect(x, y, 1.8, 1.8);
+    const rx = 16 + rand() * 34;
+    const ry = 8 + rand() * 18;
+    const shade = rand();
+    ctx.fillStyle =
+      shade > 0.62
+        ? 'rgba(128, 92, 66, 0.34)'
+        : shade > 0.28
+        ? 'rgba(84, 56, 38, 0.38)'
+        : 'rgba(62, 41, 27, 0.32)';
+    const pad = Math.max(rx, ry);
+    drawWrappedBounds(size, x - pad, x + pad, y - pad, y + pad, (ox, oy) => {
+      ctx.beginPath();
+      ctx.ellipse(x + ox, y + oy, rx, ry, (rand() - 0.5) * 0.8, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // Embedded small river pebbles & mineral grit
+  for (let i = 0; i < 950; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 1.1 + rand() * 2.4;
+    const pTone = rand();
+    ctx.fillStyle =
+      pTone > 0.72
+        ? 'rgba(156, 128, 102, 0.52)'
+        : pTone > 0.35
+        ? 'rgba(72, 49, 34, 0.48)'
+        : 'rgba(116, 98, 84, 0.45)';
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   return finishColorTexture(canvas);

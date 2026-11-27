@@ -119,6 +119,7 @@ import { collectReferencedVoiceIds } from '../../utils/voiceVault';
 import {
   getEnvironmentType,
   getSideScrollerConfig,
+  isInsideAnyCave,
   isInsideMountainCave,
   IslandTerrain,
   levelBoardToWorld,
@@ -180,6 +181,7 @@ import { applyEntityMaterialVariant } from '../../three/nodeMaterialUtils';
 import { applyDoorOpenAnimation, sampleBuildingSurfaceY } from '../../three/buildingBlocks';
 import {
   applyAtmosphere,
+  applyAtmosphereQualityToScene,
   applyLiveRendererQuality,
   buildIslandMesh,
   buildWeatherParticles,
@@ -190,6 +192,7 @@ import {
   initMakerRenderer,
   setupSceneEnvironment,
   syncSkyDomeToCamera,
+  updateCaveInteractiveAnimations,
   updateRiverFishAnimations,
   updateSkyClouds,
   type IslandSceneHandles,
@@ -2071,10 +2074,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
   const liveQualityValuesRef = useRef({
     resolutionScale: store.viewportResolutionScale,
     shadowQuality: store.viewportShadowQuality,
+    terrainQuality: store.terrainQuality,
   });
   liveQualityValuesRef.current = {
     resolutionScale: store.viewportResolutionScale,
     shadowQuality: store.viewportShadowQuality,
+    terrainQuality: store.terrainQuality,
   };
 
   useEffect(() => {
@@ -2450,10 +2455,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       if (disposed) return;
 
       applyAtmosphere(scene, sun, hemi, activeLevel, renderer);
+      applyAtmosphereQualityToScene(scene, liveQualityValuesRef.current.terrainQuality);
       islandAbort = new AbortController();
       const islandHandles = buildIslandMesh(activeLevel, activeAssets, isSoftwareGl, {
         deferFoliage: true,
         deferFoliageSignal: islandAbort.signal,
+        terrainQuality: liveQualityValuesRef.current.terrainQuality,
         ...(isIOS
           ? {
               onDeferredBatchReady: async (obj: THREE.Object3D) => {
@@ -2601,8 +2608,17 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         buddiesTotal: 0,
         trail: [],
       });
-      let heroYaw = env === 'sideScroller' ? Math.PI * 0.5 : isDriving ? Math.PI * 0.55 : isBuddies ? Math.PI * 0.72 : Math.PI;
-      if (isDriving) {
+      let heroYaw =
+        activeLevel.startRotation !== undefined
+          ? (activeLevel.startRotation * Math.PI) / 180
+          : env === 'sideScroller'
+          ? Math.PI * 0.5
+          : isDriving
+          ? Math.PI * 0.55
+          : isBuddies
+          ? Math.PI * 0.72
+          : Math.PI;
+      if (isDriving && activeLevel.startRotation === undefined) {
         const firstCp = activeLevel.entities
           .filter((e) => e.kind === 'checkpoint')
           .sort((a, b) => (a.checkpointOrder ?? 99) - (b.checkpointOrder ?? 99))[0];
@@ -4526,6 +4542,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             fm.mesh.scale.set(s, 1 + Math.cos(gameElapsed * 9 + fm.phase) * 0.18, s);
           }
           updateRiverFishAnimations(islandHandles.riverFish, gameElapsed);
+          updateCaveInteractiveAnimations(
+            islandHandles.caveInteractiveHandles,
+            gameElapsed,
+            [heroX, heroY, heroZ]
+          );
 
           // Day-Night Cycle progression
           if (activeLevel.autoCycleTime && env !== 'dungeon') {
@@ -4616,8 +4637,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             const curWeathering = sampleTerrainWeathering(activeLevel.terrain, heroX, heroZ);
             const curFloorForEval = sampleLevelHeight(activeLevel, heroX, heroZ);
             const curWaterDepth = env === 'openWorld' ? IslandTerrain.waterLevel - curFloorForEval : 0;
-            const curInCave =
-              terrainHasMainMountainCave(activeLevel.terrain) && isInsideMountainCave(heroX, heroZ);
+            const curInCave = isInsideAnyCave(activeLevel.terrain, heroX, heroZ);
             heroEnvEval = evaluateHeroEnvironmentModifiers(
               heroProfile,
               activeLevel,
@@ -4864,7 +4884,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             shakeTimer = Math.max(shakeTimer, rt.isBoss ? 0.36 : 0.2);
 
             if (rt.hpBar) {
-              redrawEnemyHealthBar(rt.hpBar, 0, rt.maxHealth, rt.hpBar.displayTrail);
+              rt.hpBar.opacity = 0;
+              rt.hpBar.mat.opacity = 0;
+              rt.hpBar.group.visible = false;
+              rt.hpBar.mesh.visible = false;
+              scene.remove(rt.hpBar.group);
             }
             const deathY = Math.max(-0.5, sampleLevelHeight(activeLevel, rt.x, rt.z)) + rt.flightY;
             heroEffects.emitBossDeathBurst(
@@ -10364,6 +10388,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               let movingBaddie = false;
 
               if (rt.aiState === 'dying') {
+                if (rt.hpBar) {
+                  rt.hpBar.opacity = 0;
+                  rt.hpBar.mat.opacity = 0;
+                  rt.hpBar.group.visible = false;
+                  rt.hpBar.mesh.visible = false;
+                }
                 rt.stateTimer -= dt;
                 if (canFly && rt.flightY > 0) {
                   rt.flightY = Math.max(0, rt.flightY - dt * 7.2);
@@ -11474,38 +11504,46 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               // Dynamic key-colored overhead health bar with matching border & HP readout
               if (rt.hpBar) {
                 const bar = rt.hpBar;
-                const inBattle =
-                  rt.aiState !== 'patrol' && rt.aiState !== 'dying'
-                    ? true
-                    : rt.aiState !== 'dying' && rt.health < rt.maxHealth && dist < aggroRange + 6;
-                const targetOpacity = inBattle ? 1 : 0;
-                bar.opacity = THREE.MathUtils.damp(bar.opacity, targetOpacity, inBattle ? 12 : 7, dt);
-
-                const hpRatio = THREE.MathUtils.clamp(rt.health / Math.max(1, rt.maxHealth), 0, 1);
-                if (bar.displayTrail < hpRatio) {
-                  bar.displayTrail = hpRatio;
-                } else {
-                  bar.displayTrail = THREE.MathUtils.damp(bar.displayTrail, hpRatio, 5.5, dt);
-                }
-
-                if (bar.opacity > 0.02) {
-                  bar.group.visible = true;
-                  const flyHover = canFly ? Math.sin(gameElapsed * 3.4 + rt.walkPhase) * 0.14 : 0;
-                  bar.group.position.set(
-                    rt.x,
-                    baseY + rt.yOffset + rt.flightY + bar.heightOffset + flyHover,
-                    rt.z
-                  );
-                  if (rt.keyFillColor) {
-                    bar.fillHex = rt.keyFillColor;
-                  }
-                  if (rt.keyBorderColor) {
-                    bar.borderHex = rt.keyBorderColor;
-                  }
-                  bar.mat.opacity = bar.opacity;
-                  redrawEnemyHealthBar(bar, rt.health, rt.maxHealth, bar.displayTrail);
-                } else {
+                if (!rt.alive || rt.aiState === 'dying' || rt.health <= 0) {
+                  bar.opacity = 0;
+                  bar.mat.opacity = 0;
                   bar.group.visible = false;
+                  bar.mesh.visible = false;
+                } else {
+                  const inBattle =
+                    rt.aiState !== 'patrol'
+                      ? true
+                      : rt.health < rt.maxHealth && dist < aggroRange + 6;
+                  const targetOpacity = inBattle ? 1 : 0;
+                  bar.opacity = THREE.MathUtils.damp(bar.opacity, targetOpacity, inBattle ? 12 : 7, dt);
+
+                  const hpRatio = THREE.MathUtils.clamp(rt.health / Math.max(1, rt.maxHealth), 0, 1);
+                  if (bar.displayTrail < hpRatio) {
+                    bar.displayTrail = hpRatio;
+                  } else {
+                    bar.displayTrail = THREE.MathUtils.damp(bar.displayTrail, hpRatio, 5.5, dt);
+                  }
+
+                  if (bar.opacity > 0.02) {
+                    bar.group.visible = true;
+                    bar.mesh.visible = true;
+                    const flyHover = canFly ? Math.sin(gameElapsed * 3.4 + rt.walkPhase) * 0.14 : 0;
+                    bar.group.position.set(
+                      rt.x,
+                      baseY + rt.yOffset + rt.flightY + bar.heightOffset + flyHover,
+                      rt.z
+                    );
+                    if (rt.keyFillColor) {
+                      bar.fillHex = rt.keyFillColor;
+                    }
+                    if (rt.keyBorderColor) {
+                      bar.borderHex = rt.keyBorderColor;
+                    }
+                    bar.mat.opacity = bar.opacity;
+                    redrawEnemyHealthBar(bar, rt.health, rt.maxHealth, bar.displayTrail);
+                  } else {
+                    bar.group.visible = false;
+                  }
                 }
               }
             }
@@ -12563,9 +12601,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
         // Smoothly pull camera inside the cavern / building / dense forest and auto-switch to 'close' view
         const heroInCave =
-          env === 'openWorld' &&
-          terrainHasMainMountainCave(activeLevel.terrain) &&
-          isInsideMountainCave(heroX, heroZ);
+          env === 'openWorld' && isInsideAnyCave(activeLevel.terrain, heroX, heroZ);
         if (heroInCave && !shownCaveTip && !pausedNow) {
           shownCaveTip = true;
           showToast('Entered the Mountain Cave — Close View');
@@ -13088,6 +13124,15 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         syncSkyDomeToCamera(scene, camera.position);
 
         monsterVfx.update(dt);
+
+        islandHandles.updateTerrainQualityUniforms?.(liveQualityValuesRef.current.terrainQuality);
+        if (scene.userData.__makerTerrainQuality !== liveQualityValuesRef.current.terrainQuality) {
+          applyAtmosphereQualityToScene(scene, liveQualityValuesRef.current.terrainQuality);
+        }
+        islandHandles.chunkedTerrain?.updateLOD(
+          camera.position,
+          liveQualityValuesRef.current.terrainQuality
+        );
 
         islandHandles.grassSystem?.update(
           camera,

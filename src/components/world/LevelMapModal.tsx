@@ -1,7 +1,7 @@
 import React from 'react';
 import { X } from 'lucide-react';
 import { EntityKindMeta, getBiome } from '../../data/registries';
-import type { GameLevel } from '../../types/maker';
+import { HERO_START_ENTITY_ID, type GameLevel } from '../../types/maker';
 import { getEnvironmentType } from '../../utils/terrain';
 import { MakerIcon } from '../shared/IconMap';
 
@@ -14,8 +14,8 @@ export const LevelMapModal: React.FC<{
 }> = ({ level, selectedEntityID, onSelectEntity, onMoveEntity, onClose }) => {
   const biome = getBiome(level.biome);
   const env = getEnvironmentType(level);
-  const startCoord = env === 'sideScroller' ? { x: 0.1, y: 0.5 } : { x: 0.14, y: 0.8 };
-  const portalCoord = env === 'sideScroller' ? { x: 0.92, y: 0.5 } : { x: 0.88, y: 0.24 };
+  const startCoord = level.startPoint ?? (env === 'sideScroller' ? { x: 0.1, y: 0.5 } : { x: 0.14, y: 0.8 });
+  const portalCoord = level.portalPoint ?? (env === 'sideScroller' ? { x: 0.92, y: 0.5 } : { x: 0.88, y: 0.24 });
 
   const handleBoardClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!selectedEntityID) return;
@@ -38,7 +38,7 @@ export const LevelMapModal: React.FC<{
           <div>
             <h2 className="text-lg font-extrabold">{level.name} — Flat Map</h2>
             <p className="text-xs text-slate-500 dark:text-[#949BB0]">
-              Click an item to select it, then click anywhere on the map to move it there.
+              Click Hero or any item to select it, then click anywhere on the map to move it there.
             </p>
           </div>
           <button
@@ -105,13 +105,22 @@ export const LevelMapModal: React.FC<{
 
             {/* Start */}
             {level.hasStart && (
-              <div
-                className="absolute -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[#7C5CFF] text-white flex items-center justify-center shadow ring-2 ring-white text-[10px] font-black"
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectEntity(HERO_START_ENTITY_ID);
+                }}
+                className={`absolute -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-[#7C5CFF] text-white flex items-center justify-center shadow text-[10px] font-black transition-transform ${
+                  selectedEntityID === HERO_START_ENTITY_ID
+                    ? 'ring-3 ring-[#FBBF24] scale-115 z-20'
+                    : 'ring-2 ring-white hover:scale-105 z-10'
+                }`}
                 style={{ left: `${startCoord.x * 100}%`, top: `${startCoord.y * 100}%` }}
-                title="Hero Start"
+                title="Hero Start (click to select, then click map to move)"
               >
-                START
-              </div>
+                HERO
+              </button>
             )}
 
             {/* Portal */}

@@ -20,7 +20,14 @@ import {
   X,
 } from 'lucide-react';
 import type { MakerStore } from '../../store/useMakerStore';
-import type { GrassQuality, TerrainBrush, TerrainBrushFalloff } from '../../types/maker';
+import type {
+  GrassQuality,
+  ProceduralTerrainConfig,
+  ProceduralTerrainPresetId,
+  TerrainBrush,
+  TerrainBrushFalloff,
+  TerrainQualityTier,
+} from '../../types/maker';
 import { resolveGrassConfig } from '../../three/stylizedGrassSystem';
 import {
   applySlopeAutoWeathering,
@@ -28,6 +35,12 @@ import {
   createInitialTerrain,
   getEnvironmentType,
 } from '../../utils/terrain';
+import {
+  PROCEDURAL_TERRAIN_PRESETS,
+  createDefaultProceduralConfig,
+  generateProceduralTerrainFromConfig,
+  normalizeProceduralConfig,
+} from '../../utils/proceduralTerrain';
 
 interface SculptBrushDef {
   id: TerrainBrush;
@@ -67,6 +80,18 @@ const FEATURE_SCULPT_BRUSHES: { id: TerrainBrush; label: string; accent: string 
   { id: 'plateauCliff', label: 'Cliff Mesa', accent: '#F59E0B' },
   { id: 'carveRiver', label: 'Carve River', accent: '#0EA5E9' },
   { id: 'carveCave', label: 'Carve Cave', accent: '#94A3B8' },
+];
+
+const PROCEDURAL_STAMP_BRUSHES: {
+  id: TerrainBrush;
+  label: string;
+  desc: string;
+  accent: string;
+}[] = [
+  { id: 'proceduralRidge', label: 'Ridge Stamp', desc: 'Ridged alpine crest', accent: '#EA580C' },
+  { id: 'proceduralMesa', label: 'Mesa Steps', desc: 'Terraced rock shelves', accent: '#D97706' },
+  { id: 'proceduralCrag', label: 'Warped Crag', desc: 'Folded rocky outcrop', accent: '#9333EA' },
+  { id: 'hydraulicErosion', label: 'Hydraulic Erode', desc: 'Soften & carve gullies', accent: '#0284C7' },
 ];
 
 const PAINT_BRUSHES: { id: TerrainBrush; label: string; swatch: string }[] = [
@@ -151,6 +176,14 @@ export function getTerrainBrushLabel(brush: TerrainBrush): string {
       return 'River';
     case 'carveCave':
       return 'Cave';
+    case 'proceduralRidge':
+      return 'Ridge Stamp';
+    case 'proceduralMesa':
+      return 'Mesa Steps';
+    case 'proceduralCrag':
+      return 'Warped Crag';
+    case 'hydraulicErosion':
+      return 'Hydraulic Erode';
     case 'paintGrass':
       return 'Grass';
     case 'paintTallGrass':
@@ -426,6 +459,43 @@ export const TerrainEditorModal: React.FC<{
                     </button>
                   );
                 })}
+              </div>
+
+              {/* Procedural Noise Stamp Brushes */}
+              <div className="pt-1.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-[#7D859B]">
+                    Procedural Stamps
+                  </span>
+                  <span className="text-[10px] font-semibold text-slate-400 dark:text-[#6B7285]">
+                    Seeded noise
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {PROCEDURAL_STAMP_BRUSHES.map((b) => {
+                    const active = store.worldTool === 'terrain' && activeBrush === b.id;
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        title={b.desc}
+                        onClick={() => selectBrush(b.id)}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-left transition-colors ${
+                          active
+                            ? 'text-white border-transparent'
+                            : 'bg-slate-100 dark:bg-[#1C212E] border-transparent text-slate-600 dark:text-[#A8B1C6] hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                        style={active ? { backgroundColor: b.accent } : undefined}
+                      >
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: active ? '#FFFFFF' : b.accent }}
+                        />
+                        <span className="text-[11px] font-bold truncate">{b.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </section>
 
@@ -814,44 +884,328 @@ export const TerrainEditorModal: React.FC<{
               )}
             </section>
 
-            {/* Quick Meadow Grass & Camera LOD Control */}
+            {/* Procedural World Generator & Triplanar Cliff Shader */}
+            {(() => {
+              const pCfg = normalizeProceduralConfig(level.terrain?.proceduralConfig);
+              const patchProcedural = (
+                label: string,
+                patch: Partial<ProceduralTerrainConfig>,
+                recordUndo = false
+              ) => {
+                store.updateLevel(
+                  label,
+                  (lvl) => {
+                    const base = lvl.terrain ?? createInitialTerrain();
+                    return {
+                      ...lvl,
+                      terrain: {
+                        ...base,
+                        proceduralConfig: normalizeProceduralConfig({
+                          ...(base.proceduralConfig ?? createDefaultProceduralConfig()),
+                          ...patch,
+                        }),
+                      },
+                    };
+                  },
+                  recordUndo
+                );
+              };
+              const applyPreset = (presetId: ProceduralTerrainPresetId) => {
+                const preset = PROCEDURAL_TERRAIN_PRESETS.find((p) => p.id === presetId);
+                if (!preset) return;
+                patchProcedural(
+                  `select ${preset.label} preset`,
+                  { ...preset.config, preserveSettlements: pCfg.preserveSettlements },
+                  true
+                );
+              };
+
+              return (
+                <section className="p-3 rounded-2xl bg-slate-50 dark:bg-[#1C212E] border border-slate-200/70 dark:border-white/[0.06] space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Wand2 size={12} className="text-[#EA580C]" />
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
+                        Procedural Landform
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-semibold text-slate-400 dark:text-[#7D859B]">
+                      Erosion · Triplanar
+                    </span>
+                  </div>
+
+                  {/* Presets */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {PROCEDURAL_TERRAIN_PRESETS.map((preset) => {
+                      const active = pCfg.presetId === preset.id;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          title={preset.desc}
+                          onClick={() => applyPreset(preset.id)}
+                          className={`flex items-center gap-1.5 px-2 py-1.5 rounded-xl border text-left text-[11px] font-bold transition-colors ${
+                            active
+                              ? 'text-white border-transparent'
+                              : 'bg-white dark:bg-[#151822] border-transparent text-slate-600 dark:text-[#A8B1C6] hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                          style={active ? { backgroundColor: preset.accent } : undefined}
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: active ? '#FFFFFF' : preset.accent }}
+                          />
+                          <span className="truncate">{preset.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Seed */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold text-slate-600 dark:text-[#A8B1C6] shrink-0">
+                      Seed
+                    </span>
+                    <input
+                      type="number"
+                      value={pCfg.seed}
+                      onChange={(e) =>
+                        patchProcedural('set terrain seed', {
+                          seed: Number.isFinite(Number(e.target.value)) ? Math.round(Number(e.target.value)) : 1337,
+                        })
+                      }
+                      className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white dark:bg-[#151822] border border-slate-200/70 dark:border-white/[0.08] text-xs font-mono font-bold tabular-nums"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patchProcedural('randomize terrain seed', {
+                          seed: Math.floor(1000 + Math.random() * 90000),
+                        })
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-white dark:bg-[#151822] hover:text-[#7C5CFF] text-[11px] font-bold border border-slate-200/70 dark:border-white/[0.08]"
+                    >
+                      Random
+                    </button>
+                  </div>
+
+                  {/* Shader & Erosion Sliders */}
+                  <div className="space-y-2 pt-1">
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[11px] font-semibold">
+                        <span>Triplanar Cliff Strata</span>
+                        <span className="tabular-nums text-[#EA580C]">
+                          {Math.round(pCfg.triplanarStrength * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1.5}
+                        step={0.05}
+                        value={pCfg.triplanarStrength}
+                        onChange={(e) =>
+                          patchProcedural('adjust triplanar strength', {
+                            triplanarStrength: Number(e.target.value),
+                          })
+                        }
+                        className="w-full accent-[#EA580C]"
+                      />
+                    </label>
+
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[11px] font-semibold">
+                        <span>Micro-Normal Relief</span>
+                        <span className="tabular-nums text-[#7C5CFF]">
+                          {Math.round(pCfg.microNormalStrength * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1.5}
+                        step={0.05}
+                        value={pCfg.microNormalStrength}
+                        onChange={(e) =>
+                          patchProcedural('adjust micro normal strength', {
+                            microNormalStrength: Number(e.target.value),
+                          })
+                        }
+                        className="w-full accent-[#7C5CFF]"
+                      />
+                    </label>
+
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[11px] font-semibold">
+                        <span>Cliff Slope Threshold</span>
+                        <span className="tabular-nums text-[#F59E0B]">
+                          {Math.round(pCfg.cliffSlopeThreshold * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.18}
+                        max={0.85}
+                        step={0.02}
+                        value={pCfg.cliffSlopeThreshold}
+                        onChange={(e) =>
+                          patchProcedural('adjust cliff threshold', {
+                            cliffSlopeThreshold: Number(e.target.value),
+                          })
+                        }
+                        className="w-full accent-[#F59E0B]"
+                      />
+                    </label>
+
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[11px] font-semibold">
+                        <span>Curvature Moss &amp; Erosion</span>
+                        <span className="tabular-nums text-[#20B46A]">
+                          {Math.round(pCfg.curvatureMoss * 100)}% / {Math.round(pCfg.erosionStrength * 100)}%
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="range"
+                          min={0}
+                          max={1.25}
+                          step={0.05}
+                          title="Curvature moss & crevices"
+                          value={pCfg.curvatureMoss}
+                          onChange={(e) =>
+                            patchProcedural('adjust curvature moss', {
+                              curvatureMoss: Number(e.target.value),
+                            })
+                          }
+                          className="w-full accent-[#20B46A]"
+                        />
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          title="Thermal/hydraulic erosion strength"
+                          value={pCfg.erosionStrength}
+                          onChange={(e) =>
+                            patchProcedural('adjust erosion strength', {
+                              erosionStrength: Number(e.target.value),
+                            })
+                          }
+                          className="w-full accent-[#0284C7]"
+                        />
+                      </div>
+                    </label>
+                  </div>
+
+                  <label className="flex items-center justify-between gap-2 pt-0.5 cursor-pointer">
+                    <span className="text-[11px] font-bold text-slate-600 dark:text-[#A8B1C6]">
+                      Preserve Villages, Caves &amp; Roads
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={pCfg.preserveSettlements}
+                      onChange={(e) =>
+                        patchProcedural('toggle preserve settlements', {
+                          preserveSettlements: e.target.checked,
+                        })
+                      }
+                      className="accent-[#20B46A] w-3.5 h-3.5"
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      store.updateLevel('generate procedural landform', (lvl) => {
+                        const base = lvl.terrain ?? createInitialTerrain();
+                        return {
+                          ...lvl,
+                          terrain: generateProceduralTerrainFromConfig(base, pCfg, lvl),
+                        };
+                      })
+                    }
+                    className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-[#EA580C] hover:opacity-95 text-white text-xs font-extrabold transition-opacity"
+                  >
+                    <Sparkles size={13} />
+                    <span>Generate Procedural Landform</span>
+                  </button>
+                </section>
+              );
+            })()}
+
+            {/* Quick Meadow Grass & Chunked Terrain LOD Control */}
             {(() => {
               const g = resolveGrassConfig(level.grass);
               const activeQ: GrassQuality = g.enabled ? g.quality : 'off';
               return (
-                <section className="p-3 rounded-2xl bg-slate-50 dark:bg-[#1C212E] border border-slate-200/70 dark:border-white/[0.06] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
-                      Meadow Grass & LOD
-                    </span>
-                    <span className="text-[10px] font-bold text-[#20B46A] tabular-nums">
-                      {activeQ === 'off' ? 'Off' : `${Math.round(g.viewDistance)}m`}
-                    </span>
+                <section className="p-3 rounded-2xl bg-slate-50 dark:bg-[#1C212E] border border-slate-200/70 dark:border-white/[0.06] space-y-2.5">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
+                        Meadow Grass &amp; Distance
+                      </span>
+                      <span className="text-[10px] font-bold text-[#20B46A] tabular-nums">
+                        {activeQ === 'off' ? 'Off' : `${Math.round(g.viewDistance)}m`}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1">
+                      {(['off', 'light', 'lush', 'dense', 'ultra'] as GrassQuality[]).map((q) => (
+                        <button
+                          key={q}
+                          type="button"
+                          onClick={() =>
+                            store.updateLevel('set grass quality', (lvl) => ({
+                              ...lvl,
+                              grass: {
+                                ...resolveGrassConfig(lvl.grass),
+                                enabled: q !== 'off',
+                                quality: q,
+                              },
+                            }))
+                          }
+                          className={`py-1 rounded-lg text-[10px] font-bold capitalize border transition-colors ${
+                            activeQ === q
+                              ? 'bg-[#20B46A] text-white border-[#20B46A]'
+                              : 'bg-white dark:bg-[#151822] border-transparent text-slate-600 dark:text-[#A8B1C6]'
+                          }`}
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="grid grid-cols-5 gap-1">
-                    {(['off', 'light', 'lush', 'dense', 'ultra'] as GrassQuality[]).map((q) => (
-                      <button
-                        key={q}
-                        type="button"
-                        onClick={() =>
-                          store.updateLevel('set grass quality', (lvl) => ({
-                            ...lvl,
-                            grass: {
-                              ...resolveGrassConfig(lvl.grass),
-                              enabled: q !== 'off',
-                              quality: q,
-                            },
-                          }))
-                        }
-                        className={`py-1 rounded-lg text-[10px] font-bold capitalize border transition-colors ${
-                          activeQ === q
-                            ? 'bg-[#20B46A] text-white border-[#20B46A]'
-                            : 'bg-white dark:bg-[#151822] border-transparent text-slate-600 dark:text-[#A8B1C6]'
-                        }`}
-                      >
-                        {q}
-                      </button>
-                    ))}
+
+                  <div className="space-y-1.5 pt-2 border-t border-slate-200/70 dark:border-white/[0.06]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
+                        Terrain LOD &amp; Shader Tier
+                      </span>
+                      <span className="text-[10px] font-bold text-[#7C5CFF] capitalize">
+                        {store.terrainQuality}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(
+                        [
+                          { id: 'performance', label: 'Performance' },
+                          { id: 'balanced', label: 'Balanced' },
+                          { id: 'ultra', label: 'Ultra' },
+                        ] as { id: TerrainQualityTier; label: string }[]
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => store.setTerrainQuality(opt.id)}
+                          className={`py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                            store.terrainQuality === opt.id
+                              ? 'bg-[#7C5CFF] text-white border-[#7C5CFF]'
+                              : 'bg-white dark:bg-[#151822] border-transparent text-slate-600 dark:text-[#A8B1C6]'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </section>
               );

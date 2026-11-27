@@ -11,6 +11,7 @@ import {
   Globe,
   Lock,
   Map as MapIcon,
+  MapPin,
   Mountain,
   Move,
   PanelLeftClose,
@@ -103,6 +104,7 @@ import type {
   VistaPropKind,
   WorldDomainId,
 } from '../../types/maker';
+import { HERO_START_ENTITY_ID } from '../../types/maker';
 import {
   CAR_PRESETS,
   DRIVING_CAMERA_VIEWS,
@@ -256,7 +258,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
   const showLeftPanel = aiPanelState.isOpen || leftPanelMode !== 'hidden';
 
   const [activePlacementAssetId, setActivePlacementAssetId] = useState<string | null>(null);
-  const [dropPreset, setDropPreset] = useState<'savePlinth' | null>(null);
+  const [dropPreset, setDropPreset] = useState<'savePlinth' | 'heroStart' | null>(null);
   const [curveGuideEnabled, setCurveGuideEnabled] = useState(false);
   const [curveSpan, setCurveSpan] = useState(10);
   const [curveBend, setCurveBend] = useState(3.2);
@@ -312,6 +314,9 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
   });
 
   const placementGhostSize: [number, number, number] = useMemo(() => {
+    if (tool === 'add' && addPaletteMode === 'entities' && dropPreset === 'heroStart') {
+      return [0.9, 1.8, 0.9];
+    }
     const base: [number, number, number] =
       activeBuildShape === 'door' || activeBuildShape === 'rusticDoor'
         ? [2.0, 2.4, 0.7]
@@ -323,7 +328,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
       base[1] * sc * (activeBlockAdjustments.scaleY || 1),
       base[2] * sc * (activeBlockAdjustments.scaleZ || 1),
     ];
-  }, [activeBuildShape, keepToolAdjustments, activeBlockAdjustments]);
+  }, [tool, addPaletteMode, dropPreset, activeBuildShape, keepToolAdjustments, activeBlockAdjustments]);
 
   const placementGhostRotation = keepToolAdjustments ? activeBlockAdjustments.rotation : 0;
 
@@ -694,8 +699,12 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
   };
 
   const focusEntity = (ent: LevelEntity) => {
+    if (envType === 'openWorld' && store.worldEditorScope === 'worldMap') {
+      store.enterWorldEditorScope(currentLevel.id);
+    }
     store.setSelectedEntityID(ent.id);
     store.setActiveWorldDomain('select');
+    if (tool === 'terrain' || tool === 'add') setTool('move');
     const [wx, wz] = levelBoardToWorld(currentLevel, ent.position);
     const wy = sampleTerrainHeight(terrain, wx, wz) + (ent.elevationY ?? 0);
     store.focusCameraOnWorldPoint({
@@ -707,7 +716,48 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     });
   };
 
+  const focusHeroStart = (activatePlaceMode = false) => {
+    if (envType === 'openWorld' && store.worldEditorScope === 'worldMap') {
+      store.enterWorldEditorScope(currentLevel.id);
+    }
+    store.setSelectedEntityID(HERO_START_ENTITY_ID);
+    store.setActiveWorldDomain('select');
+    if (activatePlaceMode) {
+      setPlaceFxTemplateId(null);
+      setActivePlacementAssetId(null);
+      setAddPaletteMode('entities');
+      setDropCustomAssetId('');
+      setDropPreset('heroStart');
+      setTool('add');
+      return;
+    }
+    setDropPreset(null);
+    if (tool === 'terrain' || tool === 'add') setTool('move');
+    const heroBp =
+      store.playFromPoint ??
+      currentLevel.startPoint ??
+      (envType === 'sideScroller' ? { x: 0.1, y: 0.5 } : { x: 0.14, y: 0.8 });
+    const [wx, wz] = levelBoardToWorld(currentLevel, heroBp);
+    const wy = sampleTerrainHeight(terrain, wx, wz);
+    store.focusCameraOnWorldPoint({
+      id: HERO_START_ENTITY_ID,
+      x: wx,
+      y: wy + 1.1,
+      z: wz,
+      distance: 18,
+    });
+  };
+
   const searchQ = contentsSearch.trim().toLowerCase();
+  const heroCustomAsset = currentProject.heroCustomAssetId
+    ? store.customAssets.find((a) => a.id === currentProject.heroCustomAssetId) ?? null
+    : null;
+  const showHeroInContents =
+    !searchQ ||
+    currentProject.heroName.toLowerCase().includes(searchQ) ||
+    'hero'.includes(searchQ) ||
+    'player'.includes(searchQ) ||
+    'start'.includes(searchQ);
   const actorsInLevel = currentLevel.entities.filter(
     (e) =>
       (e.kind === 'hero' || e.kind === 'npc' || e.kind === 'baddie') &&
@@ -852,13 +902,61 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
 
           {/* Grouped Scene Contents */}
           <div className="space-y-3">
-            {actorsInLevel.length > 0 && (
+            {(showHeroInContents || actorsInLevel.length > 0) && (
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-[#7D859B] px-1">
                   <span>Cast &amp; NPCs</span>
-                  <span className="tabular-nums">{actorsInLevel.length}</span>
+                  <span className="tabular-nums">
+                    {(showHeroInContents ? 1 : 0) + actorsInLevel.length}
+                  </span>
                 </div>
                 <div className="space-y-1">
+                  {showHeroInContents && (() => {
+                    const heroSelected = store.selectedEntityID === HERO_START_ENTITY_ID;
+                    const placingHeroNow = activeTool === 'add' && dropPreset === 'heroStart';
+                    return (
+                      <div
+                        className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
+                          heroSelected || placingHeroNow
+                            ? 'bg-[#7C5CFF]/15 text-[#7C5CFF]'
+                            : 'hover:bg-slate-100 dark:hover:bg-[#1F2430]'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => focusHeroStart(false)}
+                          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                        >
+                          <AssetThumbnail
+                            customAsset={heroCustomAsset}
+                            hero={{
+                              body: currentProject.heroBody,
+                              colors: currentProject.heroColors,
+                            }}
+                            size={24}
+                            rounded="rounded-lg"
+                          />
+                          <span className="truncate flex-1">{currentProject.heroName}</span>
+                          <span className="text-[10px] text-[#7C5CFF] font-bold shrink-0">
+                            {currentLevel.hasStart ? 'Hero' : 'Unplaced'}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => focusHeroStart(!placingHeroNow)}
+                          title="Click on the 3D/2D map to place Hero"
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-extrabold transition-colors shrink-0 ${
+                            placingHeroNow
+                              ? 'bg-[#7C5CFF] text-white'
+                              : 'bg-[#7C5CFF]/12 text-[#7C5CFF] hover:bg-[#7C5CFF] hover:text-white'
+                          }`}
+                        >
+                          <MapPin size={10} />
+                          <span>{placingHeroNow ? 'Placing…' : 'Place'}</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
                   {actorsInLevel.map((ent) => {
                     const active = ent.id === store.selectedEntityID;
                     const custom = ent.customAssetId
@@ -2789,6 +2887,11 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
               <Overview2DPainter
                 store={store}
                 activePlacementAssetId={activePlacementAssetId}
+                isPlacingHero={activeTool === 'add' && dropPreset === 'heroStart'}
+                onPlacedHeroFrom2D={() => {
+                  setDropPreset(null);
+                  setTool('move');
+                }}
                 onPlaceCustomAssetAtWorldPoint={(assetId, wx, wz) => {
                   const bp = store.placeWorldPointBoardHelper(wx, wz);
                   placeCustomAssetAtPoint(assetId, bp);
@@ -2817,6 +2920,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                 placementGhostRotation={placementGhostRotation}
                 resolutionScale={store.viewportResolutionScale}
                 shadowQuality={store.viewportShadowQuality}
+                terrainQuality={store.terrainQuality}
                 cameraAngleLocked={store.cameraAngleLocked}
                 cameraFocusRequest={store.cameraFocusRequest}
                 cameraPresetRequest={cameraPresetRequest}
@@ -2879,6 +2983,10 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                 onMoveEntity={(id, pos, elev) => store.moveEntity(id, pos, false, elev)}
                 onRotateEntity={(id, deg) => {
                   const rounded = Math.round(deg);
+                  if (id === HERO_START_ENTITY_ID) {
+                    store.rotateHeroStart(rounded, false);
+                    return;
+                  }
                   store.updateEntity(
                     id,
                     'rotate item',
@@ -3032,6 +3140,12 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                     }
                   } else if (dropCustomAssetId) {
                     placeCustomAssetAtPoint(dropCustomAssetId, pos, elev);
+                  } else if (dropPreset === 'heroStart') {
+                    store.moveEntity(HERO_START_ENTITY_ID, pos, true);
+                    store.setSelectedEntityID(HERO_START_ENTITY_ID);
+                    store.setActiveWorldDomain('select');
+                    setDropPreset(null);
+                    setTool('move');
                   } else if (dropPreset === 'savePlinth') {
                     const created = store.addEntity(
                       'checkpoint',
@@ -3251,6 +3365,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                         if (t.id !== 'add') {
                           setPlaceFxTemplateId(null);
                           setActivePlacementAssetId(null);
+                          setDropPreset(null);
                           if (store.activeWorldDomain !== 'buildings') {
                             store.setActiveWorldDomain('select');
                           }
@@ -3409,6 +3524,30 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
             addPaletteMode === 'entities' &&
             store.activeWorldDomain !== 'buildings' && (
               <div className="rounded-2xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] p-2 flex gap-1.5 overflow-x-auto maker-scroll">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDropCustomAssetId('');
+                    setActivePlacementAssetId(null);
+                    setDropPreset('heroStart');
+                  }}
+                  className={`shrink-0 inline-flex items-center gap-1.5 pl-1 pr-2.5 py-0.5 rounded-xl text-[11px] font-bold border ${
+                    dropPreset === 'heroStart'
+                      ? 'bg-[#7C5CFF] text-white border-[#7C5CFF]'
+                      : 'bg-[#7C5CFF]/12 text-[#7C5CFF] border-[#7C5CFF]/30'
+                  }`}
+                >
+                  <AssetThumbnail
+                    customAsset={heroCustomAsset}
+                    hero={{
+                      body: currentProject.heroBody,
+                      colors: currentProject.heroColors,
+                    }}
+                    size={20}
+                    rounded="rounded-lg"
+                  />
+                  <span>Hero ({currentProject.heroName})</span>
+                </button>
                 {DropKinds.map((k) => {
                   const meta = EntityKindMeta[k];
                   const active = !dropCustomAssetId && !dropPreset && dropKind === k;
@@ -3525,6 +3664,8 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
         onTriggerFxBurst={triggerFxBurst}
         onSaveEntityToFxLibrary={handleSaveEntityToFxLibrary}
         onAddVistaItem={handleAddVistaItem}
+        isPlacingHero={activeTool === 'add' && dropPreset === 'heroStart'}
+        onStartPlaceHero={() => focusHeroStart(true)}
       />
 
       {showingMap && (

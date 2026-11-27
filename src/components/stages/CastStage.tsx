@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Box, MessageCircle, Paintbrush, PanelBottom, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, User } from 'lucide-react';
+import { Box, MapPin, MessageCircle, Paintbrush, PanelBottom, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, User } from 'lucide-react';
 import {
   getChatFontOption,
   resolveChatBubbleStyle,
@@ -13,6 +13,7 @@ import {
 } from '../../data/registries';
 import { resolveHeroProfile } from '../../data/heroTraits';
 import type { MakerStore } from '../../store/useMakerStore';
+import { HERO_START_ENTITY_ID } from '../../types/maker';
 import type {
   CreatureBodyId,
   CritterAttitude,
@@ -354,6 +355,21 @@ export const CastStage: React.FC<{ store: MakerStore }> = ({ store }) => {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  store.setSelectedEntityID(HERO_START_ENTITY_ID);
+                  store.setActiveWorldDomain('select');
+                  store.setWorldTool('move');
+                  store.setSelectedTab('world');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#7C5CFF] hover:bg-[#6A48F5] text-white text-xs font-extrabold transition-colors"
+                title="Jump to World view with Hero selected to place or move"
+              >
+                <MapPin size={13} />
+                <span>Place in World</span>
+              </button>
               <select
                 value={currentProject.heroBody}
                 onChange={(e) =>

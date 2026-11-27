@@ -18,6 +18,7 @@ import type { MakerStore } from '../../store/useMakerStore';
 import type {
   ColorGradingPresetId,
   PostProcessingConfig,
+  TerrainQualityTier,
   ViewportResolutionScale,
   ViewportShadowQuality,
 } from '../../types/maker';
@@ -218,6 +219,38 @@ export const PostProcessingPanel: React.FC<{ store: MakerStore }> = ({ store }) 
                   className={`py-1 rounded-lg text-[10px] font-bold border transition-colors ${
                     active
                       ? 'border-[#7C5CFF] bg-[#7C5CFF]/18 text-[#7C5CFF]'
+                      : 'border-transparent bg-slate-100 dark:bg-[#1F2430] text-slate-600 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 dark:text-[#949BB0]">
+            <span>Terrain LOD &amp; Shader</span>
+            <span className="font-mono capitalize">{store.terrainQuality}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {(
+              [
+                { id: 'performance', label: 'Performance' },
+                { id: 'balanced', label: 'Balanced' },
+                { id: 'ultra', label: 'Ultra' },
+              ] as { id: TerrainQualityTier; label: string }[]
+            ).map((opt) => {
+              const active = store.terrainQuality === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => store.setTerrainQuality(opt.id)}
+                  className={`py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                    active
+                      ? 'border-[#EA580C] bg-[#EA580C]/18 text-[#EA580C]'
                       : 'border-transparent bg-slate-100 dark:bg-[#1F2430] text-slate-600 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >

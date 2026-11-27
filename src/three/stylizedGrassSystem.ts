@@ -54,6 +54,7 @@ import {
   getTerrainRadius,
   type GrassExclusionRect,
   IslandTerrain,
+  isInsideCarvedCave,
   isInsideMountainCave,
   sampleTerrainHeight,
   terrainHasMainMountainCave,
@@ -474,6 +475,9 @@ function populateTerrainAndColorTextures(
           if (cd < caveRadius * 1.35) {
             mask *= THREE.MathUtils.smoothstep(cd, caveRadius * 0.82, caveRadius * 1.35);
           }
+        }
+        if (mask > 0.01 && isInsideCarvedCave(terrain, wx, wz, 0.35).inside) {
+          mask = 0;
         }
       }
 

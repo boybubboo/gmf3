@@ -27,7 +27,7 @@ import {
   vec2,
   vec3,
 } from 'three/tsl';
-import type { VisualStyleId } from '../types/maker';
+import type { TerrainQualityTier, VisualStyleId } from '../types/maker';
 import { upgradeToNodeMaterial } from './nodeMaterialUtils';
 
 export interface BotwAtmosphereInput {
@@ -49,6 +49,12 @@ function createSharedBotwUniforms() {
     uSunColor: uniform(new THREE.Color('#FFF5E0')),
     uRimColor: uniform(new THREE.Color('#B5DEFF')),
     uShadowCoolColor: uniform(new THREE.Color('#34528A')),
+    uSkyZenith: uniform(new THREE.Color('#3572B8')),
+    uSkyMid: uniform(new THREE.Color('#6CA4DA')),
+    uSkyHorizon: uniform(new THREE.Color('#93C4E8')),
+    uNightFactor: uniform(0),
+    uCloudDetailLevel: uniform(0.76),
+    uWaterDetailLevel: uniform(0.76),
     uRimStrength: uniform(0.14),
     uShadowLiftStrength: uniform(0.14),
     uTranslucencyStrength: uniform(0.32),
@@ -99,6 +105,13 @@ export function syncBotwTime(elapsed: number): void {
   getSharedBotwUniforms().uTime.value = elapsed;
 }
 
+export function syncTerrainAtmosphereQuality(tier: TerrainQualityTier): void {
+  const u = getSharedBotwUniforms();
+  const level = tier === 'ultra' ? 1.0 : tier === 'performance' ? 0.4 : 0.76;
+  u.uCloudDetailLevel.value = level;
+  u.uWaterDetailLevel.value = level;
+}
+
 /**
  * Syncs global BotW painterly lighting uniforms whenever sky, style, warmth, or time-of-day updates.
  */
@@ -129,6 +142,12 @@ export function syncBotwStyleUniforms(
     .lerp(atmo.zenithColor, 0.38)
     .lerp(atmo.hemiSky, 0.22);
   u.uShadowCoolColor.value.copy(_tmpCoolCol);
+
+  // Sky reflection gradient & night attenuation for planar water reflections & shallow caustics
+  u.uSkyZenith.value.copy(atmo.zenithColor);
+  u.uSkyMid.value.copy(atmo.midColor);
+  u.uSkyHorizon.value.copy(atmo.horizonColor);
+  u.uNightFactor.value = atmo.nightFactor;
 
   const isIndoor = env === 'dungeon' || env === 'castle' || env === 'scifi';
   const dayWeight = 1.0 - atmo.nightFactor * 0.65;

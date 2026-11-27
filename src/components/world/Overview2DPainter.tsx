@@ -17,11 +17,13 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import type { MakerStore } from '../../store/useMakerStore';
+import { HERO_START_ENTITY_ID } from '../../types/maker';
 import {
   IslandTerrain,
   type Overview2DBrushId,
   createDefaultWaterBodies,
   createInitialTerrain,
+  getEnvironmentType,
   getTerrainRadius,
   getTerrainShoreRadius,
   levelBoardToWorld,
@@ -103,6 +105,8 @@ interface OffscreenRasterCache {
 export interface Overview2DPainterProps {
   store: MakerStore;
   activePlacementAssetId: string | null;
+  isPlacingHero?: boolean;
+  onPlacedHeroFrom2D?: () => void;
   onPlaceCustomAssetAtWorldPoint: (assetId: string, worldX: number, worldZ: number) => void;
   onSelectEntityFrom2D: (entityId: string) => void;
 }
@@ -110,6 +114,8 @@ export interface Overview2DPainterProps {
 export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
   store,
   activePlacementAssetId,
+  isPlacingHero = false,
+  onPlacedHeroFrom2D,
   onPlaceCustomAssetAtWorldPoint,
   onSelectEntityFrom2D,
 }) => {
@@ -129,6 +135,7 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
   const [viewportSize, setViewportSize] = useState<[number, number]>([640, 420]);
 
   const paintingRef = useRef(false);
+  const draggingInspectIdRef = useRef<string | null>(null);
   const panningRef = useRef<{ startX: number; startY: number; origPan: [number, number] } | null>(
     null
   );
@@ -805,18 +812,48 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
       }
     }
 
+    // Hero Start marker
+    if (currentLevel.hasStart) {
+      const env = getEnvironmentType(currentLevel);
+      const startBp =
+        store.playFromPoint ??
+        currentLevel.startPoint ??
+        (env === 'sideScroller' ? { x: 0.1, y: 0.5 } : { x: 0.14, y: 0.8 });
+      const [hx, hz] = levelBoardToWorld(currentLevel, startBp);
+      const [px, py] = toPx(hx, hz);
+      const isHeroSelected = store.selectedEntityID === HERO_START_ENTITY_ID;
+      ctx.save();
+      ctx.fillStyle = '#7C5CFF';
+      ctx.beginPath();
+      ctx.arc(px, py, isHeroSelected ? 8 : 6.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = isHeroSelected ? '#FBBF24' : '#FFFFFF';
+      ctx.lineWidth = isHeroSelected ? 2.5 : 1.8;
+      ctx.stroke();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('H', px, py + 0.5);
+      ctx.restore();
+    }
+
     // Hover brush ring
-    if (hoverWorld && tool !== 'inspect' && !shiftHeld && !isPanning) {
+    if (hoverWorld && (tool !== 'inspect' || isPlacingHero) && !shiftHeld && !isPanning) {
       const [px, py] = toPx(hoverWorld[0], hoverWorld[1]);
       const activeMeta = PAINTER_2D_TOOLS.find((t) => t.id === tool);
-      ctx.strokeStyle = activePlacementAssetId ? '#20B46A' : activeMeta?.accent ?? '#FFFFFF';
+      ctx.strokeStyle = isPlacingHero
+        ? '#7C5CFF'
+        : activePlacementAssetId
+        ? '#20B46A'
+        : activeMeta?.accent ?? '#FFFFFF';
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.arc(
         px,
         py,
-        activePlacementAssetId ? 10 : Math.max(6, brushRadius * scaleM),
+        isPlacingHero || activePlacementAssetId ? 10 : Math.max(6, brushRadius * scaleM),
         0,
         Math.PI * 2
       );
@@ -844,8 +881,10 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
     brushRadius,
     activeBrushRadius,
     activePlacementAssetId,
+    isPlacingHero,
     shiftHeld,
     isPanning,
+    store.playFromPoint,
     store.selectedEntityID,
     store.selectedWaterBodyId,
     store.selectedCaveId,
@@ -894,6 +933,16 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
         return;
       }
 
+      if (isPlacingHero && currentLevel) {
+        if (isStart) {
+          const bp = store.placeWorldPointBoardHelper(wx, wz);
+          store.moveEntity(HERO_START_ENTITY_ID, bp, true);
+          store.setSelectedEntityID(HERO_START_ENTITY_ID);
+          onPlacedHeroFrom2D?.();
+        }
+        return;
+      }
+
       if (activePlacementAssetId) {
         if (isStart) {
           onPlaceCustomAssetAtWorldPoint(activePlacementAssetId, wx, wz);
@@ -902,10 +951,29 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
       }
 
       if (tool === 'inspect' && currentLevel) {
-        if (!isStart) return;
-        // Pick closest entity, cave, or water body near click
+        if (!isStart) {
+          if (draggingInspectIdRef.current) {
+            const bp = store.placeWorldPointBoardHelper(wx, wz);
+            store.moveEntity(draggingInspectIdRef.current, bp, false);
+          }
+          return;
+        }
+        // Pick closest Hero, entity, cave, or water body near click
         let bestDist = 10;
         let hitEntityId: string | null = null;
+        if (currentLevel.hasStart) {
+          const env = getEnvironmentType(currentLevel);
+          const heroBp =
+            store.playFromPoint ??
+            currentLevel.startPoint ??
+            (env === 'sideScroller' ? { x: 0.1, y: 0.5 } : { x: 0.14, y: 0.8 });
+          const [hx, hz] = levelBoardToWorld(currentLevel, heroBp);
+          const hd = Math.hypot(hx - wx, hz - wz);
+          if (hd < bestDist) {
+            bestDist = hd;
+            hitEntityId = HERO_START_ENTITY_ID;
+          }
+        }
         for (const ent of currentLevel.entities) {
           const [ex, ez] = levelBoardToWorld(currentLevel, ent.position);
           const d = Math.hypot(ex - wx, ez - wz);
@@ -915,6 +983,7 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
           }
         }
         if (hitEntityId) {
+          draggingInspectIdRef.current = hitEntityId;
           onSelectEntityFrom2D(hitEntityId);
           return;
         }
@@ -946,8 +1015,10 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
       activePlacementAssetId,
       currentLevel,
       density,
+      isPlacingHero,
       isWorldMapMode,
       onPlaceCustomAssetAtWorldPoint,
+      onPlacedHeroFrom2D,
       onSelectEntityFrom2D,
       store,
       terrain.caves,
@@ -1037,6 +1108,7 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
             }}
             onPointerUp={(e) => {
               paintingRef.current = false;
+              draggingInspectIdRef.current = null;
               panningRef.current = null;
               setIsPanning(false);
               setShiftHeld(e.shiftKey);
@@ -1050,12 +1122,14 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
             }}
             onPointerCancel={() => {
               paintingRef.current = false;
+              draggingInspectIdRef.current = null;
               panningRef.current = null;
               setIsPanning(false);
             }}
             onPointerLeave={() => {
               if (!panningRef.current) {
                 paintingRef.current = false;
+                draggingInspectIdRef.current = null;
                 setHoverWorld(null);
               }
             }}

@@ -1127,6 +1127,15 @@ If the user asks for an empty ocean / clear land / start over with water only, s
   "sky": "sunny" | "golden" | "night" | "mist" | "storm" | "cave",
   "weather": "none" | "fireflies" | "leaves" | "rain" | "snow",
   "heroSpawn": [x (-110..110), z (-110..110)],
+  "proceduralPreset": "nottinghamHighlands" | "alpineCrags" | "terracedCanyon" | "riverGorge" | "volcanicCaldera" (optional whole-island multi-octave landform & hydraulic erosion preset),
+  "proceduralConfig": {
+    "cliffSlopeThreshold": number (0.25..0.8),
+    "autoSlopeBlend": number (0..1),
+    "triplanarStrength": number (0..1.5),
+    "microNormalStrength": number (0..1.3),
+    "curvatureMoss": number (0..1.2),
+    "erosionStrength": number (0..1)
+  },
   "mountainConfig": {
     "rockStartHeight": number (3..10),
     "snowStartHeight": number (7..28 — use 28 if not snowy!),

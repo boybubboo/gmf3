@@ -124,6 +124,8 @@ import type {
   PlantShapeId,
   PlatformMotionType,
   PlatformPreset,
+  ProceduralTerrainConfig,
+  ProceduralTerrainPresetId,
   RigBoneRole,
   RoadSpline,
   SidePlatformSegment,
@@ -211,6 +213,11 @@ import {
   ensureWorldMapForProject,
   getWorldMapRadius,
 } from '../utils/worldMap';
+import {
+  createDefaultProceduralConfig,
+  generateProceduralTerrainFromConfig,
+  normalizeProceduralConfig,
+} from '../utils/proceduralTerrain';
 
 function num(v: unknown, fallback: number, min: number, max: number): number {
   const n = typeof v === 'number' && Number.isFinite(v) ? v : Number(v);
@@ -4600,6 +4607,75 @@ export function applyWorldTerraformToStore(
       autoSlopeWeathering: baseMtnCfg.autoSlopeWeathering,
     },
   };
+
+  // Optional ZyFou procedural landform synthesis & triplanar/erosion configuration
+  const validProcPresets = [
+    'nottinghamHighlands',
+    'alpineCrags',
+    'terracedCanyon',
+    'riverGorge',
+    'volcanicCaldera',
+  ] as const;
+  const rawProcPreset =
+    typeof raw.proceduralPreset === 'string'
+      ? oneOf<ProceduralTerrainPresetId>(
+          raw.proceduralPreset === 'terracedMesas' ? 'terracedCanyon' : raw.proceduralPreset,
+          validProcPresets,
+          'nottinghamHighlands'
+        )
+      : null;
+  const rawProcObj =
+    raw.proceduralConfig && typeof raw.proceduralConfig === 'object'
+      ? (raw.proceduralConfig as Record<string, unknown>)
+      : null;
+
+  if (rawProcPreset || rawProcObj) {
+    const baseProc: ProceduralTerrainConfig = rawProcPreset
+      ? createDefaultProceduralConfig(rawProcPreset)
+      : nextTerrain.proceduralConfig
+        ? normalizeProceduralConfig(nextTerrain.proceduralConfig)
+        : createDefaultProceduralConfig('nottinghamHighlands');
+
+    const mergedProc = normalizeProceduralConfig({
+      ...baseProc,
+      ...(rawProcObj
+        ? {
+            seed: num(rawProcObj.seed, baseProc.seed, 1, 999999),
+            cliffSlopeThreshold: num(
+              rawProcObj.cliffSlopeThreshold,
+              baseProc.cliffSlopeThreshold,
+              0.2,
+              0.85
+            ),
+            autoSlopeBlend: num(rawProcObj.autoSlopeBlend, baseProc.autoSlopeBlend, 0, 1),
+            triplanarStrength: num(rawProcObj.triplanarStrength, baseProc.triplanarStrength, 0, 2),
+            microNormalStrength: num(
+              rawProcObj.microNormalStrength,
+              baseProc.microNormalStrength,
+              0,
+              1.6
+            ),
+            curvatureMoss: num(rawProcObj.curvatureMoss, baseProc.curvatureMoss, 0, 1.5),
+            erosionStrength: num(rawProcObj.erosionStrength, baseProc.erosionStrength, 0, 1),
+            islandFalloff: num(rawProcObj.islandFalloff, baseProc.islandFalloff, 0, 1),
+          }
+        : {}),
+    });
+
+    const shouldGenerateLandform =
+      Boolean(rawProcPreset) || Boolean(rawProcObj?.regenerate) || !modifyExisting;
+    if (shouldGenerateLandform) {
+      nextTerrain = generateProceduralTerrainFromConfig(nextTerrain, mergedProc, lvl);
+      if (!allowSnow) {
+        nextTerrain = {
+          ...nextTerrain,
+          layers: nextTerrain.layers.map((layerVal) => (layerVal === 3 ? 2 : layerVal)),
+        };
+      }
+    } else {
+      nextTerrain = { ...nextTerrain, proceduralConfig: mergedProc };
+    }
+  }
 
   const spiralRoads: RoadSpline[] = [];
   const rawMountains = Array.isArray(raw.mountains) ? raw.mountains : [];

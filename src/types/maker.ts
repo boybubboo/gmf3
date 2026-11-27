@@ -46,6 +46,8 @@ import type {
 export * from './motion';
 export * from './inventory';
 
+export const HERO_START_ENTITY_ID = '__hero_start__';
+
 export type StudioTheme = 'dark' | 'light';
 
 export type VisualStyleId = 'painterlyPBR' | 'celToon' | 'softFantasy';
@@ -1678,6 +1680,14 @@ export type TerrainBrush =
   | 'plateauCliff'
   | 'carveRiver'
   | 'carveCave'
+  | 'cavePaintMoss'
+  | 'cavePaintPuddles'
+  | 'cavePaintGrass'
+  | 'cavePaintStalactites'
+  | 'cavePaintCrystals'
+  | 'cavePlaceDrips'
+  | 'cavePlaceBats'
+  | 'cavePlaceTorch'
   | 'paintGrass'
   | 'paintGrassErase'
   | 'paintMoss'
@@ -1698,6 +1708,10 @@ export type TerrainBrush =
   | 'weatherMud'
   | 'weatherFrost'
   | 'weatherClear'
+  | 'proceduralRidge'
+  | 'proceduralMesa'
+  | 'proceduralCrag'
+  | 'hydraulicErosion'
   | 'scatterTree'
   | 'scatterRock'
   | 'scatterFlower'
@@ -1749,6 +1763,50 @@ export interface MountainProfileConfig {
   autoSlopeWeathering: number; // 0..1
 }
 
+export type ProceduralNoiseKind =
+  | 'simplexFbm'
+  | 'ridgedMultifractal'
+  | 'domainWarped'
+  | 'terracedMesa'
+  | 'billowCrags';
+
+export type ProceduralTerrainPresetId =
+  | 'custom'
+  | 'nottinghamHighlands'
+  | 'alpineCrags'
+  | 'riverGorge'
+  | 'terracedCanyon'
+  | 'volcanicCaldera';
+
+export interface ProceduralNoiseLayerConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  kind: ProceduralNoiseKind;
+  frequency: number; // cycles per 100m, e.g. 0.4..4.5
+  amplitude: number; // vertical meters contribution, e.g. 1.0..18.0
+  octaves: number; // 1..6
+  lacunarity: number; // 1.6..2.6
+  gain: number; // 0.3..0.75
+  warpStrength: number; // 0..2.0
+  terraceSteps: number; // 2..12
+  weight: number; // 0..2.0 blend weight
+}
+
+export interface ProceduralTerrainConfig {
+  presetId: ProceduralTerrainPresetId;
+  seed: number;
+  cliffSlopeThreshold: number; // 0.2..0.85 slope threshold for triplanar strata rock
+  autoSlopeBlend: number; // 0..1 strength of GPU slope & curvature biome splatting
+  triplanarStrength: number; // 0..1.5 cliff strata sharpness
+  microNormalStrength: number; // 0..1.5 GPU derivative micro-relief
+  curvatureMoss: number; // 0..1.2 damp hollow moss/crevice darkening
+  erosionStrength: number; // 0..1.0 thermal & hydraulic gully erosion pass
+  preserveSettlements: boolean; // keep buildings, bridges, roads & caves clear
+  islandFalloff: number; // 0..1 radial coast tapering
+  noiseLayers: ProceduralNoiseLayerConfig[];
+}
+
 export type WaterBodyKind = 'lake' | 'river' | 'stream' | 'pond';
 
 export interface WaterBodyConfig {
@@ -1775,6 +1833,33 @@ export interface WaterBodyConfig {
   shoreNoise: number; // 0..1
 }
 
+export type CaveSurfacePresetId =
+  | 'mossyDrip'
+  | 'crystalSanctum'
+  | 'floodedPuddle'
+  | 'stalactiteVault'
+  | 'lushGrotto'
+  | 'custom';
+
+export interface CaveTunnelNode {
+  id: string;
+  x: number;
+  z: number;
+  floorY?: number;
+  radius: number; // 2.2..12m chamber/tunnel radius
+  height: number; // 2.8..7.5m vault height
+  moss?: number; // 0..1.5
+  puddle?: number; // 0..1.5
+  grass?: number; // 0..1.5
+  stalactites?: number; // 0..1.5
+  stalagmites?: number; // 0..1.5
+  crystals?: number; // 0..1.5
+  hasDrips?: boolean;
+  hasBats?: boolean;
+  batCount?: number;
+  hasTorch?: boolean;
+}
+
 export interface CaveGrotto {
   id: string;
   name?: string;
@@ -1787,12 +1872,24 @@ export interface CaveGrotto {
   archSharpness?: number; // 0.1..1.0
   cavityDepth?: number; // 0.5..2.5
   cavityWidth?: number; // 0.5..2.5
+  surfacePreset?: CaveSurfacePresetId;
+  mossDensity?: number; // 0..1.5
+  puddleDensity?: number; // 0..1.5
+  grassDensity?: number; // 0..1.5
   stalactiteDensity?: number; // 0..1.5
   stalagmiteDensity?: number; // 0..1.5
   crystalDensity?: number; // 0..1.5
   crystalColor?: string;
   hasSpring?: boolean;
   springFlow?: number; // 0.1..2.0
+  hasCeilingDrips?: boolean;
+  dripRate?: number; // 0.2..2.0
+  hasHangingBats?: boolean;
+  batCount?: number; // 1..24
+  batScareRadius?: number; // 2..16m
+  torchCount?: number; // 0..16
+  floorElevation?: number; // Vertical cave floor height (Y) relative to sea level / mountain base
+  tunnelNodes?: CaveTunnelNode[];
 }
 
 export type DirtNoiseKind = 'fineLoam' | 'crackedEarth' | 'rockyGritty' | 'patchy';
@@ -1815,10 +1912,13 @@ export interface RoadSpline {
 export interface DirtAndRoadConfig {
   heroColor: string;
   secondaryColor: string;
+  shoreEarthColor?: string;
   noiseKind: DirtNoiseKind;
   noiseContrast: number; // 0..1
   bumpStrength: number; // 0..1
   degradeAmount: number; // 0..1
+  puddleDensity?: number; // 0..1.5
+  puddleScale?: number; // 0.4..2.0
   pebbleDensity: number; // 0..1.5
   pebbleSpread: number; // 0..1
   pebbleShapeRandomness: number; // 0..1
@@ -1845,6 +1945,7 @@ export interface TerrainData {
   scatter: ScatterItem[];
   caves?: CaveGrotto[];
   mountainConfig?: MountainProfileConfig;
+  proceduralConfig?: ProceduralTerrainConfig;
   waterBodies?: WaterBodyConfig[];
   dirtAndRoadConfig?: DirtAndRoadConfig;
   roads?: RoadSpline[];
@@ -2005,6 +2106,12 @@ export interface GrassFieldConfig {
   mixNoiseScale?: number; // 0.2..3.0
   carexMix?: number; // 0..1 (0 = lush short lawn, 1 = tall arching sedge/carex)
   tuftClumpiness?: number; // 0..1
+  /** Physical 3D overhanging sod/turf lip & rich undercut shadow along creek banks and grass-to-dirt edges */
+  underlayerOverhang?: boolean;
+  /** Thickness and protrusion of the 3D overhanging grassy sod lip (0.2..1.5) */
+  underlayerThickness?: number;
+  /** Depth and contrast of the grass-to-dirt underlayer root transition & undercut shadow (0.2..1.5) */
+  underlayerContrast?: number;
 }
 
 export type SideScrollerLayoutStyle =
@@ -2168,6 +2275,7 @@ export interface GameLevel {
   chapterTitle?: string;
   chapterSummary?: string;
   startPoint?: BoardPoint;
+  startRotation?: number;
   portalPoint?: BoardPoint;
   drivingConfig?: DrivingConfig;
   roguelikeConfig?: RoguelikeConfig;
@@ -2446,6 +2554,8 @@ export type ViewportTool = 'move' | 'rotate' | 'scale' | 'terrain' | 'add';
 export type ViewportShadowQuality = 'off' | 'low' | 'medium' | 'high';
 
 export type ViewportResolutionScale = 0.5 | 0.75 | 1 | 1.25 | 1.5;
+
+export type TerrainQualityTier = 'performance' | 'balanced' | 'ultra';
 
 export type SavePresetScope = 'fullGame' | 'worldLevel' | 'treeStudio' | 'atmosphere';
 

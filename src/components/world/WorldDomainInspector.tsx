@@ -4,6 +4,7 @@ import {
   Box,
   Crosshair,
   Globe,
+  MapPin,
   MessageCircle,
   Mountain,
   Paintbrush,
@@ -22,12 +23,14 @@ import {
 } from 'lucide-react';
 import { EntityKindMeta } from '../../data/registries';
 import type { MakerStore } from '../../store/useMakerStore';
+import { HERO_START_ENTITY_ID } from '../../types/maker';
 import type {
   BeamOrientation,
   BuildingBlockConfig,
   BuildingMaterialId,
   BuildingShapeId,
   CaveGrotto,
+  CaveSurfacePresetId,
   CurveGuideConfig,
   CurveGuidePresetId,
   DirtAndRoadConfig,
@@ -44,6 +47,7 @@ import type {
   LevelEntity,
   MountainNoiseType,
   MountainProfileConfig,
+  ProceduralTerrainConfig,
   PropPresetId,
   RoadBorderScatterKind,
   RoadSpline,
@@ -76,6 +80,7 @@ import { resolveGrassConfig } from '../../three/stylizedGrassSystem';
 import { applyVertexPaintStrokesToObject } from '../../three/vertexPainter';
 import {
   IslandTerrain,
+  applyCaveSurfacePresetValues,
   applyRoadSplineToTerrain,
   applySlopeAutoWeathering,
   carveWaterBodyIntoTerrain,
@@ -87,6 +92,12 @@ import {
   levelBoardToWorld,
   sampleTerrainHeight,
 } from '../../utils/terrain';
+import {
+  PROCEDURAL_TERRAIN_PRESETS,
+  createDefaultProceduralConfig,
+  generateProceduralTerrainFromConfig,
+  normalizeProceduralConfig,
+} from '../../utils/proceduralTerrain';
 import {
   LAND_REGION_PALETTE,
   WORLD_BORDER_GRAY,
@@ -163,6 +174,8 @@ export interface WorldDomainInspectorProps {
   onTriggerFxBurst: (entityId: string) => void;
   onSaveEntityToFxLibrary: (entity: LevelEntity) => void;
   onAddVistaItem: (kind: VistaPropKind, customAssetId?: string, customLabel?: string) => void;
+  isPlacingHero?: boolean;
+  onStartPlaceHero?: () => void;
 }
 
 export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
@@ -204,6 +217,8 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
   onTriggerFxBurst,
   onSaveEntityToFxLibrary,
   onAddVistaItem,
+  isPlacingHero,
+  onStartPlaceHero,
 }) => {
   const { currentLevel, currentEntity, currentProject } = store;
   const [savingBuildingAsset, setSavingBuildingAsset] = useState(false);
@@ -558,6 +573,30 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
         recordUndo
       );
     };
+    const pCfg = normalizeProceduralConfig(terrain.proceduralConfig);
+    const patchProcedural = (
+      label: string,
+      patch: Partial<ProceduralTerrainConfig>,
+      recordUndo = false
+    ) => {
+      store.updateLevel(
+        label,
+        (lvl) => {
+          const base = lvl.terrain ?? createInitialTerrain();
+          return {
+            ...lvl,
+            terrain: {
+              ...base,
+              proceduralConfig: normalizeProceduralConfig({
+                ...(base.proceduralConfig ?? createDefaultProceduralConfig()),
+                ...patch,
+              }),
+            },
+          };
+        },
+        recordUndo
+      );
+    };
     const shapeBrushes: { id: TerrainBrush; label: string }[] = [
       { id: 'terrain', label: 'Expand Terrain' },
       { id: 'raiseGround', label: 'Raise Peak' },
@@ -565,6 +604,10 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
       { id: 'smoothGround', label: 'Smooth' },
       { id: 'flattenGround', label: 'Flatten' },
       { id: 'plateauCliff', label: 'Plateau' },
+      { id: 'proceduralRidge', label: 'Ridge Stamp' },
+      { id: 'proceduralMesa', label: 'Mesa Steps' },
+      { id: 'proceduralCrag', label: 'Warped Crag' },
+      { id: 'hydraulicErosion', label: 'Erode Water' },
       { id: 'weatherCracks', label: 'Cracks' },
       { id: 'weatherErode', label: 'Erode Cliff' },
       { id: 'paintRock', label: 'Paint Rock' },
@@ -658,6 +701,41 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
                 value={store.terrainBrushStrength}
                 onChange={(e) => store.setTerrainBrushStrength(Number(e.target.value))}
                 className="w-full accent-[#F59E0B]"
+              />
+            </label>
+          </div>
+
+          {/* Minimal Sculpt Mode / Hide Scenery While Terraforming */}
+          <div className="pt-2 border-t border-slate-200/70 dark:border-white/[0.06] space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                Fast Sculpt Performance
+              </span>
+            </div>
+            <label className="flex items-center justify-between text-[11px] font-semibold cursor-pointer">
+              <span>Auto-hide scenery while painting</span>
+              <input
+                type="checkbox"
+                checked={(window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt !== false}
+                onChange={(e) => {
+                  (window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt =
+                    e.target.checked;
+                  store.updateLevel('toggle auto-hide scenery on sculpt', (l) => ({ ...l }), false);
+                }}
+                className="accent-[#F59E0B] w-3.5 h-3.5"
+              />
+            </label>
+            <label className="flex items-center justify-between text-[11px] font-semibold cursor-pointer">
+              <span>Hide all scenery now (Clay View)</span>
+              <input
+                type="checkbox"
+                checked={Boolean((window as unknown as { __makerMinimalSculptAlways?: boolean }).__makerMinimalSculptAlways)}
+                onChange={(e) => {
+                  (window as unknown as { __makerMinimalSculptAlways?: boolean }).__makerMinimalSculptAlways =
+                    e.target.checked;
+                  store.updateLevel('toggle minimal sculpt clay view', (l) => ({ ...l }), false);
+                }}
+                className="accent-[#F59E0B] w-3.5 h-3.5"
               />
             </label>
           </div>
@@ -796,6 +874,88 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
             Auto-Weather Steep Slopes
           </button>
         </div>
+
+        {/* Triplanar Cliff Shader & Procedural Generator */}
+        <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
+          <FieldLabel text="Triplanar & Micro-Detail Shader" />
+          <label className="block space-y-0.5">
+            <div className="flex justify-between text-[11px] font-semibold">
+              <span>Triplanar Cliff Strata</span>
+              <span className="tabular-nums text-[#EA580C]">{Math.round(pCfg.triplanarStrength * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={1.5}
+              step={0.05}
+              value={pCfg.triplanarStrength}
+              onChange={(e) => patchProcedural('adjust triplanar strength', { triplanarStrength: Number(e.target.value) })}
+              className="w-full accent-[#EA580C]"
+            />
+          </label>
+          <label className="block space-y-0.5">
+            <div className="flex justify-between text-[11px] font-semibold">
+              <span>Micro-Normal Relief</span>
+              <span className="tabular-nums text-[#7C5CFF]">{Math.round(pCfg.microNormalStrength * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={1.5}
+              step={0.05}
+              value={pCfg.microNormalStrength}
+              onChange={(e) => patchProcedural('adjust micro normal strength', { microNormalStrength: Number(e.target.value) })}
+              className="w-full accent-[#7C5CFF]"
+            />
+          </label>
+          <label className="block space-y-0.5">
+            <div className="flex justify-between text-[11px] font-semibold">
+              <span>Cliff Slope Threshold</span>
+              <span className="tabular-nums text-[#F59E0B]">{Math.round(pCfg.cliffSlopeThreshold * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min={0.18}
+              max={0.85}
+              step={0.02}
+              value={pCfg.cliffSlopeThreshold}
+              onChange={(e) => patchProcedural('adjust cliff threshold', { cliffSlopeThreshold: Number(e.target.value) })}
+              className="w-full accent-[#F59E0B]"
+            />
+          </label>
+          <div className="flex items-center gap-1.5 pt-0.5">
+            <select
+              value={pCfg.presetId}
+              onChange={(e) => {
+                const chosen = PROCEDURAL_TERRAIN_PRESETS.find((p) => p.id === e.target.value);
+                if (chosen) patchProcedural('select procedural preset', chosen.config, true);
+              }}
+              className="flex-1 min-w-0 px-2 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[11px] font-bold"
+            >
+              {PROCEDURAL_TERRAIN_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() =>
+                store.updateLevel('generate procedural landform', (lvl) => ({
+                  ...lvl,
+                  terrain: generateProceduralTerrainFromConfig(
+                    lvl.terrain ?? createInitialTerrain(),
+                    pCfg,
+                    lvl
+                  ),
+                }))
+              }
+              className="px-2.5 py-1.5 rounded-xl bg-[#EA580C] text-white text-[11px] font-extrabold shrink-0"
+            >
+              Generate
+            </button>
+          </div>
+        </div>
       </aside>
     );
   }
@@ -912,6 +1072,38 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
           >
             Carve River Bed
           </button>
+        </div>
+
+        {/* River & Lake Brush Size + Minimal Sculpt Scenery Toggle */}
+        <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2">
+          <label className="block space-y-0.5">
+            <div className="flex justify-between text-[11px] font-semibold">
+              <span>Water Carve Brush Size</span>
+              <span className="tabular-nums">{brushRadius.toFixed(1)}m</span>
+            </div>
+            <input
+              type="range"
+              min={2}
+              max={24}
+              step={0.5}
+              value={brushRadius}
+              onChange={(e) => setBrushRadius(Number(e.target.value))}
+              className="w-full accent-[#0EA5E9]"
+            />
+          </label>
+          <label className="flex items-center justify-between text-[11px] font-semibold cursor-pointer">
+            <span>Hide all scenery now (Clay View)</span>
+            <input
+              type="checkbox"
+              checked={Boolean((window as unknown as { __makerMinimalSculptAlways?: boolean }).__makerMinimalSculptAlways)}
+              onChange={(e) => {
+                (window as unknown as { __makerMinimalSculptAlways?: boolean }).__makerMinimalSculptAlways =
+                  e.target.checked;
+                store.updateLevel('toggle minimal sculpt clay view', (l) => ({ ...l }), false);
+              }}
+              className="accent-[#0EA5E9] w-3.5 h-3.5"
+            />
+          </label>
         </div>
 
         {selectedWb && (
@@ -1051,6 +1243,32 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
       store.updateCaveGrotto(selectedCave.id, patch, recordUndo);
     };
 
+    const winFlags = window as unknown as {
+      __makerDisableCaveXRay?: boolean;
+      __makerForceScareCaveId?: string | null;
+    };
+    const isXRayOn = winFlags.__makerDisableCaveXRay !== true;
+
+    const caveBrushes: Array<{ id: TerrainBrush; label: string; color: string }> = [
+      { id: 'carveCave', label: 'Carve Tunnel', color: '#38BDF8' },
+      { id: 'cavePaintMoss', label: 'Paint Moss', color: '#4D8B4C' },
+      { id: 'cavePaintPuddles', label: 'Paint Puddles', color: '#0EA5E9' },
+      { id: 'cavePaintGrass', label: 'Paint Grass', color: '#22C55E' },
+      { id: 'cavePaintStalactites', label: 'Stalactites', color: '#94A3B8' },
+      { id: 'cavePaintCrystals', label: 'Crystals', color: '#67E8F9' },
+      { id: 'cavePlaceDrips', label: 'Add Drips', color: '#38BDF8' },
+      { id: 'cavePlaceBats', label: 'Add Bats', color: '#A855F7' },
+      { id: 'cavePlaceTorch', label: 'Add Torch', color: '#F97316' },
+    ];
+
+    const surfacePresets: Array<{ id: CaveSurfacePresetId; label: string }> = [
+      { id: 'mossyDrip', label: 'Mossy Drip Cavern' },
+      { id: 'crystalSanctum', label: 'Crystal Sanctum' },
+      { id: 'floodedPuddle', label: 'Flooded Puddle Grotto' },
+      { id: 'stalactiteVault', label: 'Stalactite Vault' },
+      { id: 'lushGrotto', label: 'Lush Overgrown Grotto' },
+    ];
+
     return (
       <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
         <div className="flex items-center justify-between">
@@ -1066,22 +1284,184 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
             }}
             className={`px-2.5 py-1 rounded-xl text-[11px] font-extrabold ${
               activeTool === 'terrain' && brush === 'carveCave'
-                ? 'bg-[#A855F7] text-white'
-                : 'bg-[#A855F7]/15 text-[#A855F7]'
+                ? 'bg-[#38BDF8] text-slate-950'
+                : 'bg-[#38BDF8]/15 text-[#38BDF8]'
             }`}
           >
-            Carve Brush
+            Carve Tunnel
           </button>
+        </div>
+
+        {/* Live X-Ray Mountain Cave Carver & Fast Sculpt Performance */}
+        <div className="p-2.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-extrabold text-cyan-600 dark:text-cyan-300">
+              X-Ray Mountain Carver View
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                winFlags.__makerDisableCaveXRay = isXRayOn;
+                store.updateLevel('toggle cave x-ray view', (l) => ({ ...l }), false);
+              }}
+              className={`px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold ${
+                isXRayOn
+                  ? 'bg-cyan-400 text-slate-950'
+                  : 'bg-slate-200 dark:bg-[#272D3D] text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {isXRayOn ? 'X-Ray ON' : 'X-Ray OFF'}
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-600 dark:text-slate-400 leading-snug">
+            Projects your brush directly onto the interior cave floor plane inside the mountain with see-through X-Ray tunnel vaults.
+          </p>
+          <div className="pt-1.5 border-t border-cyan-500/20 space-y-1">
+            <label className="flex items-center justify-between text-[11px] font-bold cursor-pointer">
+              <span>Auto-hide scenery while carving</span>
+              <input
+                type="checkbox"
+                checked={(window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt !== false}
+                onChange={(e) => {
+                  (window as unknown as { __makerHideSceneryOnSculpt?: boolean }).__makerHideSceneryOnSculpt =
+                    e.target.checked;
+                  store.updateLevel('toggle auto-hide scenery on sculpt', (l) => ({ ...l }), false);
+                }}
+                className="accent-cyan-400 w-3.5 h-3.5"
+              />
+            </label>
+            <label className="flex items-center justify-between text-[11px] font-bold cursor-pointer">
+              <span>Hide all scenery now (Clay View)</span>
+              <input
+                type="checkbox"
+                checked={Boolean((window as unknown as { __makerMinimalSculptAlways?: boolean }).__makerMinimalSculptAlways)}
+                onChange={(e) => {
+                  (window as unknown as { __makerMinimalSculptAlways?: boolean }).__makerMinimalSculptAlways =
+                    e.target.checked;
+                  store.updateLevel('toggle minimal sculpt clay view', (l) => ({ ...l }), false);
+                }}
+                className="accent-cyan-400 w-3.5 h-3.5"
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Cave Carver & Multi-Surface Hand-Paint Brush Palette + Brush Size Settings */}
+        <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
+          <FieldLabel text="Cave Carving & Hand-Paint Brushes" />
+          <div className="grid grid-cols-3 gap-1.5">
+            {caveBrushes.map((b) => {
+              const active = activeTool === 'terrain' && brush === b.id;
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => {
+                    setTool('terrain');
+                    setBrush(b.id);
+                  }}
+                  className={`px-2 py-1.5 rounded-xl text-[10px] font-bold border transition ${
+                    active
+                      ? 'bg-[#A855F7] border-[#A855F7] text-white shadow-sm'
+                      : 'bg-white dark:bg-[#171A23] border-transparent text-slate-700 dark:text-[#C8D0E4] hover:border-slate-300'
+                  }`}
+                >
+                  {b.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Direct Brush Size, Quick Tunnel Presets, Falloff & Strength inside Caves Panel */}
+          <div className="pt-2 border-t border-slate-200/70 dark:border-white/[0.06] space-y-2">
+            <FieldLabel text="Cave Brush Size & Tunnel Width" />
+            <div className="grid grid-cols-4 gap-1">
+              {[
+                { r: 3.5, label: '3.5m Narrow' },
+                { r: 5.0, label: '5m Tunnel' },
+                { r: 8.0, label: '8m Cavern' },
+                { r: 12.0, label: '12m Hall' },
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => {
+                    setTool('terrain');
+                    setBrushRadius(preset.r);
+                  }}
+                  className={`py-1 rounded-lg text-[10px] font-bold border ${
+                    Math.abs(brushRadius - preset.r) < 0.4
+                      ? 'bg-[#38BDF8]/20 border-[#38BDF8] text-[#0284C7] dark:text-[#38BDF8]'
+                      : 'bg-white dark:bg-[#171A23] border-transparent text-slate-600 dark:text-[#949BB0]'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            <label className="block space-y-0.5">
+              <div className="flex justify-between text-[11px] font-semibold">
+                <span>Brush Radius (Tunnel Size)</span>
+                <span className="tabular-nums text-[#38BDF8] font-bold">{brushRadius.toFixed(1)}m</span>
+              </div>
+              <input
+                type="range"
+                min={2.5}
+                max={16}
+                step={0.5}
+                value={brushRadius}
+                onChange={(e) => setBrushRadius(Number(e.target.value))}
+                className="w-full accent-[#38BDF8]"
+              />
+            </label>
+
+            <label className="block space-y-0.5">
+              <div className="flex justify-between text-[11px] font-semibold">
+                <span>Brush Strength</span>
+                <span className="tabular-nums text-slate-500">
+                  {Math.round(store.terrainBrushStrength * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0.2}
+                max={1.5}
+                step={0.05}
+                value={store.terrainBrushStrength}
+                onChange={(e) => store.setTerrainBrushStrength(Number(e.target.value))}
+                className="w-full accent-[#A855F7]"
+              />
+            </label>
+
+            <div className="grid grid-cols-4 gap-1">
+              {(['smooth', 'dome', 'peak', 'plateau'] as TerrainBrushFalloff[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => store.setTerrainBrushFalloff(f)}
+                  className={`py-1 rounded-lg text-[10px] font-bold capitalize ${
+                    store.terrainBrushFalloff === f
+                      ? 'bg-[#A855F7] text-white'
+                      : 'bg-white dark:bg-[#171A23] text-slate-500 dark:text-[#949BB0]'
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="space-y-1 max-h-36 overflow-y-auto maker-scroll">
           {caves.length === 0 ? (
             <div className="text-xs text-slate-500 p-3 rounded-xl bg-slate-100 dark:bg-[#1F2430]">
-              No caves yet — select <strong>Carve Brush</strong> and click on any hillside or ridge.
+              No caves yet — select <strong>Carve Tunnel</strong> and drag inside any mountain or hillside.
             </div>
           ) : (
             caves.map((c, idx) => {
               const active = selectedCave?.id === c.id;
+              const nodeCount = c.tunnelNodes?.length ?? 0;
               return (
                 <button
                   key={c.id}
@@ -1091,7 +1471,7 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
                     store.focusCameraOnWorldPoint({
                       id: c.id,
                       x: c.x,
-                      y: sampleTerrainHeight(terrain, c.x, c.z) + 1.5,
+                      y: (c.floorElevation ?? sampleTerrainHeight(terrain, c.x, c.z)) + 1.5,
                       z: c.z,
                       distance: 22,
                     });
@@ -1104,6 +1484,7 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
                 >
                   <span className="truncate">{c.name || `Cave Grotto ${idx + 1}`}</span>
                   <span className="text-[10px] tabular-nums opacity-70">
+                    {nodeCount > 0 ? `${nodeCount} segs · ` : ''}
                     {Math.round(c.x)}, {Math.round(c.z)}
                   </span>
                 </button>
@@ -1113,44 +1494,415 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
         </div>
 
         {selectedCave && (
-          <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
-            <input
-              type="text"
-              value={selectedCave.name ?? 'Cave Grotto'}
-              onChange={(e) => patchCave('rename cave', { name: e.target.value })}
-              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-xs font-extrabold"
-            />
-            {[
-              { key: 'entranceWidth', label: 'Entrance Width', min: 0.6, max: 2.2, step: 0.05 },
-              { key: 'entranceHeight', label: 'Entrance Height', min: 0.6, max: 2.2, step: 0.05 },
-              { key: 'archSharpness', label: 'Arch Sharpness', min: 0.1, max: 1.0, step: 0.05 },
-              { key: 'cavityDepth', label: 'Chamber Depth', min: 0.6, max: 2.2, step: 0.05 },
-              { key: 'cavityWidth', label: 'Chamber Width', min: 0.6, max: 2.2, step: 0.05 },
-              { key: 'stalactiteDensity', label: 'Stalactites (Ceiling)', min: 0, max: 1.5, step: 0.05 },
-              { key: 'stalagmiteDensity', label: 'Stalagmites (Floor)', min: 0, max: 1.5, step: 0.05 },
-              { key: 'crystalDensity', label: 'Glowing Crystals', min: 0, max: 1.5, step: 0.05 },
-            ].map((s) => {
-              const val = Number((selectedCave as unknown as Record<string, number>)[s.key] ?? 1);
-              return (
-                <label key={s.key} className="block space-y-0.5">
+          <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-3">
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={selectedCave.name ?? 'Cave Grotto'}
+                onChange={(e) => patchCave('rename cave', { name: e.target.value })}
+                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-xs font-extrabold"
+              />
+              {(selectedCave.tunnelNodes?.length ?? 0) > 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const trimmed = (selectedCave.tunnelNodes ?? []).slice(0, -1);
+                    patchCave('undo last cave segment', { tunnelNodes: trimmed }, true);
+                  }}
+                  className="px-2 py-1.5 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-300 text-[10px] font-extrabold hover:bg-amber-500/25 shrink-0"
+                  title="Remove last carved tunnel segment"
+                >
+                  Undo Seg
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  store.updateLevel(
+                    'delete cave grotto',
+                    (lvl) => ({
+                      ...lvl,
+                      terrain: {
+                        ...(lvl.terrain ?? createInitialTerrain()),
+                        caves: (lvl.terrain?.caves ?? []).filter((c) => c.id !== selectedCave.id),
+                      },
+                    }),
+                    true
+                  );
+                }}
+                className="p-1.5 rounded-xl bg-[#F2545B]/15 text-[#F2545B] hover:bg-[#F2545B]/25 shrink-0"
+                title="Delete cave"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+
+            {/* Cave Elevation & Position Relative to Mountain */}
+            <div className="p-2.5 rounded-xl bg-white dark:bg-[#171A23] space-y-2 border border-slate-200/70 dark:border-white/[0.06]">
+              <FieldLabel text="Cave Elevation & Mountain Position" />
+              {(() => {
+                const curFloorY =
+                  selectedCave.floorElevation ??
+                  selectedCave.tunnelNodes?.[0]?.floorY ??
+                  Math.max(
+                    IslandTerrain.waterLevel + 0.55,
+                    Math.min(sampleTerrainHeight(terrain, selectedCave.x, selectedCave.z), 2.5)
+                  );
+                const mountainPeakH = sampleTerrainHeight(terrain, selectedCave.x, selectedCave.z);
+                const applyCaveElevation = (nextY: number, recordUndo = false) => {
+                  const clampedY = Number(nextY.toFixed(2));
+                  const nextNodes = (selectedCave.tunnelNodes ?? []).map((n) => ({
+                    ...n,
+                    floorY: clampedY,
+                  }));
+                  patchCave(
+                    'adjust cave floor elevation',
+                    {
+                      floorElevation: clampedY,
+                      tunnelNodes: nextNodes.length > 0 ? nextNodes : selectedCave.tunnelNodes,
+                    },
+                    recordUndo
+                  );
+                };
+                const shiftCavePosition = (dx: number, dz: number, recordUndo = false) => {
+                  const nx = Number((selectedCave.x + dx).toFixed(2));
+                  const nz = Number((selectedCave.z + dz).toFixed(2));
+                  const nextNodes = (selectedCave.tunnelNodes ?? []).map((n) => ({
+                    ...n,
+                    x: Number((n.x + dx).toFixed(2)),
+                    z: Number((n.z + dz).toFixed(2)),
+                  }));
+                  patchCave(
+                    'shift cave position relative to mountain',
+                    {
+                      x: nx,
+                      z: nz,
+                      tunnelNodes: nextNodes.length > 0 ? nextNodes : selectedCave.tunnelNodes,
+                    },
+                    recordUndo
+                  );
+                };
+                return (
+                  <div className="space-y-2">
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[11px] font-semibold">
+                        <span>Floor Elevation (Y)</span>
+                        <span className="tabular-nums text-[#38BDF8] font-bold">
+                          {curFloorY.toFixed(1)}m{' '}
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            (Roof {mountainPeakH.toFixed(1)}m)
+                          </span>
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={-0.2}
+                        max={16.0}
+                        step={0.1}
+                        value={curFloorY}
+                        onChange={(e) => applyCaveElevation(Number(e.target.value), false)}
+                        className="w-full accent-[#38BDF8]"
+                      />
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block space-y-0.5">
+                        <div className="flex justify-between text-[10px] font-semibold">
+                          <span>West / East (X)</span>
+                          <span className="tabular-nums text-slate-500">{selectedCave.x.toFixed(1)}m</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={-85}
+                          max={85}
+                          step={0.5}
+                          value={selectedCave.x}
+                          onChange={(e) => shiftCavePosition(Number(e.target.value) - selectedCave.x, 0, false)}
+                          className="w-full accent-[#A855F7]"
+                        />
+                      </label>
+                      <label className="block space-y-0.5">
+                        <div className="flex justify-between text-[10px] font-semibold">
+                          <span>North / South (Z)</span>
+                          <span className="tabular-nums text-slate-500">{selectedCave.z.toFixed(1)}m</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={-85}
+                          max={85}
+                          step={0.5}
+                          value={selectedCave.z}
+                          onChange={(e) => shiftCavePosition(0, Number(e.target.value) - selectedCave.z, false)}
+                          className="w-full accent-[#A855F7]"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-5 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => shiftCavePosition(-1.5, 0, true)}
+                        className="py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold hover:bg-slate-200 dark:hover:bg-[#2A3040]"
+                      >
+                        ← West
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => shiftCavePosition(1.5, 0, true)}
+                        className="py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold hover:bg-slate-200 dark:hover:bg-[#2A3040]"
+                      >
+                        East →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => shiftCavePosition(0, -1.5, true)}
+                        className="py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold hover:bg-slate-200 dark:hover:bg-[#2A3040]"
+                      >
+                        ↑ North
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => shiftCavePosition(0, 1.5, true)}
+                        className="py-1 rounded-lg bg-slate-100 dark:bg-[#1F2430] text-[10px] font-bold hover:bg-slate-200 dark:hover:bg-[#2A3040]"
+                      >
+                        South ↓
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyCaveElevation(1.55, true)}
+                        className="py-1 rounded-lg bg-[#38BDF8]/15 text-[#0284C7] dark:text-[#38BDF8] text-[10px] font-bold hover:bg-[#38BDF8]/25"
+                        title="Reset floor elevation to mountain base (1.55m)"
+                      >
+                        Base Y
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Multi-Surface Cave Presets */}
+            <div className="space-y-1.5">
+              <FieldLabel text="Multi-Surface Cave Presets" />
+              <div className="grid grid-cols-2 gap-1.5">
+                {surfacePresets.map((p) => {
+                  const isActive = selectedCave.surfacePreset === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() =>
+                        patchCave(
+                          `apply ${p.label} cave preset`,
+                          applyCaveSurfacePresetValues(p.id),
+                          true
+                        )
+                      }
+                      className={`px-2 py-1.5 rounded-xl text-[10px] font-bold text-left border ${
+                        isActive
+                          ? 'border-[#A855F7] bg-[#A855F7]/15 text-[#A855F7]'
+                          : 'border-transparent bg-white dark:bg-[#171A23] text-slate-700 dark:text-[#C8D0E4]'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Ground, Ceiling & Formation Mix */}
+            <div className="space-y-1.5 pt-1 border-t border-slate-200/70 dark:border-white/[0.06]">
+              <FieldLabel text="Ground Surfaces & Formations" />
+              {[
+                { key: 'mossDensity', label: 'Moss Carpet', min: 0, max: 1.5, step: 0.05, fallback: 0.65 },
+                { key: 'puddleDensity', label: 'Reflective Puddles', min: 0, max: 1.5, step: 0.05, fallback: 0.45 },
+                { key: 'grassDensity', label: 'Cave Grass Tufts', min: 0, max: 1.5, step: 0.05, fallback: 0.25 },
+                { key: 'stalactiteDensity', label: 'Stalactites (Ceiling)', min: 0, max: 1.5, step: 0.05, fallback: 0.65 },
+                { key: 'stalagmiteDensity', label: 'Stalagmites (Floor)', min: 0, max: 1.5, step: 0.05, fallback: 0.5 },
+                { key: 'crystalDensity', label: 'Glowing Crystals', min: 0, max: 1.5, step: 0.05, fallback: 0.5 },
+              ].map((s) => {
+                const rawVal = (selectedCave as unknown as Record<string, number | undefined>)[s.key];
+                const val = typeof rawVal === 'number' ? rawVal : s.fallback;
+                return (
+                  <label key={s.key} className="block space-y-0.5">
+                    <div className="flex justify-between text-[11px] font-semibold">
+                      <span>{s.label}</span>
+                      <span className="tabular-nums text-slate-500">{Math.round(val * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={s.min}
+                      max={s.max}
+                      step={s.step}
+                      value={val}
+                      onChange={(e) =>
+                        patchCave(`adjust ${s.label}`, {
+                          surfacePreset: 'custom',
+                          [s.key]: Number(e.target.value),
+                        })
+                      }
+                      className="w-full accent-[#A855F7]"
+                    />
+                  </label>
+                );
+              })}
+            </div>
+
+            {/* Ceiling Water Drips to Puddles FX */}
+            <div className="space-y-1.5 pt-2 border-t border-slate-200/70 dark:border-white/[0.06]">
+              <label className="flex items-center justify-between text-xs font-bold cursor-pointer">
+                <span>Ceiling Drips → Puddles FX</span>
+                <input
+                  type="checkbox"
+                  checked={selectedCave.hasCeilingDrips !== false}
+                  onChange={(e) =>
+                    patchCave('toggle ceiling drips', { hasCeilingDrips: e.target.checked }, true)
+                  }
+                  className="accent-[#38BDF8] w-4 h-4"
+                />
+              </label>
+              {selectedCave.hasCeilingDrips !== false && (
+                <label className="block space-y-0.5">
                   <div className="flex justify-between text-[11px] font-semibold">
-                    <span>{s.label}</span>
-                    <span className="tabular-nums text-slate-500">{Math.round(val * 100)}%</span>
+                    <span>Drip Frequency &amp; Ripples</span>
+                    <span className="tabular-nums text-slate-500">
+                      {Math.round((selectedCave.dripRate ?? 0.6) * 100)}%
+                    </span>
                   </div>
                   <input
                     type="range"
-                    min={s.min}
-                    max={s.max}
-                    step={s.step}
-                    value={val}
-                    onChange={(e) =>
-                      patchCave(`adjust ${s.label}`, { [s.key]: Number(e.target.value) })
-                    }
-                    className="w-full accent-[#A855F7]"
+                    min={0.1}
+                    max={1.5}
+                    step={0.05}
+                    value={selectedCave.dripRate ?? 0.6}
+                    onChange={(e) => patchCave('drip rate', { dripRate: Number(e.target.value) })}
+                    className="w-full accent-[#38BDF8]"
                   />
                 </label>
-              );
-            })}
+              )}
+            </div>
+
+            {/* Hanging Upside-Down Bats + Proximity Scare Rule */}
+            <div className="space-y-2 pt-2 border-t border-slate-200/70 dark:border-white/[0.06]">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-xs font-bold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedCave.hasHangingBats !== false}
+                    onChange={(e) =>
+                      patchCave('toggle hanging bats', { hasHangingBats: e.target.checked }, true)
+                    }
+                    className="accent-[#A855F7] w-4 h-4"
+                  />
+                  <span>Upside-Down Hanging Bats</span>
+                </label>
+                {selectedCave.hasHangingBats !== false && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      winFlags.__makerForceScareCaveId = selectedCave.id;
+                      window.setTimeout(() => {
+                        if (winFlags.__makerForceScareCaveId === selectedCave.id) {
+                          winFlags.__makerForceScareCaveId = null;
+                        }
+                      }, 4600);
+                    }}
+                    className="px-2 py-0.5 rounded-lg bg-[#A855F7] text-white text-[10px] font-extrabold hover:opacity-90"
+                  >
+                    Test Scare Bats!
+                  </button>
+                )}
+              </div>
+
+              {selectedCave.hasHangingBats !== false && (
+                <>
+                  <label className="block space-y-0.5">
+                    <div className="flex justify-between text-[11px] font-semibold">
+                      <span>Roosting Bat Count</span>
+                      <span className="tabular-nums text-slate-500">{selectedCave.batCount ?? 5}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={1}
+                      max={16}
+                      step={1}
+                      value={selectedCave.batCount ?? 5}
+                      onChange={(e) => patchCave('bat count', { batCount: Number(e.target.value) })}
+                      className="w-full accent-[#A855F7]"
+                    />
+                  </label>
+                  <label className="block space-y-0.5">
+                    <div className="flex justify-between text-[11px] font-semibold">
+                      <span>Rule: Scare &amp; Fly-Away Distance</span>
+                      <span className="tabular-nums text-slate-500">
+                        {(selectedCave.batScareRadius ?? 6.5).toFixed(1)}m
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={2.5}
+                      max={16}
+                      step={0.5}
+                      value={selectedCave.batScareRadius ?? 6.5}
+                      onChange={(e) =>
+                        patchCave('bat scare radius', { batScareRadius: Number(e.target.value) })
+                      }
+                      className="w-full accent-[#A855F7]"
+                    />
+                  </label>
+                </>
+              )}
+            </div>
+
+            {/* Wall Torches & Entrance Dimensions */}
+            <div className="space-y-1.5 pt-2 border-t border-slate-200/70 dark:border-white/[0.06]">
+              <FieldLabel text="Torches & Chamber Dimensions" />
+              <label className="block space-y-0.5">
+                <div className="flex justify-between text-[11px] font-semibold">
+                  <span>Flickering Wall Torches</span>
+                  <span className="tabular-nums text-slate-500">{selectedCave.torchCount ?? 2}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={8}
+                  step={1}
+                  value={selectedCave.torchCount ?? 2}
+                  onChange={(e) => patchCave('torch count', { torchCount: Number(e.target.value) })}
+                  className="w-full accent-[#F97316]"
+                />
+              </label>
+
+              {[
+                { key: 'entranceWidth', label: 'Entrance Width', min: 0.6, max: 2.2, step: 0.05 },
+                { key: 'entranceHeight', label: 'Entrance Height', min: 0.6, max: 2.2, step: 0.05 },
+                { key: 'archSharpness', label: 'Arch Sharpness', min: 0.1, max: 1.0, step: 0.05 },
+                { key: 'cavityDepth', label: 'Chamber Depth', min: 0.6, max: 2.2, step: 0.05 },
+                { key: 'cavityWidth', label: 'Chamber Width', min: 0.6, max: 2.2, step: 0.05 },
+              ].map((s) => {
+                const val = Number((selectedCave as unknown as Record<string, number>)[s.key] ?? 1);
+                return (
+                  <label key={s.key} className="block space-y-0.5">
+                    <div className="flex justify-between text-[11px] font-semibold">
+                      <span>{s.label}</span>
+                      <span className="tabular-nums text-slate-500">{Math.round(val * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={s.min}
+                      max={s.max}
+                      step={s.step}
+                      value={val}
+                      onChange={(e) =>
+                        patchCave(`adjust ${s.label}`, { [s.key]: Number(e.target.value) })
+                      }
+                      className="w-full accent-[#A855F7]"
+                    />
+                  </label>
+                );
+              })}
+            </div>
 
             <div className="flex items-center justify-between pt-1">
               <span className="text-[11px] font-semibold">Crystal Color</span>
@@ -1335,6 +2087,57 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
             </div>
           )}
         </div>
+
+        {/* Grass-to-Dirt Overhanging Sod Underlayer (Creek Banks & Drop-Offs) */}
+        <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
+          <FieldLabel text="Grass-to-Dirt Overhanging Underlayer" />
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">
+            Adds a thick fibrous grassy sod lip and root-undercut overhang shadow where grass meets dirt trails or steep creek banks.
+          </p>
+          <label className="flex items-center justify-between text-[11px] font-bold cursor-pointer">
+            <span>3D Overhanging Sod Ledge</span>
+            <input
+              type="checkbox"
+              checked={grassCfg.underlayerOverhang !== false}
+              onChange={(e) => patchGrass({ underlayerOverhang: e.target.checked }, true)}
+              className="accent-[#20B46A] w-4 h-4"
+            />
+          </label>
+          <label className="block space-y-0.5">
+            <div className="flex justify-between text-[11px] font-semibold">
+              <span>Overhang Lip Thickness</span>
+              <span className="tabular-nums text-slate-500">
+                {Math.round((grassCfg.underlayerThickness ?? 0.88) * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0.25}
+              max={1.5}
+              step={0.05}
+              value={grassCfg.underlayerThickness ?? 0.88}
+              onChange={(e) => patchGrass({ underlayerThickness: Number(e.target.value) })}
+              className="w-full accent-[#20B46A]"
+            />
+          </label>
+          <label className="block space-y-0.5">
+            <div className="flex justify-between text-[11px] font-semibold">
+              <span>Turf Edge &amp; Undercut Depth</span>
+              <span className="tabular-nums text-slate-500">
+                {Math.round((grassCfg.underlayerContrast ?? 0.92) * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={1.5}
+              step={0.05}
+              value={grassCfg.underlayerContrast ?? 0.92}
+              onChange={(e) => patchGrass({ underlayerContrast: Number(e.target.value) })}
+              className="w-full accent-[#20B46A]"
+            />
+          </label>
+        </div>
       </aside>
     );
   }
@@ -1405,26 +2208,113 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
           ))}
         </div>
 
-        {/* Dual-Tone Dirt Material & Noise */}
+        {/* Ground Detail & Chocolate Soil Presets */}
+        <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2">
+          <FieldLabel text="Ground Surface Presets" />
+          <div className="grid grid-cols-2 gap-1.5">
+            {[
+              {
+                label: 'Chocolate River Loam',
+                patch: {
+                  heroColor: '#765239',
+                  secondaryColor: '#523724',
+                  shoreEarthColor: '#5C3E2B',
+                  noiseKind: 'fineLoam' as DirtNoiseKind,
+                  noiseContrast: 0.64,
+                  bumpStrength: 0.65,
+                  puddleDensity: 0.52,
+                  puddleScale: 1.0,
+                  pebbleDensity: 0.72,
+                  pebbleColor: '#7A6E63',
+                },
+              },
+              {
+                label: 'Pebbled Forest Trail',
+                patch: {
+                  heroColor: '#7D583D',
+                  secondaryColor: '#563B27',
+                  shoreEarthColor: '#63432E',
+                  noiseKind: 'rockyGritty' as DirtNoiseKind,
+                  noiseContrast: 0.75,
+                  bumpStrength: 0.82,
+                  puddleDensity: 0.34,
+                  puddleScale: 0.85,
+                  pebbleDensity: 1.25,
+                  pebbleColor: '#857C73',
+                },
+              },
+              {
+                label: 'Muddy Puddles & Stones',
+                patch: {
+                  heroColor: '#5E3F29',
+                  secondaryColor: '#3E2819',
+                  shoreEarthColor: '#4B311F',
+                  noiseKind: 'patchy' as DirtNoiseKind,
+                  noiseContrast: 0.72,
+                  bumpStrength: 0.7,
+                  puddleDensity: 0.88,
+                  puddleScale: 1.15,
+                  pebbleDensity: 0.9,
+                  pebbleColor: '#6E665E',
+                },
+              },
+              {
+                label: 'Cracked Dry Earth',
+                patch: {
+                  heroColor: '#8C6244',
+                  secondaryColor: '#63432C',
+                  shoreEarthColor: '#6E4C34',
+                  noiseKind: 'crackedEarth' as DirtNoiseKind,
+                  noiseContrast: 0.8,
+                  bumpStrength: 0.78,
+                  puddleDensity: 0.12,
+                  puddleScale: 0.8,
+                  pebbleDensity: 0.65,
+                  pebbleColor: '#8E8377',
+                },
+              },
+            ].map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => patchDirt(`apply ${p.label}`, p.patch, true)}
+                className="px-2 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[10px] font-bold text-left hover:border-[#C2854E] border border-transparent"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Dual-Tone Dirt Material, Chocolate Shore Earth & Puddles */}
         <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
-          <FieldLabel text="Dirt Palette & Noise" />
-          <div className="grid grid-cols-2 gap-2">
-            <label className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[11px] font-semibold">
-              <span>Hero Dirt</span>
+          <FieldLabel text="Dirt, Chocolate Shore & Puddles" />
+          <div className="grid grid-cols-3 gap-1.5">
+            <label className="flex items-center justify-between px-2 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[10px] font-semibold">
+              <span>Hero</span>
               <input
                 type="color"
                 value={dc.heroColor}
                 onChange={(e) => patchDirt('dirt hero color', { heroColor: e.target.value })}
-                className="w-6 h-5 rounded border-0 bg-transparent cursor-pointer"
+                className="w-5 h-5 rounded border-0 bg-transparent cursor-pointer"
               />
             </label>
-            <label className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[11px] font-semibold">
-              <span>Secondary</span>
+            <label className="flex items-center justify-between px-2 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[10px] font-semibold">
+              <span>Deep</span>
               <input
                 type="color"
                 value={dc.secondaryColor}
                 onChange={(e) => patchDirt('dirt secondary color', { secondaryColor: e.target.value })}
-                className="w-6 h-5 rounded border-0 bg-transparent cursor-pointer"
+                className="w-5 h-5 rounded border-0 bg-transparent cursor-pointer"
+              />
+            </label>
+            <label className="flex items-center justify-between px-2 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[10px] font-semibold">
+              <span>Shore</span>
+              <input
+                type="color"
+                value={dc.shoreEarthColor ?? '#5C3E2B'}
+                onChange={(e) => patchDirt('shore earth color', { shoreEarthColor: e.target.value })}
+                className="w-5 h-5 rounded border-0 bg-transparent cursor-pointer"
               />
             </label>
           </div>
@@ -1439,33 +2329,39 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
             <option value="patchy">Patchy Wild Trail</option>
           </select>
           {[
-            { key: 'noiseContrast', label: 'Color Mix Contrast', max: 1 },
-            { key: 'bumpStrength', label: 'Soil Bump Relief', max: 1 },
-            { key: 'degradeAmount', label: 'Ground Weathering', max: 1 },
-          ].map((s) => (
-            <label key={s.key} className="block space-y-0.5">
-              <div className="flex justify-between text-[11px] font-semibold">
-                <span>{s.label}</span>
-                <span className="tabular-nums text-slate-500">
-                  {Math.round(Number((dc as unknown as Record<string, number>)[s.key]) * 100)}%
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={s.max}
-                step={0.05}
-                value={Number((dc as unknown as Record<string, number>)[s.key])}
-                onChange={(e) => patchDirt(`adjust ${s.label}`, { [s.key]: Number(e.target.value) })}
-                className="w-full accent-[#C2854E]"
-              />
-            </label>
-          ))}
+            { key: 'noiseContrast', label: 'Color Mix Contrast', min: 0, max: 1, fallback: 0.62 },
+            { key: 'bumpStrength', label: 'Soil & Pebble Relief', min: 0, max: 1, fallback: 0.65 },
+            { key: 'puddleDensity', label: 'Surface Puddle Density', min: 0, max: 1, fallback: 0.48 },
+            { key: 'puddleScale', label: 'Puddle Size Scale', min: 0.4, max: 1.8, fallback: 1.0 },
+            { key: 'degradeAmount', label: 'Ground Weathering', min: 0, max: 1, fallback: 0.35 },
+          ].map((s) => {
+            const raw = (dc as unknown as Record<string, number | undefined>)[s.key];
+            const val = typeof raw === 'number' ? raw : s.fallback;
+            return (
+              <label key={s.key} className="block space-y-0.5">
+                <div className="flex justify-between text-[11px] font-semibold">
+                  <span>{s.label}</span>
+                  <span className="tabular-nums text-slate-500">
+                    {Math.round(val * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={s.min}
+                  max={s.max}
+                  step={0.05}
+                  value={val}
+                  onChange={(e) => patchDirt(`adjust ${s.label}`, { [s.key]: Number(e.target.value) })}
+                  className="w-full accent-[#C2854E]"
+                />
+              </label>
+            );
+          })}
         </div>
 
         {/* Pebbles & Stones */}
         <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2">
-          <FieldLabel text="Pebbles & Surface Rocks" />
+          <FieldLabel text="3D Pebbles & Surface Rocks" />
           <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[11px] font-semibold">
             <span>Pebble Tint</span>
             <input
@@ -1815,14 +2711,166 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
   }
 
   // --- DOMAIN: SELECT / ENTITY OR BUILDINGS ---
+  const isHeroSelected = store.selectedEntityID === HERO_START_ENTITY_ID;
+  const heroCustomAsset = currentProject.heroCustomAssetId
+    ? store.customAssets.find((a) => a.id === currentProject.heroCustomAssetId) ?? null
+    : null;
+  const heroBp =
+    store.playFromPoint ??
+    currentLevel.startPoint ??
+    (envType === 'sideScroller' ? { x: 0.1, y: 0.5 } : { x: 0.14, y: 0.8 });
+  const [heroWorldX, heroWorldZ] = levelBoardToWorld(currentLevel, heroBp);
+  const heroRotationDeg =
+    currentLevel.startRotation ?? (envType === 'sideScroller' ? 90 : 135);
+
   const showBuildingPlacementInspector =
+    !isHeroSelected &&
     !currentEntity &&
     store.worldViewMode === '3d' &&
     (domain === 'buildings' || (activeTool === 'add' && addPaletteMode === 'blocks'));
 
   return (
     <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
-      {currentEntity ? (
+      {isHeroSelected ? (
+        <>
+          <div className="flex items-center gap-3">
+            <AssetThumbnail
+              customAsset={heroCustomAsset}
+              hero={{
+                body: currentProject.heroBody,
+                colors: currentProject.heroColors,
+              }}
+              size={46}
+              rounded="rounded-xl"
+              alt={currentProject.heroName}
+            />
+            <div className="min-w-0 flex-1">
+              <input
+                type="text"
+                value={currentProject.heroName}
+                onChange={(e) =>
+                  store.updateProject('rename hero', (p) => ({ ...p, heroName: e.target.value }), false)
+                }
+                className="w-full text-sm font-extrabold bg-transparent focus:outline-none border-b border-transparent focus:border-[#7C5CFF]"
+              />
+              <div className="text-[11px] text-[#7C5CFF] font-bold truncate">
+                Playable Hero · World Start
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const wy = sampleTerrainHeight(terrain, heroWorldX, heroWorldZ);
+                store.focusCameraOnWorldPoint({
+                  id: HERO_START_ENTITY_ID,
+                  x: heroWorldX,
+                  y: wy + 1.1,
+                  z: heroWorldZ,
+                  distance: 18,
+                });
+              }}
+              title="Focus camera on Hero"
+              className="p-2 rounded-xl bg-slate-100 dark:bg-[#1F2430] hover:bg-[#7C5CFF]/20 text-[#7C5CFF] shrink-0"
+            >
+              <Crosshair size={14} />
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onStartPlaceHero?.()}
+            className={`w-full py-2.5 px-3 rounded-xl text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-xs transition-colors ${
+              isPlacingHero
+                ? 'bg-[#20B46A] text-white'
+                : 'bg-[#7C5CFF] hover:bg-[#6A48F5] text-white'
+            }`}
+          >
+            <MapPin size={13} />
+            <span>{isPlacingHero ? 'Click Anywhere on Map to Place…' : 'Place Hero on Map'}</span>
+          </button>
+
+          <p className="text-[11px] text-slate-500 dark:text-[#949BB0] leading-relaxed">
+            Drag your Hero directly in the 3D viewport (Move tool) or click <strong className="text-slate-700 dark:text-slate-200">Place Hero on Map</strong> to drop them anywhere on the terrain.
+          </p>
+
+          <div className="space-y-3 pt-2 border-t border-slate-200/70 dark:border-white/[0.08]">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span>Facing / Turn</span>
+                <div className="flex items-center gap-1">
+                  {[-90, -45, 45, 90].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() =>
+                        store.rotateHeroStart((Math.round((heroRotationDeg + d) / 45) * 45 + 360) % 360, true)
+                      }
+                      className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#1F2430] hover:bg-[#7C5CFF]/20 text-[10px] font-bold"
+                    >
+                      {d > 0 ? `+${d}°` : `${d}°`}
+                    </button>
+                  ))}
+                  <span className="tabular-nums text-slate-500 ml-1">
+                    {Math.round(heroRotationDeg)}°
+                  </span>
+                </div>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={360}
+                value={((heroRotationDeg % 360) + 360) % 360}
+                onChange={(e) => store.rotateHeroStart(Number(e.target.value), false)}
+                className="w-full accent-[#7C5CFF]"
+              />
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-[#1F2430] flex items-center justify-between text-[11px] font-semibold">
+              <span className="text-slate-500 dark:text-[#949BB0]">Position</span>
+              <span className="tabular-nums">
+                X {heroWorldX.toFixed(1)}m · Z {heroWorldZ.toFixed(1)}m
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => store.moveEntity(HERO_START_ENTITY_ID, { x: 0.5, y: 0.5 }, true)}
+                className="py-2 rounded-xl bg-slate-100 dark:bg-[#1F2430] hover:bg-[#7C5CFF]/15 text-[11px] font-bold"
+              >
+                Center on Land
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  store.setSelectedEntityID(null);
+                  store.setSelectedSection('cast');
+                  store.setSelectedTab('cast');
+                }}
+                className="py-2 rounded-xl bg-[#7C5CFF]/15 text-[#7C5CFF] hover:bg-[#7C5CFF]/25 text-[11px] font-bold inline-flex items-center justify-center gap-1"
+              >
+                <User size={12} />
+                <span>Edit in Cast</span>
+              </button>
+            </div>
+
+            <label className="flex items-center justify-between gap-2 pt-1 text-xs font-semibold cursor-pointer">
+              <span>Hero spawns in this land</span>
+              <input
+                type="checkbox"
+                checked={currentLevel.hasStart}
+                onChange={(e) =>
+                  store.updateLevel('toggle hero spawn', (lvl) => ({
+                    ...lvl,
+                    hasStart: e.target.checked,
+                  }))
+                }
+                className="w-4 h-4 accent-[#7C5CFF]"
+              />
+            </label>
+          </div>
+        </>
+      ) : currentEntity ? (
         <>
           <div className="flex items-center gap-3">
             <AssetThumbnail
