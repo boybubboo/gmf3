@@ -798,7 +798,12 @@ export class WorldInteractivitySystem {
     return best;
   }
 
-  public pickUpRock(rock: PickupRockItem): void {
+  public pickUpRock(
+    rock: PickupRockItem,
+    heroX?: number,
+    heroZ?: number,
+    heroYaw?: number
+  ): void {
     if (this.carriedRock || rock.state !== 'ground') return;
     rock.state = 'carried';
     rock.vx = 0;
@@ -807,8 +812,18 @@ export class WorldInteractivitySystem {
     this.carriedRock = rock;
     this.aimRangeOffset = 0;
     this.hasPointerAim = false;
+    if (heroX !== undefined && heroZ !== undefined && heroYaw !== undefined) {
+      const defaultRange = rock.kind === 'boulder' ? 6.4 : 11.2;
+      this.aimX = heroX + Math.sin(heroYaw) * defaultRange;
+      this.aimZ = heroZ + Math.cos(heroYaw) * defaultRange;
+      this.aimY = sampleLevelHeight(this.level, this.aimX, this.aimZ);
+    }
     this.bullseyeGroup.visible = true;
     for (const dot of this.arcDots) dot.visible = true;
+  }
+
+  public clearPointerAim(): void {
+    this.hasPointerAim = false;
   }
 
   public dropCarriedRock(heroX: number, heroY: number, heroZ: number, heroYaw: number): void {
@@ -847,7 +862,8 @@ export class WorldInteractivitySystem {
     heroX: number,
     heroY: number,
     heroZ: number,
-    heroYaw: number
+    heroYaw: number,
+    isFirstPerson = false
   ): void {
     const r = this.carriedRock;
     if (!r) {
@@ -863,8 +879,20 @@ export class WorldInteractivitySystem {
     const rightX = Math.cos(heroYaw);
     const rightZ = -Math.sin(heroYaw);
 
-    // Position held rock naturally: 1-handed rock in right hand, 2-handed boulder lifted overhead/chest-high!
-    if (r.kind === 'boulder') {
+    // Position held rock naturally: in POV mode keep it lower-forward so the aiming bullseye & arc are unobstructed
+    if (isFirstPerson) {
+      if (r.kind === 'boulder') {
+        r.x = heroX + fwdX * 0.74;
+        r.y = heroY + 1.06 + Math.sin(elapsed * 4.2) * 0.02;
+        r.z = heroZ + fwdZ * 0.74;
+        r.mesh.rotation.y = heroYaw;
+      } else {
+        r.x = heroX + fwdX * 0.64 + rightX * 0.36;
+        r.y = heroY + 1.18 + Math.sin(elapsed * 5.0) * 0.015;
+        r.z = heroZ + fwdZ * 0.64 + rightZ * 0.36;
+        r.mesh.rotation.y = heroYaw;
+      }
+    } else if (r.kind === 'boulder') {
       r.x = heroX + fwdX * 0.24;
       r.y = heroY + 1.98 + Math.sin(elapsed * 4.2) * 0.02;
       r.z = heroZ + fwdZ * 0.24;

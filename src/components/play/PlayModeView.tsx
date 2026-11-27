@@ -4838,6 +4838,41 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         resolvedCamModeRef.current = behindMode;
         setLiveCamMode(behindMode);
       };
+      let preRockCamMode: CameraMode | null = null;
+      let preRockCamYaw: number | null = null;
+      const enterRockAimPov = () => {
+        if (isDriving || env === 'sideScroller') return;
+        const curCam = resolvedCamModeRef.current;
+        if (preRockCamMode === null) {
+          preRockCamMode = curCam;
+          preRockCamYaw = inputRef.current.cameraYaw;
+        }
+        // Pitch slightly downward so the ground ahead, dotted arc, and orange bullseye are centered in POV
+        inputRef.current.lookPitchOffset = -0.16;
+        inputRef.current.lookYawOffset = 0;
+        inputRef.current.cameraYaw = Math.atan2(-Math.sin(heroYaw), -Math.cos(heroYaw));
+        resolvedCamModeRef.current = 'firstPerson';
+        setLiveCamMode('firstPerson');
+      };
+      const exitRockAimPov = () => {
+        if (isDriving || env === 'sideScroller' || preRockCamMode === null) return;
+        const restoreMode = preRockCamMode;
+        const restoreYaw = preRockCamYaw;
+        preRockCamMode = null;
+        preRockCamYaw = null;
+        smoothCamYaw = heroYaw;
+        inputRef.current.lookPitchOffset = 0;
+        inputRef.current.lookYawOffset = 0;
+        if (restoreMode === 'firstPerson') {
+          inputRef.current.cameraYaw = Math.atan2(-Math.sin(heroYaw), -Math.cos(heroYaw));
+        } else if (restoreYaw !== null) {
+          inputRef.current.cameraYaw = restoreYaw;
+        } else {
+          inputRef.current.cameraYaw = Math.atan2(-Math.sin(heroYaw), -Math.cos(heroYaw));
+        }
+        resolvedCamModeRef.current = restoreMode;
+        setLiveCamMode(restoreMode);
+      };
       let isClimbing = false;
       let climbKind: 'entity' | 'tree' | 'mountain' = 'entity';
       let climbingTree: (typeof islandHandles.choppableTrees)[number] | null = null;
@@ -6296,6 +6331,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             const turnInput = THREE.MathUtils.clamp(moveX, -1, 1);
             if (Math.abs(turnInput) > 0.05) {
               inp.cameraYaw -= turnInput * 2.35 * dt;
+              worldInteract?.clearPointerAim();
             }
             heroYaw = Math.atan2(-Math.sin(inp.cameraYaw), -Math.cos(inp.cameraYaw));
 
@@ -9405,13 +9441,21 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               inp.keys.has('ArrowLeft') ||
               inp.keys.has('ArrowRight') ||
               Math.hypot(inp.joyX, inp.joyY) > 0.12;
-            if (worldInteract.carriedRock && !isHeroMovingInput) {
+            if (worldInteract.carriedRock && !isHeroMovingInput && camModeNow !== 'firstPerson') {
               // Gently align hero facing toward where the orange bullseye is aimed
               const aimYaw = Math.atan2(worldInteract.aimX - heroX, worldInteract.aimZ - heroZ);
               const yawDiff = Math.atan2(Math.sin(aimYaw - heroYaw), Math.cos(aimYaw - heroYaw));
               heroYaw += yawDiff * Math.min(1, dt * 8);
             }
-            worldInteract.updateCarriedAndAim(dt, gameElapsed, heroX, heroY, heroZ, heroYaw);
+            worldInteract.updateCarriedAndAim(
+              dt,
+              gameElapsed,
+              heroX,
+              heroY,
+              heroZ,
+              heroYaw,
+              camModeNow === 'firstPerson'
+            );
 
             // Populate zero-GC enemy target list for thrown rocks & boulders
             rockTargetBuffer.length = 0;
@@ -9508,13 +9552,17 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             // Priority 1: Throw carried rock/boulder when pressing Use (E)
             if (didInteract && worldInteract.carriedRock) {
               interactConsumed = true;
+              const aimYaw = Math.atan2(worldInteract.aimX - heroX, worldInteract.aimZ - heroZ);
               const thrown = worldInteract.throwCarriedRock();
               if (thrown) {
                 AudioEngine.playSound('whoosh');
-                heroYaw = Math.atan2(worldInteract.aimX - heroX, worldInteract.aimZ - heroZ);
+                heroYaw = aimYaw;
                 attackAnimTimer = 0.24;
                 activeAttackDuration = 0.24;
+                exitRockAimPov();
               }
+            } else if (!worldInteract.carriedRock && preRockCamMode !== null) {
+              exitRockAimPov();
             }
           }
 
@@ -13006,7 +13054,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               : null;
           if (didInteract && !interactConsumed && nearestPickupRock && worldInteract) {
             interactConsumed = true;
-            worldInteract.pickUpRock(nearestPickupRock);
+            worldInteract.pickUpRock(nearestPickupRock, heroX, heroZ, heroYaw);
+            enterRockAimPov();
             AudioEngine.playSound('step');
             showToast(
               nearestPickupRock.kind === 'boulder'
