@@ -99,6 +99,11 @@ export const CameraModes: {
   { id: 'chase', title: 'Adventure Chase', blurb: 'Free look over-the-shoulder camera (drag sky to turn)' },
   { id: 'firstPerson', title: 'Character POV', blurb: 'First-person eye-level view from your character — drag mouse to look around' },
   { id: 'cozy', title: 'Cozy Close', blurb: 'Closer warm view framing your hero' },
+  {
+    id: 'close',
+    title: 'Close View',
+    blurb: 'Closer hero & interior perspective (auto-used inside cottages, taverns & caves)',
+  },
   { id: 'isometric', title: 'Isometric Diorama', blurb: 'High angled classic adventure perspective' },
   { id: 'sideScroll', title: 'Side-Scroll 2.5D', blurb: 'Locked side-view camera showcasing 3D parallax layers' },
 ];
@@ -2860,7 +2865,7 @@ function buildDrivingProject(name: string): GameProject {
 
 function buildRpgProject(name: string): GameProject {
   const rpgLevel: GameLevel = {
-    ...createBlankLevel('Oakhollow Village & Temple Ruins', 'forest', 'openWorld'),
+    ...createBlankLevel('Nottingham Forest · Oakhollow & Cursed Caves', 'forest', 'openWorld'),
     style: 'openWorld',
     environmentType: 'openWorld',
     visualStyle: 'painterlyPBR',
@@ -2883,7 +2888,7 @@ function buildRpgProject(name: string): GameProject {
       volumetricLanterns: true,
       cameraZoom: 25,
     },
-    notes: 'Isometric fantasy RPG diorama with medieval village, weathered broken stone paths, mountain rope bridge with broken slat, companion party, sword/arrow/magic combat, evaporating overhead enemy HP & fanned-out loot cards.',
+    notes: 'Nottingham Forest isometric RPG featuring Forest Crossroads spawn, compact Oakhollow village with tavern/blacksmith/cottage/watermill/windmill/livestock, stone arch river bridge, peak-to-peak rope bridge, and 5-room walkable MountainCave.',
   };
 
   if (rpgLevel.terrain) {
@@ -2902,71 +2907,81 @@ function buildRpgProject(name: string): GameProject {
     return createEntity(kind, label, pt.x, pt.y, extra);
   };
 
-  rpgLevel.startPoint = at(0, 18);
+  const [caveHubX, caveHubZ] = fromMountainCaveLocal(0, -13.0);
+  const [caveWestX, caveWestZ] = fromMountainCaveLocal(-8.5, -14.2);
+  const [caveBossX, caveBossZ] = fromMountainCaveLocal(0, -27.5);
+  const [caveGuardX, caveGuardZ] = fromMountainCaveLocal(1.4, -3.5);
+
+  rpgLevel.startPoint = at(0, 34);
   rpgLevel.portalPoint = at(0, -39);
 
   rpgLevel.entities = [
-    // Companion Party ready to recruit at the village square
-    place('npc', 'Sir Alden (Companion Knight)', -2.8, 15.2, {
+    // Crossroads Signpost & Companion Party greeting hero at Forest Crossroads (0, 34)
+    place('prop', 'Forest Crossroads Signpost', 3.2, 33.0, {
+      notes: 'RPG Prop: crossroadsSignpost',
+      scale: 1.0,
+      rotation: 0,
+    }),
+    place('npc', 'Sir Alden (Companion Knight)', -2.6, 30.8, {
       isBuddy: true,
-      dialogue: 'My blade is yours, hero! Walk up to the Tavern or Blacksmith doors and press E to open them and explore inside!',
+      dialogue: 'Ahead lies Oakhollow Village, with the Cursed Caves in the western crags! Walk to any building door and press E to explore inside.',
       health: 40,
       styleTint: '#3B82F6',
       notes: 'RPG Companion: knight',
     }),
-    place('npc', 'Lyra (Companion Mage)', 2.8, 15.2, {
+    place('npc', 'Lyra (Companion Mage)', 2.6, 30.8, {
       isBuddy: true,
-      dialogue: 'The wooden slat bridge ahead is the only way across the Emerald Gorge River!',
+      dialogue: 'Cross the Stone Arch Bridge north of Oakhollow, or climb to the Peak Rope Bridge between the twin mountain crags!',
       health: 32,
       styleTint: '#A855F7',
       notes: 'RPG Companion: mage',
     }),
-    place('npc', 'Rowan (Companion Ranger)', 0, 13.0, {
+    place('npc', 'Rowan (Companion Ranger)', 0, 29.2, {
       isBuddy: true,
-      dialogue: 'My bow covers the high path toward the North Temple Ruins across the river.',
+      dialogue: 'Watch the western trail—torchlit Cursed Caves cut deep beneath the crags, while bandits hold the North Temple.',
       health: 34,
       styleTint: '#10B981',
       notes: 'RPG Companion: ranger',
     }),
 
-    // Strolling Medieval Villagers walking the village road
-    place('npc', 'Miller Gareth (Village Peddler)', -1.6, 21.0, {
+    // Strolling Medieval Villagers walking Oakhollow lanes
+    place('npc', 'Miller Gareth (Village Peddler)', -1.5, 22.0, {
       brain: 'wander',
       speed: 1.35,
-      dialogue: 'Fine morning in Oakhollow! The tavern fireplace is warm and the horses are hitched out front.',
+      dialogue: 'Fine morning in Oakhollow! Fresh bread at the market stalls, and the sawmill wheel is turning down by the river.',
       styleTint: '#B45309',
       notes: 'RPG Villager: roadWalker',
     }),
-    place('npc', 'Elspeth (Village Weaver)', 1.8, 7.5, {
+    place('npc', 'Elspeth (Village Weaver)', 1.8, 8.5, {
       brain: 'wander',
       speed: 1.25,
-      dialogue: 'Hear that ringing? Master Brom is forging a red-hot blade over at the Blacksmith hall!',
+      dialogue: 'Hear that ringing? Master Brom is forging a red-hot blade inside the Ironhearth Blacksmith!',
       styleTint: '#15803D',
       notes: 'RPG Villager: roadWalker',
     }),
-    place('npc', 'Old Toma (Bridge Watchman)', -1.4, -3.5, {
+    place('npc', 'Old Toma (Bridge Watchman)', -1.4, -5.5, {
       brain: 'wander',
       speed: 1.15,
-      dialogue: 'Watch your step on the rope bridge across the river gorge—one of the old wooden slats is cracked!',
+      dialogue: 'The Stone Arch Bridge carries wagons over the emerald river, while daredevils still brave the high peak Rope Bridge to the northwest!',
       styleTint: '#475569',
       notes: 'RPG Villager: roadWalker',
     }),
 
-    // Full-Sized Walk-In Enterable Buildings (Press E at the front door to open & walk inside!)
-    place('prop', 'Golden Acorn Walk-In Tavern', -14, 12, {
+    // Full-Sized Walk-In Enterable Buildings (Press E at front door; interior shifts smoothly to Close camera with roof intact!)
+    place('prop', 'Golden Acorn Walk-In Tavern', -13, 11, {
       notes: 'RPG Building: tavern',
       scale: 1.0,
       rotation: 0,
     }),
-    place('prop', 'Ironhearth Walk-In Blacksmith Forge', 14, 11, {
+    place('prop', 'Ironhearth Walk-In Blacksmith Forge', 13, 11, {
       notes: 'RPG Building: blacksmith',
       scale: 1.0,
       rotation: 0,
     }),
-    place('prop', 'Forest Herbalist Walk-In Cottage', -15, -2, {
+    place('prop', 'Forest Herbalist Walk-In Cottage', -16.5, -1.5, {
       notes: 'RPG Building: cottage',
       scale: 1.0,
-      rotation: 0,
+      rotation: 90,
     }),
     place('prop', 'Ancient Vine Stone Temple Sanctum', 0, -33, {
       notes: 'RPG Building: stoneShrine',
@@ -2974,187 +2989,173 @@ function buildRpgProject(name: string): GameProject {
       rotation: 0,
     }),
 
-    // Tethered Saddle Horses outside the Tavern & Villager Raking Their Yard outside the Cottage
-    place('prop', 'Tethered Tavern Horses & Hitching Post', -8.2, 18.8, {
+    // River Sawmill / Watermill, Hilltop Windmill & Market Stalls
+    place('prop', 'Nottingham River Watermill & Sawmill', 23, -5.5, {
+      notes: 'RPG Prop: watermill',
+      scale: 1.0,
+      rotation: 18,
+    }),
+    place('prop', 'Hilltop Timber Windmill', 28, 28, {
+      notes: 'RPG Prop: windmill',
+      scale: 1.0,
+      rotation: -28,
+    }),
+    place('prop', 'Crimson Banner Market Stall', -6.8, 22.0, {
+      notes: 'RPG Prop: marketStall',
+      styleTint: '#B91C1C',
+      scale: 1.0,
+      rotation: 90,
+    }),
+    place('prop', 'Emerald Herb Market Stall', 6.8, 22.0, {
+      notes: 'RPG Prop: marketStall',
+      styleTint: '#15803D',
+      scale: 1.0,
+      rotation: -90,
+    }),
+
+    // Tethered Saddle Horses outside the Tavern & Villager Raking Yard Leaves outside the Cottage
+    place('prop', 'Tethered Tavern Horses & Hitching Post', -7.2, 16.5, {
       notes: 'RPG Prop: tetheredHorses',
       scale: 1.0,
       rotation: 0,
     }),
-    place('prop', 'Villager Raking Yard Leaves', -9.2, 3.2, {
+    place('prop', 'Villager Raking Yard Leaves', -9.8, 2.2, {
       notes: 'RPG Prop: rakingVillager',
       scale: 1.0,
       rotation: 24,
     }),
 
-    // Spanning Weathered Rope & Wooden Slat Bridge across the Emerald Gorge River (z = -14)
-    place('prop', 'Rope Bridge with Broken Slat', 0, -14, {
+    // 1) Chamfered Stone Arch Bridge across the main Nottingham River road (0, -14)
+    place('prop', 'Ancient Chamfered Stone Arch Bridge', 0, -14, {
+      notes: 'RPG Prop: stoneArchBridge',
+      scale: 1.0,
+      rotation: 0,
+    }),
+    // 2) Peak-to-Peak Rope & Broken-Slat Suspension Bridge between the twin northwest mountain peaks (-32, -33)
+    place('prop', 'Peak-to-Peak Rope Bridge with Broken Slat', -32, -33, {
       notes: 'RPG Prop: ropeBridge',
       scale: 1.0,
       rotation: 0,
     }),
 
-    // Hanging Lamps on Posts flanking the village entrance & main road
-    place('prop', 'Village Hanging Lamp Post', -3.8, 22.5, {
+    // Hanging Lamps on Posts flanking the crossroads, village square & bridge approaches
+    place('prop', 'Village Hanging Lamp Post', -3.6, 25.0, {
       notes: 'RPG Prop: hangingLampPost',
       scale: 1.0,
       rotation: 0,
     }),
-    place('prop', 'Village Hanging Lamp Post', 3.8, 22.5, {
+    place('prop', 'Village Hanging Lamp Post', 3.6, 25.0, {
       notes: 'RPG Prop: hangingLampPost',
       scale: 1.0,
       rotation: 180,
     }),
-    place('prop', 'Village Hanging Lamp Post', -3.8, 10.5, {
+    place('prop', 'Village Hanging Lamp Post', -3.6, 11.5, {
       notes: 'RPG Prop: hangingLampPost',
       scale: 1.0,
       rotation: 0,
     }),
-    place('prop', 'Village Hanging Lamp Post', 3.8, 10.5, {
+    place('prop', 'Village Hanging Lamp Post', 3.6, 11.5, {
       notes: 'RPG Prop: hangingLampPost',
       scale: 1.0,
       rotation: 180,
     }),
-    place('prop', 'Village Hanging Lamp Post', -3.8, -5.0, {
+    place('prop', 'Village Hanging Lamp Post', -3.6, -4.5, {
       notes: 'RPG Prop: hangingLampPost',
       scale: 1.0,
       rotation: 0,
     }),
-    place('prop', 'Village Hanging Lamp Post', 3.8, -5.0, {
+    place('prop', 'Village Hanging Lamp Post', 3.6, -4.5, {
       notes: 'RPG Prop: hangingLampPost',
       scale: 1.0,
       rotation: 180,
     }),
 
-    // Weathered Broken Organic Stone Path Slabs along the village road & bridge approaches
-    place('prop', 'Weathered Broken Stone Path', 0, 22, {
-      notes: 'RPG Prop: weatheredStonePath',
-      scale: 1.15,
-      rotation: 8,
-    }),
-    place('prop', 'Weathered Broken Stone Path', 0, 16, {
-      notes: 'RPG Prop: weatheredStonePath',
-      scale: 1.15,
-      rotation: -6,
-    }),
-    place('prop', 'Weathered Broken Stone Path', -6.5, 18.2, {
-      notes: 'RPG Prop: weatheredStonePath',
-      scale: 1.1,
-      rotation: 22,
-    }),
-    place('prop', 'Weathered Broken Stone Path', 6.5, 16.5, {
-      notes: 'RPG Prop: weatheredStonePath',
-      scale: 1.1,
-      rotation: -18,
-    }),
-    place('prop', 'Weathered Broken Stone Path', 0, 9.5, {
-      notes: 'RPG Prop: weatheredStonePath',
-      scale: 1.15,
-      rotation: 14,
-    }),
-    place('prop', 'Weathered Broken Stone Path', 0, 3.0, {
-      notes: 'RPG Prop: weatheredStonePath',
-      scale: 1.15,
-      rotation: -10,
-    }),
-    place('prop', 'Weathered Broken Stone Path', 0, -4.5, {
+    // Weathered Broken Organic Stone Path Slabs along the village lane & bridge approaches
+    place('prop', 'Weathered Broken Stone Path', 0, 28, {
       notes: 'RPG Prop: weatheredStonePath',
       scale: 1.15,
       rotation: 6,
     }),
-    place('prop', 'Weathered Broken Stone Path', 0, -23.0, {
+    place('prop', 'Weathered Broken Stone Path', 0, 20, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.15,
+      rotation: -8,
+    }),
+    place('prop', 'Weathered Broken Stone Path', 0, 12.5, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.15,
+      rotation: 12,
+    }),
+    place('prop', 'Weathered Broken Stone Path', -6.4, 15.8, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.1,
+      rotation: 20,
+    }),
+    place('prop', 'Weathered Broken Stone Path', 6.4, 15.8, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.1,
+      rotation: -18,
+    }),
+    place('prop', 'Weathered Broken Stone Path', 0, 3.5, {
+      notes: 'RPG Prop: weatheredStonePath',
+      scale: 1.15,
+      rotation: -10,
+    }),
+    place('prop', 'Weathered Broken Stone Path', 0, -23.5, {
       notes: 'RPG Prop: weatheredStonePath',
       scale: 1.15,
       rotation: -12,
     }),
 
-    // Enclosed Distressed Organic Split-Rail Wood Fence Chicken Yard around (12, 22)
-    place('prop', 'Distressed Split-Rail Fence', 10.8, 19.6, {
-      notes: 'RPG Prop: fence',
-      scale: 1.0,
-      rotation: 4,
-    }),
-    place('prop', 'Distressed Split-Rail Fence', 13.2, 19.6, {
-      notes: 'RPG Prop: fence',
-      scale: 1.0,
-      rotation: -5,
-    }),
-    place('prop', 'Distressed Split-Rail Fence', 10.8, 24.4, {
-      notes: 'RPG Prop: fence',
-      scale: 1.0,
-      rotation: -4,
-    }),
-    place('prop', 'Distressed Split-Rail Fence', 13.2, 24.4, {
-      notes: 'RPG Prop: fence',
-      scale: 1.0,
-      rotation: 5,
-    }),
-    place('prop', 'Distressed Split-Rail Fence', 9.5, 22.0, {
-      notes: 'RPG Prop: fence',
-      scale: 1.0,
-      rotation: 92,
-    }),
-    place('prop', 'Distressed Split-Rail Fence', 14.5, 22.0, {
-      notes: 'RPG Prop: fence',
-      scale: 1.0,
-      rotation: 88,
-    }),
-    place('prop', 'Wandering White Chicken', 11.4, 21.5, {
-      notes: 'RPG Prop: chicken',
-      scale: 0.9,
-      styleTint: '#FFFBEB',
-    }),
-    place('prop', 'Wandering Speckled Hen', 12.6, 22.4, {
-      notes: 'RPG Prop: chicken',
-      scale: 0.86,
-      styleTint: '#FDE68A',
-    }),
-    place('prop', 'Wandering Brown Hen', 11.7, 23.1, {
-      notes: 'RPG Prop: chicken',
-      scale: 0.88,
-      styleTint: '#D97706',
-    }),
-    place('prop', 'Wandering Copper Rooster', 12.9, 21.2, {
-      notes: 'RPG Prop: chicken',
-      scale: 0.94,
-      styleTint: '#B45309',
-    }),
+    // Enclosed Chicken Coop Pen around (11, 19)
+    place('prop', 'Distressed Split-Rail Fence', 9.8, 16.8, { notes: 'RPG Prop: fence', scale: 1.0, rotation: 4 }),
+    place('prop', 'Distressed Split-Rail Fence', 12.2, 16.8, { notes: 'RPG Prop: fence', scale: 1.0, rotation: -5 }),
+    place('prop', 'Distressed Split-Rail Fence', 9.8, 21.2, { notes: 'RPG Prop: fence', scale: 1.0, rotation: -4 }),
+    place('prop', 'Distressed Split-Rail Fence', 12.2, 21.2, { notes: 'RPG Prop: fence', scale: 1.0, rotation: 5 }),
+    place('prop', 'Distressed Split-Rail Fence', 8.6, 19.0, { notes: 'RPG Prop: fence', scale: 1.0, rotation: 92 }),
+    place('prop', 'Distressed Split-Rail Fence', 13.4, 19.0, { notes: 'RPG Prop: fence', scale: 1.0, rotation: 88 }),
+    place('prop', 'Wandering White Chicken', 10.4, 18.4, { notes: 'RPG Prop: chicken', scale: 0.9, styleTint: '#FFFBEB' }),
+    place('prop', 'Wandering Speckled Hen', 11.6, 19.3, { notes: 'RPG Prop: chicken', scale: 0.86, styleTint: '#FDE68A' }),
+    place('prop', 'Wandering Brown Hen', 10.7, 20.0, { notes: 'RPG Prop: chicken', scale: 0.88, styleTint: '#D97706' }),
+    place('prop', 'Wandering Copper Rooster', 11.9, 18.2, { notes: 'RPG Prop: chicken', scale: 0.94, styleTint: '#B45309' }),
+
+    // Enclosed Pasture with Dairy Cows & Farm Pigs around (11, 2)
+    place('prop', 'Distressed Split-Rail Fence', 9.6, -0.4, { notes: 'RPG Prop: fence', scale: 1.0, rotation: -3 }),
+    place('prop', 'Distressed Split-Rail Fence', 12.4, -0.4, { notes: 'RPG Prop: fence', scale: 1.0, rotation: 4 }),
+    place('prop', 'Distressed Split-Rail Fence', 9.6, 4.4, { notes: 'RPG Prop: fence', scale: 1.0, rotation: 3 }),
+    place('prop', 'Distressed Split-Rail Fence', 12.4, 4.4, { notes: 'RPG Prop: fence', scale: 1.0, rotation: -4 }),
+    place('prop', 'Distressed Split-Rail Fence', 8.2, 2.0, { notes: 'RPG Prop: fence', scale: 1.0, rotation: 90 }),
+    place('prop', 'Distressed Split-Rail Fence', 13.8, 2.0, { notes: 'RPG Prop: fence', scale: 1.0, rotation: 90 }),
+    place('prop', 'Oakhollow Dairy Cow', 9.8, 1.4, { notes: 'RPG Prop: pastureCow', scale: 1.0, rotation: 35 }),
+    place('prop', 'Oakhollow Spotted Cow', 12.2, 2.8, { notes: 'RPG Prop: pastureCow', scale: 0.94, rotation: -125 }),
+    place('prop', 'Pasture Farm Pig', 11.4, 0.9, { notes: 'RPG Prop: pasturePig', scale: 0.95, rotation: 60 }),
+    place('prop', 'Pasture Piglet', 10.2, 3.1, { notes: 'RPG Prop: pasturePig', scale: 0.82, rotation: -40 }),
 
     // Village Well & Hollow Magic Forest Tree
-    place('prop', 'Village Stone Well', -5.2, 8.2, {
-      notes: 'RPG Prop: well',
-      scale: 1.0,
-    }),
-    place('prop', 'Hollow Magic Forest Tree', 15.5, -3.5, {
-      notes: 'RPG Prop: hollowMagicTree',
-      scale: 1.08,
-    }),
+    place('prop', 'Village Stone Well', -4.8, 13.5, { notes: 'RPG Prop: well', scale: 1.0 }),
+    place('prop', 'Hollow Magic Forest Tree', -24.5, 42.0, { notes: 'RPG Prop: hollowMagicTree', scale: 1.12 }),
 
     // Volumetric Lanterns
-    place('light', 'Courtyard Volumetric Lantern', -4.2, 16.5, {
-      notes: 'RPG Volumetric Lantern',
-      styleTint: '#FFAE34',
-    }),
-    place('light', 'Temple Volumetric Lantern', 0, -25.5, {
-      notes: 'RPG Volumetric Lantern',
-      styleTint: '#FFAE34',
-    }),
+    place('light', 'Crossroads Volumetric Lantern', -2.8, 34.0, { notes: 'RPG Volumetric Lantern', styleTint: '#FFAE34' }),
+    place('light', 'Courtyard Volumetric Lantern', -4.2, 16.5, { notes: 'RPG Volumetric Lantern', styleTint: '#FFAE34' }),
+    place('light', 'Temple Volumetric Lantern', -3.4, -26.8, { notes: 'RPG Volumetric Lantern', styleTint: '#FFAE34' }),
 
-    // Enemies & Ogre Brute Boss guarding the North Temple Highlands across the River Bridge
-    place('baddie', 'Bandit Raider', -5.5, -23.5, {
+    // Enemies guarding North Temple Ruins across the Stone Arch Bridge
+    place('baddie', 'Bandit Raider', -5.2, -23.5, {
       brain: 'Chaser',
       health: 24,
       speed: 2.7,
       damage: 1,
       styleTint: '#EF4444',
     }),
-    place('baddie', 'Dark Forest Cultist', 5.8, -24.0, {
+    place('baddie', 'Dark Forest Cultist', 5.4, -24.0, {
       brain: 'patrol',
       health: 22,
       speed: 2.5,
       damage: 1,
       styleTint: '#8B5CF6',
     }),
-    place('baddie', 'Ogre Brute Warlord', 0, -25.8, {
+    place('baddie', 'Ogre Brute Warlord', 0, -24.2, {
       brain: 'Chaser',
       health: 48,
       speed: 2.2,
@@ -3165,7 +3166,40 @@ function buildRpgProject(name: string): GameProject {
       notes: 'RPG Boss: ogre',
     }),
 
-    // Dual Treasure: Traditional Chest + Fanned-Out Colorful Reward Cards Shrine
+    // Encounters & Treasure INSIDE the 5-room walkable MountainCave ("The Cursed Caves")
+    place('baddie', 'Cave Tunnel Sentry', caveGuardX, caveGuardZ, {
+      brain: 'patrol',
+      health: 20,
+      speed: 2.3,
+      damage: 1,
+      styleTint: '#6366F1',
+    }),
+    place('baddie', 'Crystal Cavern Stalker', caveHubX, caveHubZ, {
+      brain: 'Chaser',
+      health: 28,
+      speed: 2.6,
+      damage: 1,
+      styleTint: '#0EA5E9',
+    }),
+    place('baddie', 'Deep Sanctum Cave Troll', caveBossX, caveBossZ, {
+      brain: 'Chaser',
+      health: 52,
+      speed: 2.1,
+      damage: 2,
+      scale: 1.32,
+      isBoss: true,
+      styleTint: '#4338CA',
+      notes: 'RPG Boss: ogre',
+    }),
+    place('treasure', 'Crystal Grotto Vault Chest', caveWestX, caveWestZ, {
+      loot: 'Coins',
+      pickupable: true,
+      pickupItemId: 'health_potion',
+      pickupQty: 3,
+      notes: 'RPG Cave Crystal Grotto Treasure',
+    }),
+
+    // Dual Treasure at North Temple
     place('treasure', 'Adventurer Loot Chest', -4.5, -26.5, {
       loot: 'Health',
       pickupable: true,
@@ -3181,15 +3215,16 @@ function buildRpgProject(name: string): GameProject {
   ];
 
   rpgLevel.objectives = [
-    { id: uid(), text: 'Walk to the Tavern or Blacksmith doors, press E to open them, and explore the full-sized interiors', isOptional: false },
-    { id: uid(), text: 'Cross the wooden slat rope bridge over the Emerald Gorge River to battle the Bandits and Ogre Brute', isOptional: false },
-    { id: uid(), text: 'Loot the traditional chest OR pick from the 3 fanned-out colorful reward cards', isOptional: true },
+    { id: uid(), text: 'Explore Oakhollow Village & press E at Tavern or Blacksmith doors (auto-switches to Close View)', isOptional: false },
+    { id: uid(), text: 'Cross the Stone Arch Bridge or Peak-to-Peak Rope Bridge to defeat the Ogre Brute Warlord', isOptional: false },
+    { id: uid(), text: 'Follow the western trail into The Cursed Caves to vanquish the Deep Sanctum Cave Troll', isOptional: false },
+    { id: uid(), text: 'Loot the Crystal Grotto chest or choose a reward card at the North Temple shrine', isOptional: true },
   ];
 
   return {
     id: uid(),
     name,
-    tagline: 'Rich isometric fantasy RPG with village taverns, companion party, sword/arrow/magic combat & fanned-out loot cards.',
+    tagline: 'Nottingham Forest isometric RPG with village taverns, mills, livestock, stone & rope bridges, and 5-room walkable mountain caves.',
     symbol: 'shield.fill',
     colorHex: '#8B5CF6',
     updatedAt: new Date().toISOString(),

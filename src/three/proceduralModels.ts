@@ -13,7 +13,12 @@ import { buildFxEmitterFallbackGroup } from './fxEmitterRuntime';
 import { DUNGEON_TRAP_STYLE_META } from '../services/DungeonGenerator';
 import { buildBuildingBlockMesh, buildModularDoorMesh } from './buildingBlocks';
 import { buildQuadrupedMonsterMesh } from './quadrupedMonsterBuilder';
-import { getWalkInBuildingSpec, isRopeBridgeEntity, type WalkInBuildingSpec } from '../utils/terrain';
+import {
+  getWalkInBuildingSpec,
+  isRopeBridgeEntity,
+  isStoneArchBridgeEntity,
+  type WalkInBuildingSpec,
+} from '../utils/terrain';
 
 export interface CreatureAnimRefs {
   creatureType: CreatureBodyId;
@@ -2522,7 +2527,7 @@ export function buildFallingTreeMesh(
     const trunkGeo = createOrganicTrunkGeometry({
       rTop: 0.22,
       rBottom: 0.34,
-      height: 2.05,
+      height: 4.65,
       yOffset: 0,
       radialSegs: 12,
       heightSegs: 7,
@@ -2530,34 +2535,34 @@ export function buildFallingTreeMesh(
       curveX: 0.1,
       curveZ: 0.06,
       branches: [
-        { startY: 1.15, length: 1.2, rBottom: 0.15, rTop: 0.07, tilt: 0.62, yaw: 0.55 },
-        { startY: 1.25, length: 1.12, rBottom: 0.14, rTop: 0.065, tilt: 0.56, yaw: 2.65 },
-        { startY: 1.35, length: 1.02, rBottom: 0.13, rTop: 0.06, tilt: 0.5, yaw: -1.45 },
+        { startY: 3.55, length: 1.22, rBottom: 0.15, rTop: 0.07, tilt: 0.56, yaw: 0.55 },
+        { startY: 3.68, length: 1.14, rBottom: 0.14, rTop: 0.065, tilt: 0.52, yaw: 2.65 },
+        { startY: 3.82, length: 1.04, rBottom: 0.13, rTop: 0.06, tilt: 0.48, yaw: -1.45 },
       ],
     });
     const trunk = new THREE.Mesh(trunkGeo, trunkMat);
     trunk.castShadow = true;
     const c1 = new THREE.Mesh(createSculptedCanopyLobeGeometry(1.34, 1.24, 0.88, 1.18, 1.2, 16, 12, 2.8, 1.9), leafMat);
-    c1.position.set(0.05, 2.65, 0.02);
+    c1.position.set(0.05, 5.25, 0.02);
     c1.castShadow = true;
     const c2 = new THREE.Mesh(createSculptedCanopyLobeGeometry(1.02, 1.12, 0.86, 1.06, 2.7, 14, 10, 2.4, 1.7), leafMat);
-    c2.position.set(0.84, 2.28, 0.5);
+    c2.position.set(0.84, 4.88, 0.5);
     c2.castShadow = true;
     const c3 = new THREE.Mesh(createSculptedCanopyLobeGeometry(0.96, 1.08, 0.88, 1.04, 4.1, 14, 10, 2.4, 1.7), leafMat);
-    c3.position.set(-0.8, 2.34, -0.42);
+    c3.position.set(-0.8, 4.94, -0.42);
     c3.castShadow = true;
     const c4 = new THREE.Mesh(createSculptedCanopyLobeGeometry(0.88, 1.08, 0.84, 1.06, 5.6, 14, 10, 2.3, 1.6), leafMat);
-    c4.position.set(-0.26, 2.22, 0.82);
+    c4.position.set(-0.26, 4.82, 0.82);
     c4.castShadow = true;
     const c5 = new THREE.Mesh(createSculptedCanopyLobeGeometry(0.84, 1.1, 0.88, 1.04, 7.3, 14, 10, 2.2, 1.6), leafMat);
-    c5.position.set(0.3, 3.16, -0.24);
+    c5.position.set(0.3, 5.76, -0.24);
     c5.castShadow = true;
     g.add(trunk, c1, c2, c3, c4, c5);
   } else if (kind === 'birch') {
     const trunkGeo = createOrganicTrunkGeometry({
       rTop: 0.095,
-      rBottom: 0.18,
-      height: 2.65,
+      rBottom: 0.2,
+      height: 5.15,
       yOffset: 0,
       radialSegs: 12,
       heightSegs: 7,
@@ -2567,30 +2572,30 @@ export function buildFallingTreeMesh(
       uvScaleU: 1.6,
       uvScaleV: 2.5,
       branches: [
-        { startY: 1.45, length: 1.1, rBottom: 0.08, rTop: 0.036, tilt: 0.44, yaw: 0.85 },
-        { startY: 1.7, length: 0.94, rBottom: 0.07, rTop: 0.032, tilt: 0.4, yaw: -2.1 },
+        { startY: 3.85, length: 1.12, rBottom: 0.08, rTop: 0.036, tilt: 0.44, yaw: 0.85 },
+        { startY: 4.12, length: 0.96, rBottom: 0.07, rTop: 0.032, tilt: 0.4, yaw: -2.1 },
       ],
     });
     const trunk = new THREE.Mesh(trunkGeo, trunkMat);
     trunk.castShadow = true;
     const l1 = new THREE.Mesh(createSculptedCanopyLobeGeometry(0.96, 0.96, 1.24, 0.94, 3.1, 16, 10, 2.8, 2.0), leafMat);
-    l1.position.set(0.12, 2.95, -0.04);
+    l1.position.set(0.12, 5.45, -0.04);
     l1.castShadow = true;
     const l2 = new THREE.Mesh(createSculptedCanopyLobeGeometry(0.72, 0.98, 1.12, 0.96, 5.4, 14, 10, 2.4, 1.8), leafMat);
-    l2.position.set(0.54, 2.42, -0.32);
+    l2.position.set(0.54, 4.92, -0.32);
     l2.castShadow = true;
     const l3 = new THREE.Mesh(createSculptedCanopyLobeGeometry(0.66, 0.95, 1.08, 0.94, 8.2, 14, 10, 2.3, 1.7), leafMat);
-    l3.position.set(-0.46, 2.52, 0.34);
+    l3.position.set(-0.46, 5.02, 0.34);
     l3.castShadow = true;
     const l4 = new THREE.Mesh(createSculptedCanopyLobeGeometry(0.6, 0.92, 1.18, 0.92, 11.1, 12, 10, 2.2, 1.7), leafMat);
-    l4.position.set(0.06, 3.66, 0.08);
+    l4.position.set(0.06, 6.16, 0.08);
     l4.castShadow = true;
     g.add(trunk, l1, l2, l3, l4);
   } else {
     const trunkGeo = createOrganicTrunkGeometry({
       rTop: 0.11,
-      rBottom: 0.24,
-      height: 2.35,
+      rBottom: 0.26,
+      height: 4.95,
       yOffset: 0,
       radialSegs: 12,
       heightSegs: 7,
@@ -2601,22 +2606,22 @@ export function buildFallingTreeMesh(
     const trunk = new THREE.Mesh(trunkGeo, trunkMat);
     trunk.castShadow = true;
     const t1 = new THREE.Mesh(createDetailedPineTierGeometry(1.58, 1.48, 11, 1), leafMat);
-    t1.position.y = 1.68;
+    t1.position.y = 4.28;
     t1.castShadow = true;
     const t2 = new THREE.Mesh(createDetailedPineTierGeometry(1.34, 1.38, 11, 2), leafMat);
-    t2.position.y = 2.46;
+    t2.position.y = 5.06;
     t2.rotation.y = 0.29;
     t2.castShadow = true;
     const t3 = new THREE.Mesh(createDetailedPineTierGeometry(1.08, 1.28, 10, 3), leafMat);
-    t3.position.y = 3.2;
+    t3.position.y = 5.8;
     t3.rotation.y = 0.61;
     t3.castShadow = true;
     const t4 = new THREE.Mesh(createDetailedPineTierGeometry(0.8, 1.14, 9, 4), leafMat);
-    t4.position.y = 3.88;
+    t4.position.y = 6.48;
     t4.rotation.y = 0.95;
     t4.castShadow = true;
     const t5 = new THREE.Mesh(createDetailedPineTierGeometry(0.5, 0.94, 7, 5), leafMat);
-    t5.position.y = 4.46;
+    t5.position.y = 7.06;
     t5.castShadow = true;
     g.add(trunk, t1, t2, t3, t4, t5);
   }
@@ -2933,7 +2938,7 @@ function buildWalkInBuildingMesh(entity: LevelEntity, spec: WalkInBuildingSpec):
   doorHeader.position.set(0, floorY + doorH + doorHeaderH * 0.5, halfD);
   root.add(backWall, leftWall, rightWall, frontLeftWall, frontRightWall, doorHeader);
 
-  // Corner & intermediate timber framing posts
+  // Corner & intermediate timber framing posts + stone corner quoins + half-timber X-bracing
   for (const px of [-halfW, -doorHalfW, doorHalfW, halfW]) {
     for (const pz of [-halfD, halfD]) {
       if (Math.abs(px) === doorHalfW && pz < 0) continue;
@@ -2941,11 +2946,47 @@ function buildWalkInBuildingMesh(entity: LevelEntity, spec: WalkInBuildingSpec):
       post.position.set(px, floorY + wallH * 0.5, pz);
       post.castShadow = true;
       root.add(post);
+      if (!isScifi && !isModern && Math.abs(px) === halfW) {
+        // Chamfered corner stone quoins anchoring timber corners into plinth
+        for (let q = 0; q < 3; q++) {
+          const quoin = new THREE.Mesh(
+            new THREE.BoxGeometry(wallT + 0.24, 0.36, wallT + 0.24),
+            q % 2 === 0 ? stoneMat : darkStoneMat
+          );
+          quoin.position.set(px, floorY + 0.24 + q * 0.44, pz);
+          quoin.castShadow = true;
+          root.add(quoin);
+        }
+      }
+    }
+  }
+
+  if (!isScifi && !isModern && !isTemple) {
+    // Upper half-timber horizontal wall plate & refined X-bracing on front & side walls
+    for (const zWall of [-halfD, halfD]) {
+      const topPlate = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2 + 0.14, 0.14, wallT + 0.12), timberMat);
+      topPlate.position.set(0, floorY + wallH - 0.12, zWall);
+      const midRail = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2 + 0.08, 0.1, wallT + 0.1), timberMat);
+      midRail.position.set(0, floorY + wallH * 0.44, zWall);
+      root.add(topPlate, midRail);
+    }
+    const braceLen = Math.hypot(frontSegW * 0.86, wallH * 0.44);
+    const braceAng = Math.atan2(wallH * 0.44, frontSegW * 0.86);
+    for (const side of [-1, 1]) {
+      for (const diag of [-1, 1]) {
+        const brace = new THREE.Mesh(new THREE.BoxGeometry(braceLen, 0.09, wallT + 0.1), timberMat);
+        brace.position.set(side * frontSegCenter, floorY + wallH * 0.72, halfD);
+        brace.rotation.z = diag * braceAng;
+        root.add(brace);
+      }
+      const sidePlate = new THREE.Mesh(new THREE.BoxGeometry(wallT + 0.12, 0.14, halfD * 2 + 0.14), timberMat);
+      sidePlate.position.set(side * halfW, floorY + wallH - 0.12, 0);
+      root.add(sidePlate);
     }
   }
 
   // Paned Windows on Front, Left, and Right Walls
-  const addWindow = (wx: number, wy: number, wz: number, rotY: number, winW = 1.45, winH = 1.18) => {
+  const addWindow = (wx: number, wy: number, wz: number, rotY: number, winW = 1.38, winH = 1.12) => {
     const winGroup = new THREE.Group();
     winGroup.position.set(wx, wy, wz);
     winGroup.rotation.y = rotY;
@@ -3043,12 +3084,12 @@ function buildWalkInBuildingMesh(entity: LevelEntity, spec: WalkInBuildingSpec):
   addFramedPicture(-halfW + 0.22, floorY + wallH * 0.58, 0, Math.PI / 2, 1);
   addFramedPicture(halfW - 0.22, floorY + wallH * 0.58, 0, -Math.PI / 2, 2);
 
-  // Helper to build a dining table with benches
-  const addTableWithBenches = (tx: number, tz: number, tableW = 2.1, tableD = 1.05, withCandles = true) => {
+  // Helper to build a refined compact dining table with benches
+  const addTableWithBenches = (tx: number, tz: number, tableW = 1.85, tableD = 0.92, withCandles = true) => {
     const tGroup = new THREE.Group();
     tGroup.position.set(tx, floorY, tz);
-    const top = new THREE.Mesh(new THREE.BoxGeometry(tableW, 0.11, tableD), furnitureWoodMat);
-    top.position.y = 0.78;
+    const top = new THREE.Mesh(new THREE.BoxGeometry(tableW, 0.1, tableD), furnitureWoodMat);
+    top.position.y = 0.74;
     top.castShadow = true;
     top.receiveShadow = true;
     tGroup.add(top);
@@ -3058,23 +3099,23 @@ function buildWalkInBuildingMesh(entity: LevelEntity, spec: WalkInBuildingSpec):
       [-tableW * 0.42, tableD * 0.38],
       [tableW * 0.42, tableD * 0.38],
     ]) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.76, 6), timberMat);
-      leg.position.set(lx, 0.38, lz);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.05, 0.72, 6), timberMat);
+      leg.position.set(lx, 0.36, lz);
       tGroup.add(leg);
     }
-    for (const bz of [-tableD * 0.76, tableD * 0.76]) {
-      const bench = new THREE.Mesh(new THREE.BoxGeometry(tableW * 0.92, 0.08, 0.36), furnitureWoodMat);
-      bench.position.set(0, 0.44, bz);
+    for (const bz of [-tableD * 0.78, tableD * 0.78]) {
+      const bench = new THREE.Mesh(new THREE.BoxGeometry(tableW * 0.9, 0.075, 0.32), furnitureWoodMat);
+      bench.position.set(0, 0.42, bz);
       bench.castShadow = true;
       tGroup.add(bench);
     }
     if (withCandles) {
-      const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.18, 8), lanternGlowMat);
-      candle.position.set(0, 0.92, 0);
-      const mug1 = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.08, 0.17, 8), timberMat);
-      mug1.position.set(-0.48, 0.91, 0.22);
+      const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.045, 0.16, 8), lanternGlowMat);
+      candle.position.set(0, 0.87, 0);
+      const mug1 = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.074, 0.15, 8), timberMat);
+      mug1.position.set(-0.42, 0.86, 0.18);
       const mug2 = mug1.clone();
-      mug2.position.set(0.52, 0.91, -0.2);
+      mug2.position.set(0.44, 0.86, -0.18);
       tGroup.add(candle, mug1, mug2);
     }
     root.add(tGroup);
@@ -3342,7 +3383,7 @@ function buildWalkInBuildingMesh(entity: LevelEntity, spec: WalkInBuildingSpec):
     }
   }
 
-  // 6. Cutaway Roof Group (automatically hides when the hero walks inside!)
+  // 6. Pitched Intact Roof Group (kept visible in 'close' interior camera with dormers & stone chimney)
   const cutawayRoofGroup = new THREE.Group();
   const roofPeakH = spec.buildingType === 'tavern' ? 3.2 : 2.6;
   const roofCone = new THREE.Mesh(
@@ -3355,13 +3396,31 @@ function buildWalkInBuildingMesh(entity: LevelEntity, spec: WalkInBuildingSpec):
   roofCone.castShadow = true;
   cutawayRoofGroup.add(roofCone);
 
-  const chimney = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.4, 1.1), stoneMat);
-  chimney.position.set(-halfW * 0.52, floorY + wallH + 1.45, -halfD * 0.52);
+  // Pitched Dormer Windows along front roof slope for classic fantasy village silhouette
+  if (!isScifi && !isModern && !isTemple) {
+    const dormerOffsets = spec.buildingType === 'tavern' ? [-2.2, 2.2] : [0];
+    for (const dx of dormerOffsets) {
+      const dBox = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.95, 1.3), wallMat);
+      dBox.position.set(dx, floorY + wallH + 0.68, halfD * 0.62);
+      dBox.castShadow = true;
+      const dRoof = new THREE.Mesh(new THREE.ConeGeometry(0.95, 0.68, 4), roofMat);
+      dRoof.rotation.y = Math.PI / 4;
+      dRoof.position.set(dx, floorY + wallH + 1.44, halfD * 0.62);
+      const dPane = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.55, 0.1), windowGlassMat);
+      dPane.position.set(dx, floorY + wallH + 0.72, halfD * 0.62 + 0.64);
+      cutawayRoofGroup.add(dBox, dRoof, dPane);
+    }
+  }
+
+  const chimney = new THREE.Mesh(new THREE.BoxGeometry(1.05, 2.5, 1.05), stoneMat);
+  chimney.position.set(-halfW * 0.52, floorY + wallH + 1.5, -halfD * 0.52);
   chimney.castShadow = true;
-  cutawayRoofGroup.add(chimney);
+  const chimneyCap = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.16, 1.25), darkStoneMat);
+  chimneyCap.position.set(-halfW * 0.52, floorY + wallH + 2.78, -halfD * 0.52);
+  cutawayRoofGroup.add(chimney, chimneyCap);
 
   // Hanging Building Signboard above Front Entrance
-  const signBoard = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.62, 0.14), goldMat);
+  const signBoard = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.58, 0.14), goldMat);
   signBoard.position.set(0, floorY + wallH - 0.15, halfD + 0.32);
   root.add(signBoard, cutawayRoofGroup);
 
@@ -3479,6 +3538,26 @@ export function updateRpgLivingVillageAnimations(mesh: THREE.Object3D, elapsed: 
       h.tailPivot.rotation.z = Math.sin(elapsed * 3.2 + h.phase) * 0.26;
     }
   }
+
+  // 5. River Sawmill Waterwheel & Hilltop Windmill Lattice Sails
+  if (ud.spinningWaterwheel) {
+    (ud.spinningWaterwheel as THREE.Group).rotation.x = elapsed * 1.15;
+  }
+  if (ud.spinningWindmillRotor) {
+    (ud.spinningWindmillRotor as THREE.Group).rotation.z = elapsed * 0.85;
+  }
+
+  // 6. Pasture Livestock (Grazing Cows & Rooting Pigs)
+  if (ud.grazingCow) {
+    const gc = ud.grazingCow as { headPivot: THREE.Group; tailPivot: THREE.Group; phase: number };
+    gc.headPivot.rotation.x = 0.24 + Math.sin(elapsed * 1.2 + gc.phase) * 0.18;
+    gc.tailPivot.rotation.z = Math.sin(elapsed * 2.8 + gc.phase) * 0.24;
+  }
+  if (ud.rootingPig) {
+    const rp = ud.rootingPig as { headPivot: THREE.Group; phase: number };
+    rp.headPivot.rotation.x = 0.18 + Math.sin(elapsed * 3.2 + rp.phase) * 0.16;
+    rp.headPivot.rotation.y = Math.cos(elapsed * 1.7 + rp.phase) * 0.12;
+  }
 }
 
 
@@ -3495,6 +3574,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
   const isRpg =
     lowerNotes.includes('rpg') ||
     isRopeBridgeEntity(entity) ||
+    isStoneArchBridgeEntity(entity) ||
     lowerName.includes('cutaway') ||
     lowerName.includes('weathered stone') ||
     lowerName.includes('stone path') ||
@@ -3512,7 +3592,18 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     lowerName.includes('horse') ||
     lowerNotes.includes('tetheredhorses') ||
     lowerName.includes('raking') ||
-    lowerNotes.includes('rakingvillager');
+    lowerNotes.includes('rakingvillager') ||
+    lowerName.includes('watermill') ||
+    lowerName.includes('sawmill') ||
+    lowerNotes.includes('watermill') ||
+    lowerName.includes('windmill') ||
+    lowerNotes.includes('windmill') ||
+    lowerName.includes('market stall') ||
+    lowerNotes.includes('marketstall') ||
+    lowerName.includes('crossroads signpost') ||
+    lowerNotes.includes('crossroadssignpost') ||
+    lowerName.includes('cow') ||
+    lowerName.includes('pig');
 
   if (!isRpg) return null;
 
@@ -3971,7 +4062,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
       createOrganicTrunkGeometry({
         rTop: 0.38,
         rBottom: 0.68,
-        height: 2.45,
+        height: 4.95,
         yOffset: 0,
         radialSegs: 12,
         heightSegs: 7,
@@ -3999,10 +4090,10 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     magicCore.userData.floatSpin = true;
 
     const canopy1 = new THREE.Mesh(createSculptedCanopyLobeGeometry(1.45, 1.85, 1.35, 1.05, 4.1, 14, 10, 2.2, 1.6), leafMat);
-    canopy1.position.set(0, 2.45, 0);
+    canopy1.position.set(0, 4.95, 0);
     canopy1.castShadow = true;
     const canopy2 = new THREE.Mesh(createSculptedCanopyLobeGeometry(1.15, 1.45, 1.15, 0.95, 7.3, 12, 9, 2.1, 1.5), leafMat);
-    canopy2.position.set(0.55, 2.05, -0.35);
+    canopy2.position.set(0.55, 4.55, -0.35);
     canopy2.castShadow = true;
     root.add(trunk, cavity, magicCore, canopy1, canopy2);
     return root;
@@ -4018,7 +4109,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
       createOrganicTrunkGeometry({
         rTop: 0.22,
         rBottom: 0.56,
-        height: 2.65,
+        height: 5.25,
         yOffset: 0,
         radialSegs: 12,
         heightSegs: 8,
@@ -4032,9 +4123,9 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     root.add(trunk);
 
     const domes = [
-      { x: 0, y: 2.65, z: 0, r: 1.55 },
-      { x: 0.85, y: 2.35, z: 0.42, r: 1.15 },
-      { x: -0.78, y: 2.28, z: -0.38, r: 1.18 },
+      { x: 0, y: 5.25, z: 0, r: 1.55 },
+      { x: 0.85, y: 4.95, z: 0.42, r: 1.15 },
+      { x: -0.78, y: 4.88, z: -0.38, r: 1.18 },
     ];
     for (const d of domes) {
       const lobe = new THREE.Mesh(
@@ -4053,7 +4144,7 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
       [-0.38, 0.58, 1.25],
     ]) {
       const vine = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.018, vh, 6), vineMat);
-      vine.position.set(vx, 2.25 - vh * 0.5, vz);
+      vine.position.set(vx, 4.85 - vh * 0.5, vz);
       vine.rotation.z = vx * 0.08;
       root.add(vine);
     }
@@ -4101,6 +4192,314 @@ function buildRpgCustomPropOrBuildingMesh(entity: LevelEntity): THREE.Group | nu
     vineWrap2.position.y = 1.45;
     vineWrap2.rotation.x = Math.PI / 2 - 0.3;
     root.add(plinth, shaft, vineWrap, vineWrap2);
+    return root;
+  }
+
+  // 14. Chamfered Ashlar Stone Arch Bridge (15m Z-span across Nottingham River)
+  if (isStoneArchBridgeEntity(entity)) {
+    const atlas = getTerrainTextureAtlas();
+    const ashlarMat = new THREE.MeshStandardMaterial({
+      color: '#9AA0A8',
+      map: atlas.chamferedAshlarStone,
+      roughness: 0.86,
+      metalness: 0.05,
+    });
+    const halfSpan = 7.5;
+    const halfWidth = 2.08;
+    const segs = 16;
+
+    // Arched stone voussoir deck segments & wing piers reaching into riverbed
+    for (let i = 0; i < segs; i++) {
+      const z0 = -halfSpan + (i / segs) * (halfSpan * 2);
+      const z1 = -halfSpan + ((i + 1) / segs) * (halfSpan * 2);
+      const zm = (z0 + z1) * 0.5;
+      const u = Math.min(1, Math.abs(zm) / halfSpan);
+      const camber = (1 - u * u) * 1.12;
+      const deckY = 0.24 + camber;
+      const segLen = (halfSpan * 2) / segs + 0.08;
+      const tiltX = ((u * 2.24) / halfSpan) * (zm >= 0 ? 1 : -1);
+
+      const deckSlab = new THREE.Mesh(new THREE.BoxGeometry(halfWidth * 2, 0.42, segLen), ashlarMat);
+      deckSlab.position.set(0, deckY - 0.16, zm);
+      deckSlab.rotation.x = tiltX;
+      deckSlab.castShadow = true;
+      deckSlab.receiveShadow = true;
+      root.add(deckSlab);
+
+      // Chamfered stone parapets along left and right edge matching terrain.ts colliders
+      for (const sideX of [-halfWidth + 0.16, halfWidth - 0.16]) {
+        const parapet = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.72, segLen), ashlarMat);
+        parapet.position.set(sideX, deckY + 0.34, zm);
+        parapet.rotation.x = tiltX;
+        parapet.castShadow = true;
+        const coping = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, segLen + 0.02), darkStoneMat);
+        coping.position.set(sideX, deckY + 0.72, zm);
+        coping.rotation.x = tiltX;
+        root.add(parapet, coping);
+      }
+    }
+
+    // Heavy Stone Riverbank Abutment Piers anchoring both ends down into the banks
+    for (const endZ of [-halfSpan + 0.85, halfSpan - 0.85]) {
+      const pier = new THREE.Mesh(new THREE.BoxGeometry(halfWidth * 2 + 0.45, 3.2, 2.2), darkStoneMat);
+      pier.position.set(0, -1.35, endZ);
+      pier.castShadow = true;
+      pier.receiveShadow = true;
+      root.add(pier);
+    }
+
+    // 4 Carved Stone Entry Bollards with Warm Iron Lanterns at bridge corners
+    const ironMat = new THREE.MeshStandardMaterial({ color: '#27272A', roughness: 0.38, metalness: 0.78 });
+    for (const endZ of [-halfSpan + 0.4, halfSpan - 0.4]) {
+      for (const sideX of [-halfWidth + 0.14, halfWidth - 0.14]) {
+        const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 1.32, 6), ashlarMat);
+        bollard.position.set(sideX, 0.82, endZ);
+        bollard.castShadow = true;
+        const lantern = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.11, 0.26, 6), warmGlowMat);
+        lantern.position.set(sideX, 1.58, endZ);
+        const cap = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.14, 6), ironMat);
+        cap.position.set(sideX, 1.76, endZ);
+        root.add(bollard, lantern, cap);
+      }
+    }
+    return root;
+  }
+
+  // 15. River Watermill & Timber Sawmill with Rotating Overshot Waterwheel
+  if (lowerName.includes('watermill') || lowerName.includes('sawmill') || lowerNotes.includes('watermill')) {
+    const millPlinth = new THREE.Mesh(new THREE.BoxGeometry(6.0, 1.8, 5.2), darkStoneMat);
+    millPlinth.position.set(0, 0.45, 0);
+    millPlinth.castShadow = true;
+    millPlinth.receiveShadow = true;
+    const millBody = new THREE.Mesh(new THREE.BoxGeometry(5.4, 3.2, 4.6), plasterMat);
+    millBody.position.set(0, 2.75, 0);
+    millBody.castShadow = true;
+    const millRoof = new THREE.Mesh(new THREE.ConeGeometry(4.2, 2.4, 4), roofMat);
+    millRoof.rotation.y = Math.PI / 4;
+    millRoof.scale.set(1.06, 1, 0.94);
+    millRoof.position.set(0, 5.45, 0);
+    millRoof.castShadow = true;
+    root.add(millPlinth, millBody, millRoof);
+
+    // Timber framing posts & open log-sawing shed awning
+    for (const sx of [-2.65, 2.65]) {
+      for (const sz of [-2.25, 2.25]) {
+        const beam = new THREE.Mesh(new THREE.BoxGeometry(0.26, 3.3, 0.26), timberMat);
+        beam.position.set(sx, 2.75, sz);
+        root.add(beam);
+      }
+    }
+    const logStackGroup = new THREE.Group();
+    logStackGroup.position.set(3.4, 0.28, 0.8);
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col < 3 - row; col++) {
+        const log = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 2.4, 8), weatheredWoodMat);
+        log.rotation.x = Math.PI / 2;
+        log.position.set(col * 0.5 + row * 0.25, row * 0.42, 0);
+        log.castShadow = true;
+        logStackGroup.add(log);
+      }
+    }
+    root.add(logStackGroup);
+
+    // Spinning Wooden Waterwheel mounted on the river-facing (-X) wall
+    const wheelGroup = new THREE.Group();
+    wheelGroup.position.set(-3.1, 1.35, 0);
+    const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 1.25, 8), timberMat);
+    axle.rotation.z = Math.PI / 2;
+    wheelGroup.add(axle);
+    const rimOuter = new THREE.Mesh(new THREE.TorusGeometry(1.55, 0.12, 7, 16), weatheredWoodMat);
+    rimOuter.rotation.y = Math.PI / 2;
+    rimOuter.position.x = -0.3;
+    const rimInner = rimOuter.clone();
+    rimInner.position.x = 0.25;
+    wheelGroup.add(rimOuter, rimInner);
+    for (let p = 0; p < 10; p++) {
+      const ang = (p / 10) * Math.PI * 2;
+      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.1, 0.12), timberMat);
+      spoke.rotation.x = ang;
+      wheelGroup.add(spoke);
+      const paddle = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.08, 0.42), weatheredWoodMat);
+      paddle.position.set(-0.02, Math.cos(ang) * 1.55, Math.sin(ang) * 1.55);
+      paddle.rotation.x = ang;
+      paddle.castShadow = true;
+      wheelGroup.add(paddle);
+    }
+    root.add(wheelGroup);
+    root.userData.spinningWaterwheel = wheelGroup;
+    return root;
+  }
+
+  // 16. Hilltop Timber Windmill Tower with Rotating Lattice Sails
+  if (lowerName.includes('windmill') || lowerNotes.includes('windmill')) {
+    const stoneBase = new THREE.Mesh(new THREE.CylinderGeometry(2.25, 2.55, 2.1, 8), darkStoneMat);
+    stoneBase.position.y = 1.05;
+    stoneBase.castShadow = true;
+    stoneBase.receiveShadow = true;
+    const towerBody = new THREE.Mesh(new THREE.CylinderGeometry(1.52, 2.22, 4.4, 8), plasterMat);
+    towerBody.position.y = 4.25;
+    towerBody.castShadow = true;
+    const capCone = new THREE.Mesh(new THREE.ConeGeometry(1.95, 1.9, 8), roofMat);
+    capCone.position.y = 7.35;
+    capCone.castShadow = true;
+    const door = new THREE.Mesh(new THREE.BoxGeometry(1.05, 1.65, 0.22), timberMat);
+    door.position.set(0, 0.85, 2.32);
+    const balcony = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 0.16, 8), weatheredWoodMat);
+    balcony.position.y = 2.18;
+    root.add(stoneBase, towerBody, capCone, door, balcony);
+
+    const rotor = new THREE.Group();
+    rotor.position.set(0, 5.75, 1.95);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.72, 8), timberMat);
+    hub.rotation.x = Math.PI / 2;
+    rotor.add(hub);
+    const sailMat = new THREE.MeshStandardMaterial({ color: '#F5EFE6', roughness: 0.85 });
+    for (let b = 0; b < 4; b++) {
+      const armPivot = new THREE.Group();
+      armPivot.rotation.z = (b * Math.PI) / 2;
+      const spar = new THREE.Mesh(new THREE.BoxGeometry(0.14, 4.1, 0.14), timberMat);
+      spar.position.y = 2.05;
+      const sail = new THREE.Mesh(new THREE.BoxGeometry(0.95, 3.05, 0.05), sailMat);
+      sail.position.set(0.48, 2.25, 0.04);
+      sail.castShadow = true;
+      armPivot.add(spar, sail);
+      rotor.add(armPivot);
+    }
+    root.add(rotor);
+    root.userData.spinningWindmillRotor = rotor;
+    return root;
+  }
+
+  // 17. Medieval Market Stall with Striped Canopy & Goods Crates
+  if (lowerName.includes('market stall') || lowerNotes.includes('marketstall')) {
+    const canopyMat1 = new THREE.MeshStandardMaterial({ color: entity.styleTint ?? '#B91C1C', roughness: 0.78 });
+    const canopyMat2 = new THREE.MeshStandardMaterial({ color: '#F5F0E1', roughness: 0.8 });
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.92, 1.05), weatheredWoodMat);
+    counter.position.set(0, 0.46, 0);
+    counter.castShadow = true;
+    root.add(counter);
+    for (const sx of [-1.12, 1.12]) {
+      for (const sz of [-0.46, 0.46]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 2.25, 6), timberMat);
+        post.position.set(sx, 1.12, sz);
+        root.add(post);
+      }
+    }
+    for (let stripe = 0; stripe < 5; stripe++) {
+      const strip = new THREE.Mesh(
+        new THREE.BoxGeometry(0.52, 0.08, 1.68),
+        stripe % 2 === 0 ? canopyMat1 : canopyMat2
+      );
+      strip.position.set(-1.04 + stripe * 0.52, 2.22, 0.14);
+      strip.rotation.x = 0.22;
+      strip.castShadow = true;
+      root.add(strip);
+    }
+    const appleMat = new THREE.MeshStandardMaterial({ color: '#DC2626', roughness: 0.5 });
+    for (const [cx, cz] of [[-0.65, 0.12], [0.55, -0.05]]) {
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.28, 0.52), timberMat);
+      crate.position.set(cx, 1.05, cz);
+      const goods = new THREE.Mesh(new THREE.DodecahedronGeometry(0.18, 0), appleMat);
+      goods.position.set(cx, 1.24, cz);
+      root.add(crate, goods);
+    }
+    return root;
+  }
+
+  // 18. Forest Crossroads Carved Wooden Signpost
+  if (lowerName.includes('crossroads signpost') || lowerNotes.includes('crossroadssignpost')) {
+    const cairn = new THREE.Mesh(new THREE.DodecahedronGeometry(0.45, 0), stoneMat);
+    cairn.scale.set(1.25, 0.55, 1.15);
+    cairn.position.y = 0.18;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.11, 2.35, 7), timberMat);
+    post.position.y = 1.18;
+    post.castShadow = true;
+    root.add(cairn, post);
+    const armSpecs = [
+      { y: 2.02, rotY: 0.08, tiltZ: 0.04 }, // North: Village & Stone Bridge
+      { y: 1.68, rotY: -1.35, tiltZ: -0.05 }, // West: Cursed Caves
+      { y: 1.36, rotY: 1.22, tiltZ: 0.03 }, // East: Windmill Hill
+    ];
+    for (const arm of armSpecs) {
+      const boardGroup = new THREE.Group();
+      boardGroup.position.set(0, arm.y, 0);
+      boardGroup.rotation.set(0, arm.rotY, arm.tiltZ);
+      const plank = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.26, 0.08), weatheredWoodMat);
+      plank.position.x = 0.48;
+      plank.castShadow = true;
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.24, 4), weatheredWoodMat);
+      tip.rotation.z = -Math.PI / 2;
+      tip.position.x = 1.12;
+      boardGroup.add(plank, tip);
+      root.add(boardGroup);
+    }
+    return root;
+  }
+
+  // 19. Pasture Dairy Cow (with grazing head & tail animation)
+  if (lowerName.includes('cow') || lowerNotes.includes('pasturecow')) {
+    const hideMat = new THREE.MeshStandardMaterial({ color: '#F8FAFC', roughness: 0.78 });
+    const spotMat = new THREE.MeshStandardMaterial({ color: '#1F2937', roughness: 0.8 });
+    const hornMat = new THREE.MeshStandardMaterial({ color: '#FDE68A', roughness: 0.5 });
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.68, 1.32), hideMat);
+    torso.position.set(0, 0.78, 0);
+    torso.castShadow = true;
+    const patch = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.42, 0.58), spotMat);
+    patch.position.set(0, 0.84, 0.12);
+    root.add(torso, patch);
+    for (const [lx, lz] of [[-0.24, -0.48], [0.24, -0.48], [-0.24, 0.48], [0.24, 0.48]]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.065, 0.52, 6), hideMat);
+      leg.position.set(lx, 0.26, lz);
+      leg.castShadow = true;
+      root.add(leg);
+    }
+    const headPivot = new THREE.Group();
+    headPivot.position.set(0, 0.92, 0.66);
+    const skull = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.38, 0.46), spotMat);
+    skull.position.set(0, -0.02, 0.22);
+    const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.2, 0.18), new THREE.MeshStandardMaterial({ color: '#FDA4AF', roughness: 0.7 }));
+    muzzle.position.set(0, -0.1, 0.44);
+    for (const hx of [-0.22, 0.22]) {
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.2, 5), hornMat);
+      horn.position.set(hx, 0.2, 0.14);
+      horn.rotation.z = hx > 0 ? -0.5 : 0.5;
+      headPivot.add(horn);
+    }
+    headPivot.add(skull, muzzle);
+    const tailPivot = new THREE.Group();
+    tailPivot.position.set(0, 0.96, -0.68);
+    const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.02, 0.52, 5), spotMat);
+    tail.position.y = -0.24;
+    tailPivot.add(tail);
+    root.add(headPivot, tailPivot);
+    root.userData.grazingCow = { headPivot, tailPivot, phase: Math.random() * Math.PI * 2 };
+    return root;
+  }
+
+  // 20. Pasture Farm Pig (with snout-rooting animation)
+  if (lowerName.includes('pig') || lowerNotes.includes('pasturepig')) {
+    const pinkMat = new THREE.MeshStandardMaterial({ color: '#F9A8D4', roughness: 0.72 });
+    const snoutMat = new THREE.MeshStandardMaterial({ color: '#F472B6', roughness: 0.65 });
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8), pinkMat);
+    body.scale.set(0.95, 0.86, 1.38);
+    body.position.set(0, 0.42, 0);
+    body.castShadow = true;
+    root.add(body);
+    for (const [lx, lz] of [[-0.16, -0.26], [0.16, -0.26], [-0.16, 0.26], [0.16, 0.26]]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.26, 6), pinkMat);
+      leg.position.set(lx, 0.13, lz);
+      root.add(leg);
+    }
+    const headPivot = new THREE.Group();
+    headPivot.position.set(0, 0.44, 0.4);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), pinkMat);
+    head.position.set(0, 0, 0.12);
+    const snout = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.11, 0.14, 8), snoutMat);
+    snout.rotation.x = Math.PI / 2;
+    snout.position.set(0, -0.04, 0.3);
+    headPivot.add(head, snout);
+    root.add(headPivot);
+    root.userData.rootingPig = { headPivot, phase: Math.random() * Math.PI * 2 };
     return root;
   }
 
@@ -4830,7 +5229,7 @@ export function buildEntityMesh(entity: LevelEntity): THREE.Group {
       const trunkGeo = createOrganicTrunkGeometry({
         rTop: 0.11,
         rBottom: 0.27,
-        height: 1.55,
+        height: 3.65,
         yOffset: -0.1,
         radialSegs: 12,
         heightSegs: 6,
@@ -4840,18 +5239,18 @@ export function buildEntityMesh(entity: LevelEntity): THREE.Group {
       trunk.castShadow = true;
       trunk.receiveShadow = true;
       const crown1 = new THREE.Mesh(createDetailedPineTierGeometry(1.12, 1.12, 11, 1), leafMat);
-      crown1.position.y = 1.38;
+      crown1.position.y = 3.55;
       crown1.castShadow = true;
       const crown2 = new THREE.Mesh(createDetailedPineTierGeometry(0.92, 1.02, 10, 2), leafMat);
-      crown2.position.y = 1.96;
+      crown2.position.y = 4.15;
       crown2.rotation.y = 0.38;
       crown2.castShadow = true;
       const crown3 = new THREE.Mesh(createDetailedPineTierGeometry(0.7, 0.92, 9, 3), leafMat);
-      crown3.position.y = 2.48;
+      crown3.position.y = 4.68;
       crown3.rotation.y = 0.72;
       crown3.castShadow = true;
       const crown4 = new THREE.Mesh(createDetailedPineTierGeometry(0.45, 0.78, 7, 4), leafMat);
-      crown4.position.y = 2.94;
+      crown4.position.y = 5.15;
       crown4.castShadow = true;
       group.add(trunk, crown1, crown2, crown3, crown4);
       break;

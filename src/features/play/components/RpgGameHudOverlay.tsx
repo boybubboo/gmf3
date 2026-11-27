@@ -130,9 +130,9 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
       {/* =====================================================================
           ZONE 1 (TOP-LEFT): HERO STATUS CREST & PARTY COMPANION FRAMES
          ===================================================================== */}
-      <div className="pointer-events-none fixed top-4 left-4 z-30 flex flex-col gap-2.5 w-[308px] max-w-[42vw]">
+      <div className="pointer-events-none fixed top-4 left-4 z-30 flex flex-col gap-2 w-[288px] max-w-[40vw]">
         {/* Primary Hero Character Plaque */}
-        <div className="pointer-events-auto rounded-2xl bg-[#0B0E17]/92 border border-amber-500/35 backdrop-blur-md shadow-[0_16px_40px_rgba(0,0,0,0.75)] p-3.5 text-slate-100">
+        <div className="pointer-events-auto rounded-2xl bg-[#0B0E17]/54 border border-amber-400/30 shadow-[0_12px_32px_rgba(0,0,0,0.45)] p-3 text-slate-100">
           {/* Header Row: Medallion + Hero Name & Weapon + Gold/Keys */}
           <div className="flex items-center justify-between gap-2.5 pb-2.5 border-b border-white/10">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -258,7 +258,7 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
 
         {/* Party Companion Frames */}
         {buddyHud.total > 0 && (
-          <div className="pointer-events-auto rounded-xl bg-[#0B0E17]/88 border border-white/15 backdrop-blur-md px-3 py-2 shadow-xl">
+          <div className="pointer-events-auto rounded-xl bg-[#0B0E17]/52 border border-white/15 px-3 py-2 shadow-lg">
             <div className="flex items-center justify-between text-[11px] font-extrabold text-slate-300 mb-1.5">
               <span className="inline-flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5 text-amber-400" />
@@ -306,7 +306,7 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
           ZONE 2 (TOP-CENTER): STREAMLINED RPG REGION HEADER & BOSS HEALTH BAR
          ===================================================================== */}
       <div className="pointer-events-none fixed top-4 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-2 max-w-[92vw]">
-        <div className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-2xl bg-[#0B0E17]/92 border border-amber-500/35 backdrop-blur-md shadow-2xl text-white">
+        <div className="pointer-events-auto flex items-center gap-1 px-2 py-1 rounded-2xl bg-[#0B0E17]/56 border border-amber-400/30 shadow-xl text-white">
           <div className="flex items-center gap-2 px-2.5 py-1">
             <Compass className="w-4 h-4 text-amber-400 shrink-0" />
             <span className="text-xs font-black tracking-tight text-amber-100 whitespace-nowrap truncate max-w-[200px]">
@@ -358,6 +358,8 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
                 ? 'First-Person'
                 : resolvedCamMode === 'heroFront'
                 ? 'Hero Front'
+                : resolvedCamMode === 'close'
+                ? 'Close'
                 : 'Isometric'}
             </span>
           </button>
@@ -415,7 +417,7 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
 
         {/* Active Boss Health Bar */}
         {hudState.bossName && (
-          <div className="w-[360px] max-w-[85vw] rounded-2xl bg-[#0B0E17]/94 border border-rose-500/50 px-4 py-2.5 shadow-2xl backdrop-blur-md">
+          <div className="w-[340px] max-w-[85vw] rounded-2xl bg-[#0B0E17]/60 border border-rose-500/45 px-3.5 py-2 shadow-xl">
             <div className="flex items-center justify-between text-xs font-black text-rose-200 mb-1">
               <span className="inline-flex items-center gap-1.5 truncate">
                 <Skull className="w-4 h-4 text-rose-400 shrink-0" />
@@ -425,7 +427,7 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
                 {Math.round(bossCur * 10)} / {Math.round(bossMax * 10)}
               </span>
             </div>
-            <div className="h-3 w-full rounded-lg bg-slate-950 border border-rose-500/30 overflow-hidden p-0.5">
+            <div className="h-2.5 w-full rounded-lg bg-slate-950/75 border border-rose-500/30 overflow-hidden p-0.5">
               <div
                 className="h-full rounded-md bg-gradient-to-r from-rose-700 via-red-500 to-amber-400 transition-all duration-150"
                 style={{ width: `${Math.max(4, bossPct)}%` }}
@@ -436,18 +438,18 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
       </div>
 
       {/* =====================================================================
-          ZONE 3 (TOP-RIGHT): QUEST & CHRONICLE TRACKER
+          ZONE 3 (TOP-RIGHT BELOW MINIMAP): QUEST & CHRONICLE TRACKER
          ===================================================================== */}
       {hudState.objectives.length > 0 && (
-        <div className="pointer-events-none fixed top-14 right-4 z-20 w-[240px] rounded-2xl bg-[#0B0E17]/88 border border-amber-500/25 backdrop-blur-md px-3.5 py-2.5 text-slate-100 shadow-xl hidden md:block">
-          <div className="text-[11px] font-black tracking-wide text-amber-300 mb-1.5">
+        <div className="pointer-events-none fixed top-[232px] right-4 z-20 w-[216px] rounded-2xl bg-[#0B0E17]/48 border border-amber-400/25 px-3 py-2 text-slate-100 shadow-lg hidden md:block">
+          <div className="text-[11px] font-black tracking-wide text-amber-300 mb-1">
             Chronicle Objectives
           </div>
           <div className="space-y-1">
             {hudState.objectives.slice(0, 3).map((goal, idx) => (
               <div
                 key={idx}
-                className="text-xs font-semibold text-slate-200 leading-snug flex items-start gap-1.5"
+                className="text-[11px] font-semibold text-slate-100/95 leading-snug flex items-start gap-1.5"
               >
                 <span className="text-amber-400 font-black">•</span>
                 <span>{goal}</span>
@@ -458,33 +460,33 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
       )}
 
       {/* =====================================================================
-          ZONE 4 (BOTTOM-CENTER): SINGLE UNIFIED ISOMETRIC RPG COMMAND DOCK
+          ZONE 4 (BOTTOM-CENTER): INVISIBLE DOCK CONTAINER + COMPACT WEAPON TABS
          ===================================================================== */}
-      <div className="pointer-events-auto fixed bottom-4 left-1/2 -translate-x-1/2 z-30 max-w-[96vw]">
-        <div className="flex flex-wrap items-center justify-center gap-2 px-3 py-2.5 rounded-2xl bg-[#0B0E17]/95 border border-amber-500/45 backdrop-blur-md shadow-[0_20px_50px_rgba(0,0,0,0.85)]">
+      <div className="pointer-events-none fixed bottom-3 left-1/2 -translate-x-1/2 z-30 max-w-[96vw]">
+        <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-1.5 p-0 bg-transparent border-0 shadow-none">
           {/* [1] Sword Slash */}
           <button
             type="button"
             onClick={onTriggerSword}
-            className={`group relative flex items-center gap-2.5 px-3.5 py-2 rounded-xl border text-left transition-all active:scale-95 whitespace-nowrap shrink-0 ${
+            className={`group relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-left transition-all active:scale-95 whitespace-nowrap shrink-0 ${
               rpgStats.activeCombatStyle === 'sword'
-                ? 'bg-gradient-to-b from-amber-500/35 to-amber-900/40 border-amber-400 text-white shadow-[0_0_20px_rgba(245,158,11,0.25)]'
-                : 'bg-slate-900/90 hover:bg-slate-800/90 border-white/15 text-slate-200'
+                ? 'bg-amber-600/45 border-amber-400/80 text-white shadow-[0_4px_14px_rgba(245,158,11,0.25)]'
+                : 'bg-[#0B0E17]/54 hover:bg-[#0B0E17]/72 border-white/15 text-slate-200'
             }`}
-            title="Melee Sword Slash (Press 1, J, or Space)"
+            title={`Melee Sword Slash · ATK ${totalAtk} (Press 1, J, or Space)`}
           >
-            <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
-              <Sword className="w-4 h-4 text-amber-300" />
+            <div className="w-6 h-6 rounded-lg bg-amber-500/25 border border-amber-400/40 flex items-center justify-center shrink-0">
+              <Sword className="w-3.5 h-3.5 text-amber-300" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-black text-white">Sword Slash</span>
-                <span className="px-1.5 py-0.2 rounded bg-black/40 border border-white/15 text-[10px] font-mono font-black text-amber-200">
+            <div className="leading-tight">
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] font-black text-white">Sword</span>
+                <span className="px-1 rounded bg-black/40 border border-white/15 text-[9px] font-mono font-black text-amber-200">
                   1
                 </span>
               </div>
-              <div className="text-[10px] font-bold text-amber-300/90 tabular-nums">
-                ATK {totalAtk} · Melee Arc
+              <div className="text-[9px] font-bold text-amber-300/90 tabular-nums">
+                ATK {totalAtk}
               </div>
             </div>
           </button>
@@ -493,25 +495,25 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
           <button
             type="button"
             onClick={onTriggerArrow}
-            className={`group relative flex items-center gap-2.5 px-3.5 py-2 rounded-xl border text-left transition-all active:scale-95 whitespace-nowrap shrink-0 ${
+            className={`group relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-left transition-all active:scale-95 whitespace-nowrap shrink-0 ${
               rpgStats.activeCombatStyle === 'arrow'
-                ? 'bg-gradient-to-b from-emerald-500/35 to-emerald-900/40 border-emerald-400 text-white shadow-[0_0_20px_rgba(16,185,129,0.25)]'
-                : 'bg-slate-900/90 hover:bg-slate-800/90 border-white/15 text-slate-200'
+                ? 'bg-emerald-600/45 border-emerald-400/80 text-white shadow-[0_4px_14px_rgba(16,185,129,0.25)]'
+                : 'bg-[#0B0E17]/54 hover:bg-[#0B0E17]/72 border-white/15 text-slate-200'
             }`}
-            title="Shoot Ranged Bow & Arrow (Press 2 or R)"
+            title={`Shoot Ranged Bow & Arrow · DMG ${totalRng} (Press 2 or R)`}
           >
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center shrink-0">
-              <Target className="w-4 h-4 text-emerald-300" />
+            <div className="w-6 h-6 rounded-lg bg-emerald-500/25 border border-emerald-400/40 flex items-center justify-center shrink-0">
+              <Target className="w-3.5 h-3.5 text-emerald-300" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-black text-white">Bow &amp; Arrow</span>
-                <span className="px-1.5 py-0.2 rounded bg-black/40 border border-white/15 text-[10px] font-mono font-black text-emerald-200">
+            <div className="leading-tight">
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] font-black text-white">Bow</span>
+                <span className="px-1 rounded bg-black/40 border border-white/15 text-[9px] font-mono font-black text-emerald-200">
                   2
                 </span>
               </div>
-              <div className="text-[10px] font-bold text-emerald-300/90 tabular-nums">
-                DMG {totalRng} · Ranged
+              <div className="text-[9px] font-bold text-emerald-300/90 tabular-nums">
+                DMG {totalRng}
               </div>
             </div>
           </button>
@@ -520,55 +522,53 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
           <button
             type="button"
             onClick={onTriggerMagic}
-            className={`group relative flex items-center gap-2.5 px-3.5 py-2 rounded-xl border text-left transition-all active:scale-95 whitespace-nowrap shrink-0 ${
+            className={`group relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-left transition-all active:scale-95 whitespace-nowrap shrink-0 ${
               rpgStats.activeCombatStyle === 'magic'
-                ? 'bg-gradient-to-b from-purple-500/35 to-indigo-900/40 border-purple-400 text-white shadow-[0_0_20px_rgba(168,85,247,0.25)]'
-                : 'bg-slate-900/90 hover:bg-slate-800/90 border-white/15 text-slate-200'
+                ? 'bg-purple-600/45 border-purple-400/80 text-white shadow-[0_4px_14px_rgba(168,85,247,0.25)]'
+                : 'bg-[#0B0E17]/54 hover:bg-[#0B0E17]/72 border-white/15 text-slate-200'
             }`}
-            title="Cast Arcane Lightning Zap — Costs 18 MP (Press 3 or F)"
+            title={`Cast Arcane Lightning Zap · MAG ${totalMag} · 18 MP (Press 3 or F)`}
           >
-            <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-400/40 flex items-center justify-center shrink-0">
-              <Wand2 className="w-4 h-4 text-purple-300" />
+            <div className="w-6 h-6 rounded-lg bg-purple-500/25 border border-purple-400/40 flex items-center justify-center shrink-0">
+              <Wand2 className="w-3.5 h-3.5 text-purple-300" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-black text-white">Magic Zap</span>
-                <span className="px-1.5 py-0.2 rounded bg-black/40 border border-white/15 text-[10px] font-mono font-black text-purple-200">
+            <div className="leading-tight">
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] font-black text-white">Magic</span>
+                <span className="px-1 rounded bg-black/40 border border-white/15 text-[9px] font-mono font-black text-purple-200">
                   3
                 </span>
               </div>
-              <div className="text-[10px] font-bold text-purple-300/90 tabular-nums">
-                MAG {totalMag} · 18 MP
+              <div className="text-[9px] font-bold text-purple-300/90 tabular-nums">
+                18 MP
               </div>
             </div>
           </button>
-
-          <div className="h-8 w-px bg-white/15 mx-0.5 hidden sm:block" />
 
           {/* [4] Healing Draught (Potions & Wild Herbs) */}
           <button
             type="button"
             onClick={onTriggerHeal}
-            className="group relative flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-slate-900/90 hover:bg-rose-950/60 border border-rose-400/35 text-left transition-all active:scale-95 whitespace-nowrap shrink-0"
+            className="group relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#0B0E17]/54 hover:bg-rose-950/60 border border-rose-400/35 text-left transition-all active:scale-95 whitespace-nowrap shrink-0"
             title="Use Health Potion or Wild Healing Herb (Press 4 or H)"
           >
-            <div className="w-8 h-8 rounded-lg bg-rose-500/20 border border-rose-400/40 flex items-center justify-center shrink-0">
-              <FlaskConical className="w-4 h-4 text-rose-300" />
+            <div className="w-6 h-6 rounded-lg bg-rose-500/25 border border-rose-400/40 flex items-center justify-center shrink-0">
+              <FlaskConical className="w-3.5 h-3.5 text-rose-300" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-black text-white">Heal Elixir</span>
-                <span className="px-1.5 py-0.2 rounded bg-black/40 border border-white/15 text-[10px] font-mono font-black text-rose-200">
+            <div className="leading-tight">
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] font-black text-white">Heal</span>
+                <span className="px-1 rounded bg-black/40 border border-white/15 text-[9px] font-mono font-black text-rose-200">
                   4
                 </span>
               </div>
-              <div className="text-[10px] font-bold text-rose-200/90 tabular-nums">
-                {rpgStats.potions} Potion · {rpgStats.herbs} Herb
+              <div className="text-[9px] font-bold text-rose-200/90 tabular-nums">
+                {rpgStats.potions}P · {rpgStats.herbs}H
               </div>
             </div>
           </button>
 
-          {/* Integrated Utility Tool Slots (replaces the old overlapping bottom tool bar) */}
+          {/* Compact Utility Tool Slots */}
           {quickHotbarTools
             .filter(({ def }) => def.id !== 'parachute_blanket' && def.category === 'tool')
             .slice(0, 2)
@@ -579,51 +579,43 @@ export const RpgGameHudOverlay: React.FC<RpgGameHudOverlayProps> = ({
                   key={def.id}
                   type="button"
                   onClick={() => onHoldTool(def.id)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all active:scale-95 whitespace-nowrap shrink-0 ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-left transition-all active:scale-95 whitespace-nowrap shrink-0 ${
                     isHeld
-                      ? 'bg-sky-500/25 border-sky-400 text-white'
-                      : 'bg-slate-900/85 hover:bg-slate-800 border-white/15 text-slate-300'
+                      ? 'bg-sky-500/40 border-sky-400/80 text-white'
+                      : 'bg-[#0B0E17]/54 hover:bg-[#0B0E17]/72 border-white/15 text-slate-300'
                   }`}
                   title={`Equip ${def.name}`}
                 >
-                  <div className="w-7 h-7 rounded-lg bg-black/35 border border-white/10 flex items-center justify-center shrink-0">
+                  <div className="w-6 h-6 rounded-lg bg-black/35 border border-white/10 flex items-center justify-center shrink-0">
                     <InventoryItemIcon
                       icon={def.icon}
-                      size={15}
+                      size={13}
                       color={isHeld ? '#38BDF8' : def.colorHex}
                     />
                   </div>
-                  <div>
-                    <div className="text-xs font-extrabold text-white max-w-[92px] truncate">
-                      {def.name}
-                    </div>
-                    <div className="text-[10px] font-bold text-slate-400">
-                      {isHeld ? 'Equipped' : 'Tool'}
-                    </div>
-                  </div>
+                  <span className="text-[11px] font-extrabold text-white max-w-[78px] truncate">
+                    {def.name}
+                  </span>
                 </button>
               );
             })}
 
           {/* [★] Fanned Destiny Treasure Cards */}
           {allowFannedCards && (
-            <>
-              <div className="h-8 w-px bg-white/15 mx-0.5 hidden sm:block" />
-              <button
-                type="button"
-                onClick={onOpenTreasureCards}
-                className="group relative flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500/25 via-fuchsia-500/20 to-sky-500/25 hover:from-amber-500/40 hover:via-fuchsia-500/35 hover:to-sky-500/40 border border-amber-300/50 text-left transition-all active:scale-95 whitespace-nowrap shrink-0"
-                title="Open Fanned-Out Colorful Destiny Reward Cards"
-              >
-                <div className="w-8 h-8 rounded-lg bg-amber-400/20 border border-amber-300/50 flex items-center justify-center shrink-0">
-                  <Sparkles className="w-4 h-4 text-amber-200" />
-                </div>
-                <div>
-                  <div className="text-xs font-black text-amber-100">Destiny Cards</div>
-                  <div className="text-[10px] font-bold text-amber-200/85">3-Card Choice</div>
-                </div>
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={onOpenTreasureCards}
+              className="group relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-950/55 hover:bg-amber-900/65 border border-amber-300/50 text-left transition-all active:scale-95 whitespace-nowrap shrink-0"
+              title="Open Fanned-Out Colorful Destiny Reward Cards"
+            >
+              <div className="w-6 h-6 rounded-lg bg-amber-400/20 border border-amber-300/50 flex items-center justify-center shrink-0">
+                <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+              </div>
+              <div className="leading-tight">
+                <div className="text-[11px] font-black text-amber-100">Cards</div>
+                <div className="text-[9px] font-bold text-amber-200/85">3-Choice</div>
+              </div>
+            </button>
           )}
         </div>
       </div>

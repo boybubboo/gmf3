@@ -71,9 +71,12 @@ const FEATURE_SCULPT_BRUSHES: { id: TerrainBrush; label: string; accent: string 
 
 const PAINT_BRUSHES: { id: TerrainBrush; label: string; swatch: string }[] = [
   { id: 'paintGrass', label: 'Grass', swatch: '#4F9E3C' },
+  { id: 'paintTallGrass', label: 'Long Grass', swatch: '#78BD42' },
   { id: 'paintMoss', label: 'Moss', swatch: '#598A3A' },
-  { id: 'paintSand', label: 'Sand', swatch: '#D9C08B' },
+  { id: 'paintLeaves', label: 'Leaves', swatch: '#9A5B2C' },
   { id: 'paintDirt', label: 'Dirt', swatch: '#9E7B54' },
+  { id: 'paintClumpyDirt', label: 'Clumpy Dirt', swatch: '#5C422C' },
+  { id: 'paintSand', label: 'Sand', swatch: '#D9C08B' },
   { id: 'paintCobble', label: 'Cobble', swatch: '#8E8B82' },
   { id: 'paintRock', label: 'Rock', swatch: '#6F737A' },
   { id: 'paintSnow', label: 'Snow', swatch: '#EBF2FA' },
@@ -150,12 +153,18 @@ export function getTerrainBrushLabel(brush: TerrainBrush): string {
       return 'Cave';
     case 'paintGrass':
       return 'Grass';
+    case 'paintTallGrass':
+      return 'Long Grass';
     case 'paintMoss':
       return 'Moss';
+    case 'paintLeaves':
+      return 'Leaves';
     case 'paintSand':
       return 'Sand';
     case 'paintDirt':
       return 'Dirt';
+    case 'paintClumpyDirt':
+      return 'Clumpy Dirt';
     case 'paintCobble':
       return 'Cobble';
     case 'paintRock':
@@ -606,6 +615,10 @@ export const TerrainEditorModal: React.FC<{
               <div className="grid grid-cols-4 gap-1.5">
                 {PAINT_BRUSHES.map((pb) => {
                   const active = store.worldTool === 'terrain' && activeBrush === pb.id;
+                  const swatchCol =
+                    pb.id === 'paintTallGrass'
+                      ? level.terrain?.tallGrassPatchColor ?? pb.swatch
+                      : pb.swatch;
                   return (
                     <button
                       key={pb.id}
@@ -619,12 +632,68 @@ export const TerrainEditorModal: React.FC<{
                     >
                       <span
                         className="w-3.5 h-3.5 rounded-full border border-black/20 shrink-0"
-                        style={{ backgroundColor: pb.swatch }}
+                        style={{ backgroundColor: swatchCol }}
                       />
                       <span className="truncate">{pb.label}</span>
                     </button>
                   );
                 })}
+              </div>
+              {/* Custom Color Selector for Long Grass Patches */}
+              <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-[#1C212E] border border-slate-200/60 dark:border-white/[0.06]">
+                <span className="text-[11px] font-bold text-slate-600 dark:text-[#A8B1C6]">
+                  Long Grass Patch Color
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {['#78BD42', '#9ED149', '#D6B14E', '#4F9E68', '#B86A3D'].map((hex) => {
+                    const currentCol = level.terrain?.tallGrassPatchColor ?? '#78BD42';
+                    const selected = currentCol.toLowerCase() === hex.toLowerCase();
+                    return (
+                      <button
+                        key={hex}
+                        type="button"
+                        onClick={() =>
+                          store.updateLevel('set long grass patch color', (lvl) => {
+                            const curT = lvl.terrain ?? createInitialTerrain();
+                            return {
+                              ...lvl,
+                              terrain: {
+                                ...curT,
+                                tallGrassPatchColor: hex,
+                                revision: curT.revision + 1,
+                              },
+                            };
+                          })
+                        }
+                        className={`w-4 h-4 rounded-full border transition-transform ${
+                          selected ? 'border-white scale-115 ring-1 ring-[#F59E0B]' : 'border-black/25'
+                        }`}
+                        style={{ backgroundColor: hex }}
+                        title={`Tint long grass patches ${hex}`}
+                      />
+                    );
+                  })}
+                  <input
+                    type="color"
+                    value={level.terrain?.tallGrassPatchColor ?? '#78BD42'}
+                    onChange={(e) => {
+                      const hex = e.target.value;
+                      store.updateLevel('set long grass patch color', (lvl) => {
+                        const curT = lvl.terrain ?? createInitialTerrain();
+                        return {
+                          ...lvl,
+                          terrain: {
+                            ...curT,
+                            tallGrassPatchColor: hex,
+                            revision: curT.revision + 1,
+                          },
+                        };
+                      });
+                    }}
+                    className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0"
+                    title="Pick custom long grass patch color"
+                  />
+                </div>
               </div>
             </section>
 

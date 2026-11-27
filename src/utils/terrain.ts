@@ -176,16 +176,16 @@ export interface IslandHill {
   height: number;
 }
 
-// Reachable enterable cave carved into the southern base of the western mountain near the starting trail
+// Multi-room hollow mountain cave ("The Cursed Caves") carved deep into the western mountain crag
 export const MountainCave = {
   x: -80,
   z: 67,
-  yaw: -0.34, // entrance faces south-southwest directly toward hero's starting trail
+  yaw: -0.34, // entrance faces south-southwest directly toward hero's forest trail
   floorY: 1.55,
   mouthHalfWidth: 2.65,
-  chamberHalfWidth: 5.2,
-  depth: 12.6, // extends from local z = 0 (arch) to local z = -12.6 (back wall)
-  ceilingHeight: 4.85,
+  chamberHalfWidth: 12.2,
+  depth: 34.0, // deep multi-room tunnel & cavern complex extending from local z = 0 to -34.0
+  ceilingHeight: 5.05,
 };
 
 export function toMountainCaveLocal(x: number, z: number): { lx: number; lz: number } {
@@ -208,14 +208,49 @@ export function fromMountainCaveLocal(lx: number, lz: number): [number, number] 
   ];
 }
 
+// Connected walkable rectangles defining the multi-room cave layout in cave-local (lx, lz)
+export const MOUNTAIN_CAVE_ROOMS: ReadonlyArray<{
+  xMin: number;
+  xMax: number;
+  zMin: number;
+  zMax: number;
+}> = [
+  // 1. Entry Corridor
+  { xMin: -2.85, xMax: 2.85, zMin: -8.2, zMax: 1.5 },
+  // 2. Central Torchlit Cavern Hub
+  { xMin: -6.0, xMax: 6.0, zMin: -19.2, zMax: -7.0 },
+  // 3. West Crystal Grotto Turnoff
+  { xMin: -11.8, xMax: -4.8, zMin: -18.2, zMax: -10.2 },
+  // 4. East Underground Spring & Vault Turnoff
+  { xMin: 4.8, xMax: 11.6, zMin: -19.0, zMax: -11.0 },
+  // 5. Deep Sanctum Boss Alcove
+  { xMin: -5.4, xMax: 5.4, zMin: -33.4, zMax: -18.0 },
+];
+
+export function isLocalInsideMountainCave(lx: number, lz: number, pad = 0): boolean {
+  for (let i = 0; i < MOUNTAIN_CAVE_ROOMS.length; i++) {
+    const r = MOUNTAIN_CAVE_ROOMS[i];
+    if (
+      lx >= r.xMin - pad &&
+      lx <= r.xMax + pad &&
+      lz >= r.zMin - pad &&
+      lz <= r.zMax + pad
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function isInsideMountainCave(x: number, z: number): boolean {
   const { lx, lz } = toMountainCaveLocal(x, z);
-  return lz <= 1.2 && lz >= -MountainCave.depth - 0.8 && Math.abs(lx) <= MountainCave.chamberHalfWidth + 0.6;
+  return isLocalInsideMountainCave(lx, lz, 0.25);
 }
 
 export function isNearMountainCaveEntrance(x: number, z: number): boolean {
   const { lx, lz } = toMountainCaveLocal(x, z);
-  return lz <= 4.5 && lz >= -MountainCave.depth - 1.5 && Math.abs(lx) <= MountainCave.chamberHalfWidth + 1.5;
+  if (lz <= 5.2 && lz >= -2.5 && Math.abs(lx) <= 4.5) return true;
+  return isLocalInsideMountainCave(lx, lz, 1.5);
 }
 
 export function terrainHasMainMountainCave(terrain?: TerrainData | null): boolean {
@@ -1122,6 +1157,55 @@ export function isRopeBridgeEntity(ent: { kind?: string; name?: string; notes?: 
   );
 }
 
+export function isStoneArchBridgeEntity(ent: { kind?: string; name?: string; notes?: string }): boolean {
+  if (ent.kind && ent.kind !== 'prop') return false;
+  const lowerName = (ent.name ?? '').toLowerCase();
+  const lowerNotes = (ent.notes ?? '').toLowerCase();
+  return (
+    lowerNotes.includes('stonearchbridge') ||
+    lowerName.includes('stone arch bridge') ||
+    lowerName.includes('arched stone bridge')
+  );
+}
+
+export interface GrassExclusionRect {
+  x: number;
+  z: number;
+  hw: number;
+  hd: number;
+  yaw: number;
+}
+
+export function getLevelGrassExclusionRects(level: GameLevel): GrassExclusionRect[] {
+  const rects: GrassExclusionRect[] = [];
+  if (!level.entities || level.entities.length === 0) return rects;
+  for (const ent of level.entities) {
+    if (ent.kind !== 'prop') continue;
+    const [wx, wz] = levelBoardToWorld(level, ent.position);
+    const s = Math.max(0.5, ent.scale ?? 1);
+    const yaw = ((ent.rotation ?? 0) * Math.PI) / 180;
+    const walkInSpec = getWalkInBuildingSpec(ent);
+    if (walkInSpec) {
+      rects.push({
+        x: wx,
+        z: wz,
+        hw: walkInSpec.halfW + 0.4,
+        hd: walkInSpec.halfD + 0.4,
+        yaw,
+      });
+      continue;
+    }
+    if (isRopeBridgeEntity(ent)) {
+      rects.push({ x: wx, z: wz, hw: 2.1 * s, hd: 7.0 * s, yaw });
+      continue;
+    }
+    if (isStoneArchBridgeEntity(ent)) {
+      rects.push({ x: wx, z: wz, hw: 2.4 * s, hd: 7.8 * s, yaw });
+    }
+  }
+  return rects;
+}
+
 
 function insertColliderIntoGrid(
   cells: Map<number, LevelCollider[]>,
@@ -1406,7 +1490,20 @@ function buildLevelColliderGrid(level: GameLevel): CachedLevelColliderGrid {
           for (const side of [-1, 1]) {
             const rx = wx + side * railX * cos;
             const rz = wz - side * railX * sin;
-            addObbCollider(cells, rx, rz, yaw, 0.22 * s, halfLen, undefined, baseY - 2.5, baseY + 2.8 * s);
+            addObbCollider(cells, rx, rz, yaw, 0.22 * s, halfLen, undefined, baseY - 2.5, baseY + 3.4 * s);
+          }
+          continue;
+        }
+
+        if (isStoneArchBridgeEntity(ent)) {
+          const cos = Math.cos(yaw);
+          const sin = Math.sin(yaw);
+          const railX = 2.08 * s;
+          const halfLen = 7.5 * s;
+          for (const side of [-1, 1]) {
+            const rx = wx + side * railX * cos;
+            const rz = wz - side * railX * sin;
+            addObbCollider(cells, rx, rz, yaw, 0.28 * s, halfLen, undefined, baseY - 2.5, baseY + 3.8 * s);
           }
           continue;
         }
@@ -1635,15 +1732,15 @@ export function resolveHorizontalCollision(
       nz = (nz / dist) * maxR;
     }
 
-    // MountainCave interior & entrance pillar collision (only when terrain actually contains the main MountainCave)
+    // Multi-room MountainCave interior & entrance pillar collision (only when terrain actually contains the main MountainCave)
     if (terrainHasMainMountainCave(level.terrain)) {
       const local = toMountainCaveLocal(nx, nz);
       let { lx, lz } = local;
-      if (lz <= 2.4 && lz >= -MountainCave.depth - 2.4 && Math.abs(lx) <= MountainCave.chamberHalfWidth + 2.8) {
-        // Entrance arch flanking pillars at lz in [-1.2, +1.5], |lx| >= mouthHalfWidth
+      if (lz <= 2.4 && lz >= -MountainCave.depth - 2.4 && Math.abs(lx) <= 13.4) {
         if (lz > -1.35 && lz < 1.55) {
+          // Entrance arch flanking stone pillars
           const minOpenX = MountainCave.mouthHalfWidth - radius * 0.6;
-          const outerPillarX = MountainCave.chamberHalfWidth + 1.8;
+          const outerPillarX = 6.6;
           if (Math.abs(lx) > minOpenX && Math.abs(lx) < outerPillarX) {
             if (Math.abs(lx) < (minOpenX + outerPillarX) * 0.5) {
               lx = Math.sign(lx || 1) * minOpenX;
@@ -1651,20 +1748,26 @@ export function resolveHorizontalCollision(
               lx = Math.sign(lx || 1) * outerPillarX;
             }
           }
-        } else if (lz <= -1.35) {
-          // Inside the hollow cavern chamber: keep actor smoothly inside the curved stone walls
-          const wallHalfW = MountainCave.chamberHalfWidth - 0.85 - radius;
-          const backZ = -MountainCave.depth + 1.1 + radius;
-          if (Math.abs(lx) < MountainCave.chamberHalfWidth + 0.8 && lz > -MountainCave.depth - 0.6) {
-            // Rounded rear apse taper
-            const rearT = Math.max(0, (-lz - (MountainCave.depth - 4.4)) / 4.4);
-            const curHalfW = Math.max(1.8, wallHalfW * Math.sqrt(Math.max(0.15, 1 - rearT * rearT * 0.68)));
-            if (Math.abs(lx) > curHalfW) {
-              lx = Math.sign(lx) * curHalfW;
+        } else if (lz <= -1.35 && !isLocalInsideMountainCave(lx, lz, -radius)) {
+          // Project cleanly onto the nearest interior wall of the union of cave rooms
+          let bestX = lx;
+          let bestZ = lz;
+          let bestD2 = Infinity;
+          for (let i = 0; i < MOUNTAIN_CAVE_ROOMS.length; i++) {
+            const r = MOUNTAIN_CAVE_ROOMS[i];
+            const cx = Math.max(r.xMin + radius, Math.min(r.xMax - radius, lx));
+            const cz = Math.max(r.zMin + radius, Math.min(r.zMax - radius, lz));
+            const d2 = (cx - lx) * (cx - lx) + (cz - lz) * (cz - lz);
+            if (d2 < bestD2) {
+              bestD2 = d2;
+              bestX = cx;
+              bestZ = cz;
             }
-            if (lz < backZ) {
-              lz = backZ;
-            }
+          }
+          // Only clamp if within cave bounding envelope (never pull actors outside mountain rock if they walked behind outside slope)
+          if (bestD2 < 9.5) {
+            lx = bestX;
+            lz = bestZ;
           }
         }
         const [wx, wz] = fromMountainCaveLocal(lx, lz);
@@ -2274,17 +2377,16 @@ export function applyMountainCaveToTerrain(terrain: TerrainData): TerrainData {
       const idx = row * width + col;
       const { lx, lz } = toMountainCaveLocal(vx, vz);
 
-      // Enhance mountain silhouette behind the cave and carve flat entrance/chamber floor
+      // Enhance mountain silhouette behind the deep cave complex and carve flat multi-room floors
       const mtnDist = Math.hypot((vx + 74) / 36, (vz - 49) / 32);
-      const inCaveZone =
-        lz >= -MountainCave.depth - 6 && lz <= 10.5 && Math.abs(lx) <= MountainCave.chamberHalfWidth + 7.5;
+      const inCaveZone = isLocalInsideMountainCave(lx, lz, 3.2) || (lz >= -3 && lz <= 10.5 && Math.abs(lx) <= 6.8);
 
       if (mtnDist < 1.05 || inCaveZone) {
         nextHeights[idx] = Math.round(IslandTerrain.heightAt(vx, vz) * 1000) / 1000;
       }
 
-      if (lz >= -MountainCave.depth - 1.5 && lz <= 4.2 && Math.abs(lx) <= MountainCave.chamberHalfWidth + 1.2) {
-        nextLayers[idx] = lz < 0.8 ? 2 : 6; // dark rock floor inside, worn dirt apron at mouth
+      if (isLocalInsideMountainCave(lx, lz, 0.8)) {
+        nextLayers[idx] = lz < 0.8 ? 2 : 8; // dark rock floor inside, dark clumpy forest earth apron at mouth
       }
     }
   }
@@ -2590,7 +2692,7 @@ export function sampleLevelHeight(level: GameLevel, x: number, z: number): numbe
         const halfW = 1.82 * s;
         const halfL = 6.8 * s;
         if (Math.abs(lx) <= halfW && Math.abs(lz) <= halfL) {
-          // Sample bank height at the two ends of the bridge so it spans over deep water gorges
+          // Sample bank height at the two ends of the bridge so it spans over deep water gorges or peak chasms
           const southEndX = wx + halfL * sin;
           const southEndZ = wz + halfL * cos;
           const northEndX = wx - halfL * sin;
@@ -2601,6 +2703,25 @@ export function sampleLevelHeight(level: GameLevel, x: number, z: number): numbe
           const u = Math.min(1, Math.abs(lz) / Math.max(0.01, halfL));
           const archCamber = (1 - u * u) * 0.28 * s;
           const deckY = bankAnchorY + 0.14 * s + archCamber;
+          h = Math.max(h, deckY);
+        }
+        continue;
+      }
+
+      if (isStoneArchBridgeEntity(ent)) {
+        const halfW = 2.02 * s;
+        const halfL = 7.5 * s;
+        if (Math.abs(lx) <= halfW && Math.abs(lz) <= halfL) {
+          const southEndX = wx + halfL * sin;
+          const southEndZ = wz + halfL * cos;
+          const northEndX = wx - halfL * sin;
+          const northEndZ = wz - halfL * cos;
+          const southBankY = sampleTerrainHeight(level.terrain, southEndX, southEndZ);
+          const northBankY = sampleTerrainHeight(level.terrain, northEndX, northEndZ);
+          const bankAnchorY = Math.max(southBankY, northBankY, IslandTerrain.waterLevel + 1.15) + (ent.elevationY ?? 0);
+          const u = Math.min(1, Math.abs(lz) / Math.max(0.01, halfL));
+          const archCamber = (1 - u * u) * 1.12 * s;
+          const deckY = bankAnchorY + 0.24 * s + archCamber;
           h = Math.max(h, deckY);
         }
         continue;
@@ -2729,6 +2850,9 @@ export function applyTerrainBrush(
     paintMoss: 4,
     paintCobble: 5,
     paintDirt: 6,
+    paintLeaves: 7,
+    paintClumpyDirt: 8,
+    paintTallGrass: 9,
   };
 
   // Restrict grid iteration strictly to the brush bounding box for instant O(r^2) sculpting
@@ -3849,9 +3973,12 @@ export function carveWaterBodyIntoTerrain(
 }
 
 /**
- * Carves a real water-filled river gorge between two higher pieces of land (South Village Plateau
- * and North Highlands) so that the Rope & Wooden Slat Bridge placed at (bridgeX, bridgeZ)
- * is the authentic crossing over deep flowing water.
+ * Carves the Nottingham Forest RPG Valley:
+ * - Craggy 18-26m outer mountain perimeter framing the forest
+ * - Meandering variable-width river with gravel ford, mossy banks (zero sand beach!), & stone-arch bridge crossing at (0, -14)
+ * - Twin mountain crag peaks (-32, -26) & (-32, -40) separated by a steep chasm at (-32, -33) for the peak-to-peak rope bridge
+ * - Level crossroads at (0, 34), village plaza terraces, sawmill riverbank, hilltop windmill mound, and trail to The Cursed Caves
+ * - Lush leaves, dark clumpy dirt, moss, long grass patches, dense riverbank reeds/cattails & hedgerow borders
  */
 export function carveRpgRiverGorgeTerrain(
   rawTerrain: TerrainData,
@@ -3867,9 +3994,75 @@ export function carveRpgRiverGorgeTerrain(
   const layers = [...terrain.layers];
 
   const riverWaterY = IslandTerrain.waterLevel + 0.15;
-  const riverBedY = riverWaterY - 2.35;
-  const southBankTargetY = Math.max(1.55, riverWaterY + 1.55);
-  const northBankTargetY = Math.max(1.75, riverWaterY + 1.75);
+  const riverBedY = riverWaterY - 2.25;
+  const southBankTargetY = 1.65;
+  const northBankTargetY = 1.85;
+
+  const getRiverCenterZ = (vx: number): number => {
+    const dxB = vx - bridgeX;
+    // Passes directly under (bridgeX, bridgeZ) with smooth natural bends upstream & downstream
+    return (
+      bridgeZ +
+      Math.sin(dxB * 0.062) * 3.65 * Math.min(1, Math.abs(dxB) / 7.5) +
+      Math.sin(dxB * 0.145) * 1.15 * Math.min(1, Math.abs(dxB) / 14.0)
+    );
+  };
+
+  const getRiverInnerHalfW = (vx: number): number => {
+    // Variable width: wide pool near sawmill (x~20), tighter narrows under bridge
+    const varMod = 0.5 + 0.5 * Math.sin(vx * 0.095 + 0.7);
+    return 3.7 + varMod * 1.45;
+  };
+
+  // Helper distance to polyline for forest trails
+  const distToPathSegs = (px: number, pz: number, pts: [number, number][]): number => {
+    let minD = Infinity;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ax, az] = pts[i];
+      const [bx, bz] = pts[i + 1];
+      const abx = bx - ax;
+      const abz = bz - az;
+      const lenSq = abx * abx + abz * abz || 1;
+      const t = Math.max(0, Math.min(1, ((px - ax) * abx + (pz - az) * abz) / lenSq));
+      const cx = ax + abx * t;
+      const cz = az + abz * t;
+      const d = Math.hypot(px - cx, pz - cz);
+      if (d < minD) minD = d;
+    }
+    return minD;
+  };
+
+  const mainVillageRoad: [number, number][] = [
+    [0, 42],
+    [0, 34], // Hero Forest Crossroads
+    [0, 14], // Village Plaza
+    [0, -4],
+    [bridgeX, bridgeZ], // Stone Arch Bridge
+    [0, -25],
+    [0, -34], // North Temple
+  ];
+  const caveTrail: [number, number][] = [
+    [0, 34], // Branches west from Forest Crossroads
+    [-16, 40],
+    [-38, 49],
+    [-62, 59],
+    [-77, 66], // Mouth of The Cursed Caves
+  ];
+  const millTrail: [number, number][] = [
+    [0, 34],
+    [16, 30],
+    [28, 27], // Windmill Hilltop
+  ];
+  const sawmillTrail: [number, number][] = [
+    [0, 14],
+    [14, 7],
+    [22, -4], // River Sawmill
+  ];
+  const peakRampTrail: [number, number][] = [
+    [0, -24],
+    [-18, -24],
+    [-32, -25], // Approach up to South Crag Peak for the Rope Bridge
+  ];
 
   for (let row = 0; row < width; row++) {
     for (let col = 0; col < width; col++) {
@@ -3877,118 +4070,274 @@ export function carveRpgRiverGorgeTerrain(
       const vz = -worldRadius + row * step;
       const idx = row * width + col;
 
-      // Keep outer island shoreline intact beyond radius 54
       const radialDist = Math.hypot(vx, vz);
-      if (radialDist > worldRadius * 0.88) continue;
+      if (radialDist > worldRadius * 0.92) continue;
 
-      // Meandering river centerline passing directly under (bridgeX, bridgeZ)
-      const dxFromBridge = vx - bridgeX;
-      const meanderOffset =
-        Math.sin(dxFromBridge * 0.085) * 1.85 * Math.min(1, Math.abs(dxFromBridge) / 6.5);
-      const riverCenterZ = bridgeZ + meanderOffset;
+      const riverCenterZ = getRiverCenterZ(vx);
       const dzRiver = vz - riverCenterZ;
       const absDz = Math.abs(dzRiver);
+      const innerWaterHalfW = getRiverInnerHalfW(vx);
+      const bankRimHalfW = innerWaterHalfW + 2.15;
+      const plateauBlendHalfW = bankRimHalfW + 6.5;
 
-      // Gorge channel half-width (~4.6m inner water bed, ~6.4m bank rim where bridge anchors sit)
-      const innerWaterHalfW = 4.4;
-      const bankRimHalfW = 6.5;
-      const plateauBlendHalfW = 14.0;
+      let h = Math.max(1.5, heights[idx]);
+      let layer = 0;
 
+      // Craggy Mountain Perimeter Ring (18-26m tall rugged forest rim beyond radius 54m)
+      if (radialDist > 54 && absDz > 9.0) {
+        const rimT = Math.min(1, (radialDist - 54) / 28);
+        const ridgeNoise =
+          0.68 +
+          0.32 * Math.sin(vx * 0.08 + vz * 0.06) +
+          0.18 * Math.cos(vx * 0.19 - vz * 0.17);
+        const cragH = 1.65 + quinticSmooth(rimT) * (20.5 * ridgeNoise);
+        h = Math.max(h, cragH);
+      }
+
+      // Twin High Crag Peaks connected by Peak-to-Peak Mountain Rope Bridge at (-32, -33)
+      const dSouthPeak = Math.hypot((vx + 32) / 9.2, (vz + 25) / 6.8);
+      const dNorthPeak = Math.hypot((vx + 32) / 9.2, (vz + 41) / 6.8);
+      const dChasm = Math.hypot((vx + 32) / 6.2, (vz + 33) / 4.2);
+      if (dSouthPeak < 1.35) {
+        const pt = quinticSmooth(Math.max(0, 1 - dSouthPeak / 1.35));
+        const plateauY = 8.4 + Math.sin(vx * 0.3) * 0.12;
+        h = Math.max(h, 1.85 * (1 - pt) + plateauY * pt);
+      }
+      if (dNorthPeak < 1.35) {
+        const pt = quinticSmooth(Math.max(0, 1 - dNorthPeak / 1.35));
+        const plateauY = 8.6 + Math.cos(vz * 0.3) * 0.12;
+        h = Math.max(h, 1.85 * (1 - pt) + plateauY * pt);
+      }
+      if (dChasm < 1.0) {
+        // Steep craggy drop between the two mountain peaks so ONLY the rope bridge connects them
+        const ct = quinticSmooth(1 - dChasm);
+        h = h * (1 - ct) + (riverWaterY - 0.8) * ct;
+      }
+
+      // Sloped access trail climbing from (-16, -24) up to (-32, -25)
+      if (vx <= -10 && vx >= -31 && Math.abs(vz + 24.5) < 4.2) {
+        const climbU = Math.max(0, Math.min(1, (-10 - vx) / 18));
+        const rampH = 1.85 + quinticSmooth(climbU) * 6.5;
+        const sideW = 1 - quinticSmooth(Math.abs(vz + 24.5) / 4.2);
+        h = h * (1 - sideW * 0.85) + rampH * (sideW * 0.85);
+      }
+
+      // Hilltop Windmill Mound at (28, 28)
+      const dWindmill = Math.hypot((vx - 28) / 13.5, (vz - 28) / 13.5);
+      if (dWindmill < 1.0) {
+        const wt = quinticSmooth(1 - dWindmill);
+        h = Math.max(h, 1.65 * (1 - wt) + 4.45 * wt);
+      }
+
+      // Meandering Nottingham River Channel & Mossy Banks (ZERO forced sand beach!)
       if (absDz <= innerWaterHalfW) {
-        // Deep river water channel between the two higher pieces of land
-        const depthFactor = 1 - Math.pow(absDz / innerWaterHalfW, 2) * 0.25;
-        heights[idx] = riverBedY * depthFactor + (riverWaterY - 0.65) * (1 - depthFactor);
-        layers[idx] = 1; // rocky riverbed / shore stone
+        const depthFactor = 1 - Math.pow(absDz / innerWaterHalfW, 2) * 0.35;
+        // Shallow gravel ford zone around vx in [14, 21] so heroes can wade or cross stone arch bridge
+        const fordT =
+          vx > 13 && vx < 22 ? Math.sin(((vx - 13) / 9) * Math.PI) : 0;
+        const localBedY = riverBedY + fordT * 1.45;
+        h = localBedY * depthFactor + (riverWaterY - 0.52) * (1 - depthFactor);
+        layer = fordT > 0.35 ? 5 : 8; // cobble ford / dark river earth bed
       } else if (absDz <= bankRimHalfW) {
-        // Steep gorge cliff banks rising up to the elevated north and south plateaus
         const t = (absDz - innerWaterHalfW) / (bankRimHalfW - innerWaterHalfW);
         const s = quinticSmooth(t);
         const bankHighY = dzRiver >= 0 ? southBankTargetY : northBankTargetY;
-        heights[idx] = riverBedY * (1 - s) + bankHighY * s;
-        layers[idx] = t < 0.72 ? 2 : 0; // cliff rock edge into grass/path
+        h = (riverWaterY - 0.45) * (1 - s) + bankHighY * s;
+        // Lush mossy banks & dark damp clumpy earth meeting the water cleanly (no sand!)
+        layer = t < 0.45 ? 8 : t < 0.82 ? 4 : 0;
       } else if (absDz <= plateauBlendHalfW) {
-        // Elevated plateaus on both sides of the river gorge so the landmasses sit well above water
         const t = (absDz - bankRimHalfW) / (plateauBlendHalfW - bankRimHalfW);
         const s = quinticSmooth(t);
         const bankHighY = dzRiver >= 0 ? southBankTargetY : northBankTargetY;
-        const naturalH = Math.max(heights[idx], bankHighY - 0.18);
-        heights[idx] = bankHighY * (1 - s) + naturalH * s;
+        h = bankHighY * (1 - s) + Math.max(h, bankHighY) * s;
       } else {
-        // Ensure both the South Village Plateau and North Temple Highlands stay elevated above water
-        const minLandY = dzRiver >= 0 ? southBankTargetY - 0.2 : northBankTargetY - 0.1;
-        if (radialDist < worldRadius * 0.76 && heights[idx] < minLandY) {
-          heights[idx] = minLandY + (heights[idx] - minLandY) * 0.25;
+        const minLandY = dzRiver >= 0 ? southBankTargetY - 0.15 : northBankTargetY - 0.1;
+        if (radialDist < 54 && h < minLandY) {
+          h = minLandY;
         }
       }
 
-      // Flatten the main village building terraces & central road approach so walk-in buildings sit level
-      if (Math.abs(vx - bridgeX) < 3.4 && absDz >= bankRimHalfW - 0.6 && absDz <= 28) {
-        layers[idx] = 4; // cobblestone/dirt road path leading to bridge
+      // Level Oakhollow Village Plaza, Tavern/Blacksmith/Cottage Lots, Crossroads & Sawmill Pad
+      const dPlaza = Math.hypot(vx / 22, (vz - 11) / 14);
+      const dCrossroads = Math.hypot(vx / 11, (vz - 34) / 8);
+      const dSawmill = Math.hypot((vx - 23) / 7, (vz + 5.5) / 5.5);
+      if (dPlaza < 1.0 && absDz > bankRimHalfW) {
+        const pt = quinticSmooth(1 - dPlaza);
+        h = h * (1 - pt * 0.9) + 1.65 * (pt * 0.9);
       }
+      if (dCrossroads < 1.0) {
+        const ct = quinticSmooth(1 - dCrossroads);
+        h = h * (1 - ct * 0.92) + 1.55 * (ct * 0.92);
+      }
+      if (dSawmill < 1.0 && absDz > innerWaterHalfW + 0.6) {
+        const st = quinticSmooth(1 - dSawmill);
+        h = h * (1 - st * 0.88) + 1.62 * (st * 0.88);
+      }
+
+      // Surface layers: Roads, Leaves, Clumpy Dirt, Moss, Tall Grass Patches & Crag Rock
+      const dMainRoad = distToPathSegs(vx, vz, mainVillageRoad);
+      const dCaveRoad = distToPathSegs(vx, vz, caveTrail);
+      const dMillRoad = distToPathSegs(vx, vz, millTrail);
+      const dSawRoad = distToPathSegs(vx, vz, sawmillTrail);
+      const dPeakRoad = distToPathSegs(vx, vz, peakRampTrail);
+
+      if (absDz > bankRimHalfW - 0.2) {
+        if (h > 6.8 && dPeakRoad > 2.2) {
+          layer = 2; // rocky mountain crags
+        } else if (dMainRoad < 2.25) {
+          // Weathered village cobble inside town, worn clumpy dirt road outside town
+          layer = vz > -6 && vz < 24 ? 5 : 6;
+          h = Math.max(riverWaterY + 0.6, h - 0.08);
+        } else if (dCaveRoad < 2.05 || dMillRoad < 1.85 || dSawRoad < 1.8 || dPeakRoad < 1.85) {
+          layer = 8; // dark organic clumpy woodland trail
+          h = Math.max(riverWaterY + 0.6, h - 0.08);
+        } else if (
+          Math.hypot(vx - 11, vz - 19) < 4.5 ||
+          Math.hypot(vx - 11, vz - 2) < 4.8 ||
+          Math.hypot(vx + 11, vz - 12) < 3.5
+        ) {
+          // Livestock pens & tavern hitching yard -> dark textured clumpy earth
+          layer = 8;
+        } else {
+          // Organic forest floor mosaic: fallen leaves near woods, lush long-grass patches in meadows, moss near banks
+          const patchN = Math.sin(vx * 0.14 + vz * 0.11) + Math.cos(vx * 0.09 - vz * 0.16);
+          const leafN = Math.sin(vx * 0.18 - vz * 0.13) + Math.cos(vx * 0.07 + vz * 0.21);
+          if (radialDist > 33 && leafN > 0.72) {
+            layer = 7; // woodland leaf litter
+          } else if (patchN > 0.78 && radialDist < 50) {
+            layer = 9; // vibrant customizable longer-grass patch
+          } else if (absDz < bankRimHalfW + 3.2 || patchN < -0.75) {
+            layer = 4; // shaded forest moss
+          } else {
+            layer = 0; // lush meadow grass
+          }
+        }
+      }
+
+      // Preserve MountainCave floor cleanly
+      const caveLoc = toMountainCaveLocal(vx, vz);
+      if (isLocalInsideMountainCave(caveLoc.lx, caveLoc.lz, 0.8)) {
+        h = MountainCave.floorY;
+        layer = 2;
+      }
+
+      heights[idx] = Math.round(h * 1000) / 1000;
+      layers[idx] = layer;
     }
   }
 
-  // Add/update the flowing river water body across the gorge
-  const riverPoints: [number, number][] = [
-    [-worldRadius * 0.84, bridgeZ + Math.sin((-worldRadius * 0.84 - bridgeX) * 0.085) * 1.85],
-    [-22, bridgeZ + Math.sin((-22 - bridgeX) * 0.085) * 1.85],
-    [bridgeX - 7, bridgeZ],
-    [bridgeX, bridgeZ],
-    [bridgeX + 7, bridgeZ],
-    [22, bridgeZ + Math.sin((22 - bridgeX) * 0.085) * 1.85],
-    [worldRadius * 0.84, bridgeZ + Math.sin((worldRadius * 0.84 - bridgeX) * 0.085) * 1.85],
-  ];
+  // Flowing variable-width meandering river spline
+  const riverPoints: [number, number][] = [];
+  for (let vx = -worldRadius * 0.86; vx <= worldRadius * 0.86; vx += 14) {
+    riverPoints.push([vx, getRiverCenterZ(vx)]);
+  }
 
   const existingWater = (terrain.waterBodies ?? []).filter((w) => w.id !== 'wb-rpg-gorge-river');
   const gorgeRiver: WaterBodyConfig = {
     id: 'wb-rpg-gorge-river',
-    name: 'Emerald Gorge River',
+    name: 'Nottingham Emerald River',
     kind: 'river',
     center: [bridgeX, bridgeZ],
     points: riverPoints,
     radiusX: worldRadius * 1.65,
-    radiusZ: 5.4,
-    width: 9.2,
+    radiusZ: 5.2,
+    width: 9.0,
     waterLevelOffset: 0.15,
-    waterColor: '#2A9D8F',
-    deepMurkColor: '#134E4A',
+    waterColor: '#248F84',
+    deepMurkColor: '#0F3D3A',
     opacity: 0.86,
-    depth: 2.35,
-    foamAmount: 0.65,
-    waveSpeed: 0.9,
-    windRipple: 0.6,
-    flowSpeed: 0.85,
+    depth: 2.25,
+    foamAmount: 0.68,
+    waveSpeed: 0.95,
+    windRipple: 0.65,
+    flowSpeed: 0.95,
     flowAngleDeg: 0,
-    bankSlope: 0.25,
-    bankSmoothness: 0.6,
-    shoreNoise: 0.08,
+    bankSlope: 0.35,
+    bankSmoothness: 0.65,
+    shoreNoise: 0.16,
   };
 
-  // Clear scatter trees/rocks from inside the river gorge, bridge approaches, and walk-in building lots
-  const filteredScatter = (terrain.scatter ?? []).filter((item) => {
-    const dxB = item.x - bridgeX;
-    const meanderZ =
-      bridgeZ + Math.sin(dxB * 0.085) * 1.85 * Math.min(1, Math.abs(dxB) / 6.5);
-    if (Math.abs(item.z - meanderZ) < 6.8) return false; // inside river gorge
-    if (Math.abs(item.x - bridgeX) < 4.5 && item.z >= bridgeZ - 14 && item.z <= bridgeZ + 40) {
-      return false; // main village road & bridge approach
-    }
-    // Keep tavern (-14, 12), blacksmith (14, 11), cottage (-15, -2), and chicken yard (12, 22) clear of wild trees
-    if (Math.hypot(item.x - -14, item.z - 12) < 9.2) return false;
-    if (Math.hypot(item.x - 14, item.z - 11) < 8.2) return false;
-    if (Math.hypot(item.x - -15, item.z - -2) < 7.2) return false;
-    if (Math.hypot(item.x - 12, item.z - 22) < 6.2) return false;
-    return true;
-  });
+  // Clear trees from river, roads, village structures & cave; keep fine ground plants & dense riverbank reeds/hedgerows
+  const clearZone = (x: number, z: number): boolean => {
+    const rZ = getRiverCenterZ(x);
+    if (Math.abs(z - rZ) < getRiverInnerHalfW(x) + 1.8) return true;
+    if (distToPathSegs(x, z, mainVillageRoad) < 3.6) return true;
+    if (distToPathSegs(x, z, caveTrail) < 3.4) return true;
+    if (distToPathSegs(x, z, millTrail) < 3.2) return true;
+    if (distToPathSegs(x, z, sawmillTrail) < 3.2) return true;
+    if (Math.hypot(x - -13, z - 11) < 9.5) return true; // Tavern
+    if (Math.hypot(x - 13, z - 11) < 8.5) return true; // Blacksmith
+    if (Math.hypot(x - -16.5, z - -1.5) < 7.8) return true; // Cottage
+    if (Math.hypot(x - 0, z - -33) < 8.5) return true; // Temple
+    if (Math.hypot(x - 28, z - 28) < 7.5) return true; // Windmill
+    if (Math.hypot(x - 23, z - -5) < 7.5) return true; // Sawmill
+    if (Math.hypot(x - 11, z - 19) < 6.5) return true; // Chicken pen
+    if (Math.hypot(x - 11, z - 2) < 6.5) return true; // Cow/Pig pasture
+    if (Math.hypot(x - 0, z - 34) < 6.5) return true; // Hero Crossroads
+    if (Math.hypot(x + 32, z + 33) < 12) return true; // Twin peaks & rope bridge
+    if (isNearMountainCaveEntrance(x, z)) return true;
+    return false;
+  };
 
-  return {
+  const filteredScatter = (terrain.scatter ?? []).filter((item) => !clearZone(item.x, item.z));
+
+  // Add lush riverbank reeds, cattails, ferns, wildflowers, boulders & hedgerow bushes right up to water's edge
+  const extraFlora: ScatterItem[] = [];
+  for (let vx = -72; vx <= 72; vx += 3.2) {
+    if (Math.abs(vx) < 4.5) continue; // keep main stone arch bridge opening clear
+    const rZ = getRiverCenterZ(vx);
+    const wHalf = getRiverInnerHalfW(vx);
+    for (const side of [-1, 1]) {
+      const bz = rZ + side * (wHalf + 0.65 + (Math.abs(Math.sin(vx * 1.7 + side)) * 1.1));
+      if (Math.hypot(vx - 23, bz + 5) < 5.2) continue; // keep sawmill dock open
+      const pick = Math.abs(Math.sin(vx * 3.1 + side * 2.1));
+      extraFlora.push({
+        id: uid(),
+        kind: pick < 0.42 ? 'cattail' : pick < 0.72 ? 'reed' : pick < 0.88 ? 'fern' : 'rock',
+        x: vx + Math.cos(vx * 2.3) * 0.55,
+        z: bz,
+        size: 0.78 + pick * 0.48,
+        rotation: (vx * 0.9 + side) % (Math.PI * 2),
+      });
+    }
+  }
+
+  // Organic hedgerow bush lines bordering the village lane & cottage yard
+  const hedgerowLines: [number, number, number, number][] = [
+    [-7.5, 24.0, -7.5, 16.5],
+    [7.2, 25.0, 7.2, 16.5],
+    [-19.5, 4.5, -19.5, -5.5],
+    [6.5, -26.0, 14.5, -26.0],
+  ];
+  for (const [ax, az, bx, bz] of hedgerowLines) {
+    const steps = 6;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const hx = ax + (bx - ax) * t + Math.sin(s * 2.1) * 0.25;
+      const hz = az + (bz - az) * t + Math.cos(s * 1.7) * 0.25;
+      extraFlora.push({
+        id: uid(),
+        kind: s % 3 === 0 ? 'berryBush' : 'bush',
+        x: hx,
+        z: hz,
+        size: 0.88 + (s % 2) * 0.18,
+        rotation: s * 0.8,
+      });
+    }
+  }
+
+  // Re-ensure main MountainCave is registered in terrain.caves
+  const nextTerrain: TerrainData = applyMountainCaveToTerrain({
     ...terrain,
     heights,
     layers,
-    scatter: filteredScatter,
+    tallGrassPatchColor: terrain.tallGrassPatchColor ?? '#76BD44',
+    scatter: [...filteredScatter, ...extraFlora].slice(0, 3600),
     waterBodies: [...existingWater, gorgeRiver],
     revision: terrain.revision + 1,
-  };
+  });
+
+  return nextTerrain;
 }
 
 export function applyRoadSplineToTerrain(

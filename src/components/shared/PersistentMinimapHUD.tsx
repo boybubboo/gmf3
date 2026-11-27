@@ -1000,9 +1000,11 @@ export const PersistentMinimapHUD: React.FC<{ store: MakerStore }> = React.memo(
       ? 'Dungeon'
       : 'World';
 
-  // Position cleanly in Editor (above bottom nav, right corner) vs Play Mode (below topTrailing Coins/Pause)
+  // Position cleanly in Editor (above bottom nav) vs RPG Play Mode (top-4 right-4 above Chronicle Objectives) vs standard Play Mode (below topTrailing Coins/Pause)
   const dockClass = isPlaying
-    ? 'fixed top-[68px] right-4 z-[55]'
+    ? displayLevel.gameplayMode === 'rpg'
+      ? 'fixed top-4 right-4 z-[55]'
+      : 'fixed top-[68px] right-4 z-[55]'
     : 'fixed bottom-[64px] right-4 z-30';
 
   if (collapsed) {
@@ -1011,7 +1013,7 @@ export const PersistentMinimapHUD: React.FC<{ store: MakerStore }> = React.memo(
         type="button"
         onClick={() => setCollapsed(false)}
         title="Expand Minimap HUD"
-        className={`${dockClass} inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-[#11141D]/95 text-white border border-white/15 shadow-xl hover:bg-[#191E2B] text-xs font-extrabold`}
+        className={`${dockClass} inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-[#11141D]/56 text-white border border-white/15 shadow-lg hover:bg-[#191E2B]/75 text-xs font-extrabold`}
       >
         <MapIcon size={14} className="text-[#38BDF8]" />
         <span>Minimap</span>
@@ -1024,8 +1026,8 @@ export const PersistentMinimapHUD: React.FC<{ store: MakerStore }> = React.memo(
 
   const mapBoxSize = isPlaying
     ? expanded
-      ? 200
-      : 148
+      ? 168
+      : 132
     : expanded
     ? 236
     : 164;
@@ -1033,7 +1035,7 @@ export const PersistentMinimapHUD: React.FC<{ store: MakerStore }> = React.memo(
   return (
     <aside
       aria-label="Persistent Level Minimap HUD"
-      className={`${dockClass} rounded-2xl bg-[#11141D]/95 text-white border border-white/15 shadow-2xl overflow-hidden transition-all`}
+      className={`${dockClass} rounded-2xl bg-[#11141D]/56 text-white border border-white/15 shadow-xl overflow-hidden transition-all`}
       style={{ width: mapBoxSize + 18 }}
     >
       {/* Header Bar */}

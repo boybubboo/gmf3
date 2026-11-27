@@ -669,9 +669,17 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     } else if (domainId === 'caves') {
       setBrush('carveCave');
     } else if (domainId === 'grass') {
-      if (brush !== 'paintGrass' && brush !== 'paintGrassErase') setBrush('paintGrass');
+      if (brush !== 'paintGrass' && brush !== 'paintGrassErase' && brush !== 'paintTallGrass') {
+        setBrush('paintGrass');
+      }
     } else if (domainId === 'dirtRoads') {
-      if (brush !== 'paintRoad' && brush !== 'paintDirt' && brush !== 'paintCobble') {
+      if (
+        brush !== 'paintRoad' &&
+        brush !== 'paintDirt' &&
+        brush !== 'paintClumpyDirt' &&
+        brush !== 'paintLeaves' &&
+        brush !== 'paintCobble'
+      ) {
         setBrush('paintRoad');
       }
     } else if (domainId === 'flora') {

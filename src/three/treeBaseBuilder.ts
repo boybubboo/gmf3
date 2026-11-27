@@ -332,7 +332,8 @@ export function buildProceduralTreeBase(
   const hMult = 1 + (rand() - 0.5) * 2 * variety * 0.28;
   const tMult = 1 + (rand() - 0.5) * 2 * variety * 0.24;
 
-  const trunkHeight = Math.max(0.9, config.trunkHeight * hMult);
+  const minTrunkH = species === 'conifer' ? 5.8 : 4.8;
+  const trunkHeight = Math.max(minTrunkH, config.trunkHeight) * hMult;
   const thick = Math.max(0.35, config.trunkThickness * tMult);
   const taper = THREE.MathUtils.clamp(config.trunkTaper ?? 0.45, 0.14, 0.88);
   const leanAmt = config.trunkLean ?? 0.28;
@@ -491,11 +492,13 @@ export function buildProceduralTreeBase(
   const trunkLength = trunkCurve.getLength();
   const branchBaseAngle = rand() * Math.PI * 2;
 
+  const minBranchY = Math.max(3.25, trunkHeight * 0.62);
+
   for (let b = 0; b < majorCount; b++) {
     const startFrac = THREE.MathUtils.clamp(
-      (species === 'birch' ? 0.52 : 0.6) + (b / Math.max(1, majorCount)) * 0.28 + (rand() - 0.5) * 0.08,
-      0.4,
-      0.92
+      (species === 'birch' ? 0.66 : 0.68) + (b / Math.max(1, majorCount)) * 0.24 + (rand() - 0.5) * 0.06,
+      0.64,
+      0.94
     );
     const origin = trunkCurve.getPointAt(startFrac);
     const yaw = branchBaseAngle + (b / majorCount) * Math.PI * 2 + (rand() - 0.5) * 0.42;
@@ -504,10 +507,10 @@ export function buildProceduralTreeBase(
 
     const len = majorLen * (0.82 + rand() * 0.38) * (1 - (startFrac - 0.6) * 0.25);
     const outDist = len * THREE.MathUtils.clamp(0.45 + majorSpread * 0.58, 0.25, 1.42);
-    const upDist = len * THREE.MathUtils.clamp(0.18 + majorUpward * 0.72, -0.35, 1.25);
+    const upDist = len * THREE.MathUtils.clamp(0.22 + majorUpward * 0.72, -0.25, 1.25);
     // Negative majorDroop lifts tips upward; positive majorDroop arches them downward!
-    const effDroop = species === 'birch' ? majorDroop + birchDroop * 0.38 : majorDroop;
-    const droopMag = len * effDroop * 0.88;
+    const effDroop = species === 'birch' ? majorDroop + birchDroop * 0.32 : majorDroop;
+    const droopMag = len * effDroop * 0.78;
 
     const midBow = (rand() - 0.5) * len * (0.14 + gnarl * 0.24);
     const sideX = -dirZ;
@@ -533,6 +536,9 @@ export function buildProceduralTreeBase(
     const bp3 = origin.clone().add(
       new THREE.Vector3(dirX * outDist, upDist - droopMag * 1.05, dirZ * outDist)
     );
+    bp1.y = Math.max(minBranchY, bp1.y);
+    bp2.y = Math.max(minBranchY, bp2.y);
+    bp3.y = Math.max(minBranchY, bp3.y);
 
     const branchCurve = new THREE.CatmullRomCurve3([bp0, bp1, bp2, bp3]);
     const brStart = Math.min(trunkRAtAnchor * 0.78, 0.155 * thick * majorThick);
@@ -608,6 +614,8 @@ export function buildProceduralTreeBase(
       const sp2 = subOrigin
         .clone()
         .add(new THREE.Vector3(Math.cos(subYaw) * subOut, subUp - subDroop, Math.sin(subYaw) * subOut));
+      sp1.y = Math.max(minBranchY, sp1.y);
+      sp2.y = Math.max(minBranchY, sp2.y);
 
       const subCurve = new THREE.CatmullRomCurve3([subOrigin, sp1, sp2]);
       const srStart = Math.max(0.012, THREE.MathUtils.lerp(brStart, brEnd, Math.pow(st, 0.88)) * 0.66);

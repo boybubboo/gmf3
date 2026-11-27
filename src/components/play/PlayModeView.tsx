@@ -190,6 +190,7 @@ import {
   initMakerRenderer,
   setupSceneEnvironment,
   syncSkyDomeToCamera,
+  updateRiverFishAnimations,
   updateSkyClouds,
   type IslandSceneHandles,
 } from '../../three/islandScene';
@@ -1624,6 +1625,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           : currentLevel?.rpgConfig?.cameraZoom ?? 23.5
         : resolvedCamMode === 'cozy'
         ? 6.6
+        : resolvedCamMode === 'close'
+        ? 4.6
         : resolvedCamMode === 'isometric'
         ? 14.5
         : resolvedCamMode === 'front'
@@ -1637,18 +1640,27 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     if (isDrivingMode || envType === 'sideScroller') return;
     setLiveCamMode((prev) => {
       const behindMode: CameraMode =
-        baseCamMode === 'firstPerson' || baseCamMode === 'heroFront' ? 'front' : baseCamMode;
+        baseCamMode === 'firstPerson' || baseCamMode === 'heroFront' || baseCamMode === 'close'
+          ? 'front'
+          : baseCamMode;
       const next: CameraMode =
-        prev === 'heroFront'
+        prev === 'close'
+          ? 'heroFront'
+          : prev === 'heroFront'
           ? 'firstPerson'
           : prev === 'firstPerson'
           ? behindMode
-          : 'heroFront';
+          : 'close';
       inputRef.current.lookPitchOffset = 0;
       inputRef.current.lookYawOffset = 0;
       if (next === 'firstPerson') {
         const hy = liveHeroYawRef.current;
         inputRef.current.cameraYaw = Math.atan2(-Math.sin(hy), -Math.cos(hy));
+      } else if (next === 'close' && prev === 'front') {
+        const hy = liveHeroYawRef.current;
+        inputRef.current.cameraYaw = Math.atan2(-Math.sin(hy), -Math.cos(hy));
+      } else if (next === 'close' && prev === 'heroFront') {
+        inputRef.current.cameraYaw = liveHeroYawRef.current;
       } else if (prev === 'firstPerson') {
         inputRef.current.cameraYaw = Math.atan2(
           -Math.sin(inputRef.current.cameraYaw),
@@ -1660,6 +1672,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           ? 'Camera: Character POV (First-Person)'
           : next === 'heroFront'
           ? 'Camera: Front View (Walking Toward You)'
+          : next === 'close'
+          ? 'Camera: Close View'
           : `Camera: ${next === 'front' ? 'Behind Trail' : next === 'cozy' ? 'Cozy Behind' : next === 'isometric' ? 'Isometric' : 'Chase'} View`
       );
       return next;
@@ -1915,7 +1929,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           inputRef.current.attackQueued = true;
         }
       } else if (
-        e.code === 'KeyE' ||
+        (e.code === 'KeyE' && !e.repeat) ||
         ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat)
       ) {
         if (e.code === 'AltLeft' || e.code === 'AltRight') {
@@ -2616,6 +2630,14 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       let interiorCamBlend = 0;
       let canopyOcclusionBlend = 0;
       let heroInsideWalkInBuilding = false;
+      let insideBuildingCeilingY = 999;
+      let wasInsideAutoClose = false;
+      let autoCloseReason: 'interior' | 'forest' | null = null;
+      let forestDenseHoldTimer = 0;
+      let forestClearHoldTimer = 0;
+      let wasCloseCamMode = resolvedCamModeRef.current === 'close';
+      let lastAutoCloseToastAt = -10;
+      let camBeforeAutoClose: CameraMode | null = null;
       let respawnX = startX;
       let respawnZ = startZ;
       let respawnYaw = heroYaw;
@@ -4503,6 +4525,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             const s = 1 + Math.sin(gameElapsed * 10 + fm.phase) * 0.12;
             fm.mesh.scale.set(s, 1 + Math.cos(gameElapsed * 9 + fm.phase) * 0.18, s);
           }
+          updateRiverFishAnimations(islandHandles.riverFish, gameElapsed);
 
           // Day-Night Cycle progression
           if (activeLevel.autoCycleTime && env !== 'dungeon') {
@@ -8581,6 +8604,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           let nearestChestPromptDist = 999;
           let nearInteractableEntity = false;
           heroInsideWalkInBuilding = false;
+          insideBuildingCeilingY = 999;
 
           for (const rt of runtimeEntities) {
             if (!rt.alive) continue;
@@ -8696,11 +8720,17 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 lzB <= spec.halfD + 1.4;
               if (insideFootprint || inDoorwayThreshold) {
                 heroInsideWalkInBuilding = true;
+                const scY = Math.max(0.65, rt.mesh.scale.y || 1);
+                const ceilingTopY = rtBaseY + spec.floorOffset + (spec.wallHeight / scY) * 0.62 * scY;
+                if (ceilingTopY < insideBuildingCeilingY) {
+                  insideBuildingCeilingY = ceilingTopY;
+                }
               }
 
               const roofGrp = rt.mesh.userData.cutawayRoofGroup as THREE.Group | undefined;
               if (roofGrp) {
-                roofGrp.visible = !(insideFootprint || inDoorwayThreshold);
+                // Keep roofs intact! Close camera moves smoothly inside underneath the roof.
+                roofGrp.visible = true;
               }
 
               const doorPivot = rt.mesh.userData.frontDoorPivot as THREE.Group | undefined;
@@ -8716,7 +8746,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
               // Distance from hero to the front door center (lx = 0, lz = +spec.halfD)
               const doorDist = Math.hypot(lxB, lzB - spec.halfD);
-              if (doorDist < 3.1 && Math.abs(heroY - rtBaseY) < 3.0) {
+              if (doorDist < 3.85 && Math.abs(heroY - rtBaseY) < 3.2) {
                 nearInteractableEntity = true;
                 if (doorDist < nearestDoorPromptDist) {
                   nearestDoorPromptDist = doorDist;
@@ -12384,14 +12414,208 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           }
         }
 
-        // Smoothly pull camera inside the cavern when hero enters MountainCave so mountain roof never blocks view
+        // Evaluate forest canopy density & sightline tree obstruction (for ALL scatter tree kinds + entity trees)
+        const refOuterCamMode = camBeforeAutoClose ?? camModeNow;
+        const isRefRpgIso = activeLevel.gameplayMode === 'rpg' && refOuterCamMode === 'isometric';
+        const refCamDist = inp.cameraDistance;
+        let refCamX = heroX + Math.sin(inp.cameraYaw) * refCamDist;
+        let refCamY =
+          heroY +
+          (isRefRpgIso
+            ? 18.0
+            : refOuterCamMode === 'isometric'
+            ? 11.5
+            : refOuterCamMode === 'cozy'
+            ? 2.7
+            : 4.2);
+        let refCamZ = heroZ + Math.cos(inp.cameraYaw) * refCamDist;
+        if (refOuterCamMode === 'front') {
+          const d = Math.max(8.2, refCamDist);
+          refCamX = heroX - Math.sin(heroYaw) * d;
+          refCamY = heroY + 4.6;
+          refCamZ = heroZ - Math.cos(heroYaw) * d;
+        } else if (refOuterCamMode === 'heroFront') {
+          const d = Math.max(8.2, Math.min(15.5, refCamDist));
+          refCamX = heroX + Math.sin(heroYaw) * d;
+          refCamY = heroY + 4.6 + (d - 9.2) * 0.28;
+          refCamZ = heroZ + Math.cos(heroYaw) * d;
+        }
+
+        const focusY = heroY + 1.25;
+        const refSegDX = refCamX - heroX;
+        const refSegDY = refCamY - focusY;
+        const refSegDZ = refCamZ - heroZ;
+        const refSegLenXZSq = refSegDX * refSegDX + refSegDZ * refSegDZ;
+
+        let rawCanopyObstruction = 0;
+        let sightlineTreeHits = 0;
+        let nearbyDenseTreeCount = 0;
+        if (!isDriving && env === 'openWorld' && !heroInsideWalkInBuilding && !pausedNow) {
+          const testCanopyCylinder = (
+            ox: number,
+            oz: number,
+            radius: number,
+            minY: number,
+            maxY: number,
+            isTree: boolean
+          ) => {
+            if (isTree) {
+              const dHero = Math.hypot(ox - heroX, oz - heroZ);
+              if (dHero < 11.5) {
+                nearbyDenseTreeCount += dHero < 6.5 ? 1.25 : 1.0;
+              }
+            }
+            if (refSegLenXZSq <= 4.0) return;
+            const tProj = ((ox - heroX) * refSegDX + (oz - heroZ) * refSegDZ) / refSegLenXZSq;
+            if (tProj <= 0.05 || tProj >= 0.96) return;
+            const cx = heroX + refSegDX * tProj;
+            const cy = focusY + refSegDY * tProj;
+            const cz = heroZ + refSegDZ * tProj;
+            if (cy < minY || cy > maxY) return;
+            const distXZ = Math.hypot(ox - cx, oz - cz);
+            if (distXZ < radius) {
+              if (isTree) sightlineTreeHits += 1;
+              const strength = Math.min(1, (1 - distXZ / radius) * 1.45);
+              if (strength > rawCanopyObstruction) {
+                rawCanopyObstruction = strength;
+              }
+            }
+          };
+
+          // 1. Check ALL scatter forest trees (tree, pine, oak, birch)
+          const scatterList = activeLevel.terrain?.scatter;
+          if (scatterList && scatterList.length > 0) {
+            for (let si = 0; si < scatterList.length; si++) {
+              const scItem = scatterList[si];
+              if (
+                scItem.kind !== 'tree' &&
+                scItem.kind !== 'pine' &&
+                scItem.kind !== 'oak' &&
+                scItem.kind !== 'birch'
+              ) {
+                continue;
+              }
+              if (Math.abs(scItem.x - heroX) > 28 || Math.abs(scItem.z - heroZ) > 28) continue;
+              const treeKey = `scatter_${si}`;
+              if (choppedTreeIds.has(treeKey)) continue;
+              const sc = Math.max(0.6, scItem.size || 1);
+              const treeBaseY = sampleLevelHeight(activeLevel, scItem.x, scItem.z);
+              testCanopyCylinder(
+                scItem.x,
+                scItem.z,
+                2.85 * sc,
+                treeBaseY + 2.6 * sc,
+                treeBaseY + 13.0 * sc,
+                true
+              );
+            }
+          }
+
+          // 2. Check placed EZ-Tree / Canopy Tree / Tropical Jungle Tree / Hollow Tree / Tall Building entities
+          for (let ri = 0; ri < runtimeEntities.length; ri++) {
+            const rt = runtimeEntities[ri];
+            if (!rt.alive || choppedTreeIds.has(rt.id)) continue;
+            if (Math.abs(rt.x - heroX) > 28 || Math.abs(rt.z - heroZ) > 28) continue;
+            const lName = rt.name.toLowerCase();
+            const isTreeEnt =
+              Boolean(rt.mesh.userData?.canopyTree) ||
+              lName.includes('tree') ||
+              lName.includes('tropical') ||
+              lName.includes('canopy') ||
+              lName.includes('jungle');
+            if (isTreeEnt) {
+              const sc = Math.max(0.6, rt.mesh.scale.x || 1);
+              const tBaseY = sampleLevelHeight(activeLevel, rt.x, rt.z);
+              testCanopyCylinder(rt.x, rt.z, 3.05 * sc, tBaseY + 2.6 * sc, tBaseY + 13.4 * sc, true);
+            } else if (rt.mesh.userData?.walkInBuilding && rt.mesh.userData?.walkInSpec) {
+              const spec = rt.mesh.userData.walkInSpec as WalkInBuildingSpec;
+              const bBaseY = sampleLevelHeight(activeLevel, rt.x, rt.z);
+              testCanopyCylinder(
+                rt.x,
+                rt.z,
+                Math.max(spec.halfW, spec.halfD) * 0.92,
+                bBaseY + 1.2,
+                bBaseY + spec.wallHeight + 3.0,
+                false
+              );
+            }
+          }
+        }
+
+        const isDenseForestNow =
+          (nearbyDenseTreeCount >= 3 && rawCanopyObstruction > 0.14) ||
+          nearbyDenseTreeCount >= 4 ||
+          sightlineTreeHits >= 2 ||
+          rawCanopyObstruction > 0.52;
+        const isForestClearNow =
+          nearbyDenseTreeCount < 2 && rawCanopyObstruction < 0.12 && sightlineTreeHits === 0;
+
+        if (isDenseForestNow) {
+          forestDenseHoldTimer += dt;
+          forestClearHoldTimer = 0;
+        } else if (isForestClearNow) {
+          forestClearHoldTimer += dt;
+          forestDenseHoldTimer = 0;
+        } else {
+          forestDenseHoldTimer = Math.max(0, forestDenseHoldTimer - dt * 0.5);
+          forestClearHoldTimer = 0;
+        }
+
+        // Smoothly pull camera inside the cavern / building / dense forest and auto-switch to 'close' view
         const heroInCave =
           env === 'openWorld' &&
           terrainHasMainMountainCave(activeLevel.terrain) &&
           isInsideMountainCave(heroX, heroZ);
         if (heroInCave && !shownCaveTip && !pausedNow) {
           shownCaveTip = true;
-          showToast('Entered the Mountain Cave');
+          showToast('Entered the Mountain Cave — Close View');
+        }
+        const insideInteriorOrCave = heroInsideWalkInBuilding || heroInCave;
+        const wantsForestAutoClose =
+          !insideInteriorOrCave &&
+          ((autoCloseReason === 'forest' && forestClearHoldTimer < 0.55) ||
+            (autoCloseReason !== 'forest' && forestDenseHoldTimer >= 0.18));
+        const wantsAutoClose = insideInteriorOrCave || wantsForestAutoClose;
+
+        if (wantsAutoClose && !wasInsideAutoClose) {
+          wasInsideAutoClose = true;
+          autoCloseReason = insideInteriorOrCave ? 'interior' : 'forest';
+          if (!isDriving && envType !== 'sideScroller' && camModeNow !== 'firstPerson' && camModeNow !== 'close') {
+            camBeforeAutoClose = camModeNow;
+            if (camModeNow === 'front') {
+              inp.cameraYaw = Math.atan2(-Math.sin(heroYaw), -Math.cos(heroYaw));
+            } else if (camModeNow === 'heroFront') {
+              inp.cameraYaw = heroYaw;
+            }
+            resolvedCamModeRef.current = 'close';
+            setLiveCamMode('close');
+            if (!insideInteriorOrCave && gameElapsed - lastAutoCloseToastAt > 3.5) {
+              lastAutoCloseToastAt = gameElapsed;
+              showToast('Dense Forest — Close View');
+            }
+          }
+        } else if (wantsAutoClose && insideInteriorOrCave) {
+          autoCloseReason = 'interior';
+        } else if (!wantsAutoClose && wasInsideAutoClose) {
+          const prevReason = autoCloseReason;
+          wasInsideAutoClose = false;
+          autoCloseReason = null;
+          if (camBeforeAutoClose && resolvedCamModeRef.current === 'close') {
+            const restoreMode = camBeforeAutoClose;
+            camBeforeAutoClose = null;
+            resolvedCamModeRef.current = restoreMode;
+            setLiveCamMode(restoreMode);
+            if (prevReason === 'forest' && gameElapsed - lastAutoCloseToastAt > 3.5) {
+              lastAutoCloseToastAt = gameElapsed;
+              showToast(
+                restoreMode === 'isometric'
+                  ? 'Clear Area — Isometric View'
+                  : 'Clear Area — Restored View'
+              );
+            }
+          } else {
+            camBeforeAutoClose = null;
+          }
         }
         caveCamBlend = THREE.MathUtils.damp(caveCamBlend, heroInCave ? 1 : 0, 6.5, dt);
         interiorCamBlend = THREE.MathUtils.damp(
@@ -12401,86 +12625,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           dt
         );
 
-        // Universal Camera Sightline Occlusion Helper (detects lush forest canopies & tall obstacles in ANY game mode)
+        // Universal Camera Sightline Occlusion Helper (for non-close outer camera modes)
         const applyUniversalCameraAutoZoom = () => {
-          if (camModeNow === 'firstPerson') return;
-          const focusY = heroY + 1.25;
-          const segDX = _targetCamPos.x - heroX;
-          const segDY = _targetCamPos.y - focusY;
-          const segDZ = _targetCamPos.z - heroZ;
-          const segLenXZSq = segDX * segDX + segDZ * segDZ;
-
-          let rawCanopyObstruction = 0;
-          if (segLenXZSq > 4.0 && !heroInsideWalkInBuilding) {
-            const testCanopyCylinder = (ox: number, oz: number, radius: number, minY: number, maxY: number) => {
-              const tProj = ((ox - heroX) * segDX + (oz - heroZ) * segDZ) / segLenXZSq;
-              if (tProj <= 0.08 || tProj >= 0.94) return;
-              const cx = heroX + segDX * tProj;
-              const cy = focusY + segDY * tProj;
-              const cz = heroZ + segDZ * tProj;
-              if (cy < minY || cy > maxY) return;
-              const distXZ = Math.hypot(ox - cx, oz - cz);
-              if (distXZ < radius) {
-                const strength = Math.min(1, (1 - distXZ / radius) * 1.45);
-                if (strength > rawCanopyObstruction) {
-                  rawCanopyObstruction = strength;
-                }
-              }
-            };
-
-            // 1. Check scatter forest trees
-            const scatterList = activeLevel.terrain?.scatter;
-            if (scatterList && scatterList.length > 0) {
-              for (let si = 0; si < scatterList.length; si++) {
-                const scItem = scatterList[si];
-                if (scItem.kind !== 'tree') {
-                  continue;
-                }
-                if (Math.abs(scItem.x - heroX) > 28 || Math.abs(scItem.z - heroZ) > 28) continue;
-                const treeKey = `scatter_${si}`;
-                if (choppedTreeIds.has(treeKey)) continue;
-                const sc = Math.max(0.6, scItem.size || 1);
-                const treeBaseY = sampleLevelHeight(activeLevel, scItem.x, scItem.z);
-                testCanopyCylinder(
-                  scItem.x,
-                  scItem.z,
-                  2.55 * sc,
-                  treeBaseY + 1.4 * sc,
-                  treeBaseY + 7.5 * sc
-                );
-              }
-            }
-
-            // 2. Check placed EZ-Tree / Canopy Tree / Tropical Jungle Tree / Hollow Tree / Tall Building entities
-            for (let ri = 0; ri < runtimeEntities.length; ri++) {
-              const rt = runtimeEntities[ri];
-              if (!rt.alive || choppedTreeIds.has(rt.id)) continue;
-              if (Math.abs(rt.x - heroX) > 28 || Math.abs(rt.z - heroZ) > 28) continue;
-              const lName = rt.name.toLowerCase();
-              const isTreeEnt =
-                Boolean(rt.mesh.userData?.canopyTree) ||
-                lName.includes('tree') ||
-                lName.includes('tropical') ||
-                lName.includes('canopy') ||
-                lName.includes('jungle');
-              if (isTreeEnt) {
-                const sc = Math.max(0.6, rt.mesh.scale.x || 1);
-                const tBaseY = sampleLevelHeight(activeLevel, rt.x, rt.z);
-                testCanopyCylinder(rt.x, rt.z, 2.75 * sc, tBaseY + 1.4 * sc, tBaseY + 8.0 * sc);
-              } else if (rt.mesh.userData?.walkInBuilding && rt.mesh.userData?.walkInSpec) {
-                const spec = rt.mesh.userData.walkInSpec as WalkInBuildingSpec;
-                const bBaseY = sampleLevelHeight(activeLevel, rt.x, rt.z);
-                testCanopyCylinder(
-                  rt.x,
-                  rt.z,
-                  Math.max(spec.halfW, spec.halfD) * 0.92,
-                  bBaseY + 1.2,
-                  bBaseY + spec.wallHeight + 3.0
-                );
-              }
-            }
-          }
-
+          if (camModeNow === 'firstPerson' || camModeNow === 'close') return;
           canopyOcclusionBlend = THREE.MathUtils.damp(
             canopyOcclusionBlend,
             rawCanopyObstruction > 0.05 ? Math.min(1, rawCanopyObstruction) : 0,
@@ -12590,6 +12737,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               ? 68
               : camModeNow === 'heroFront'
               ? 58
+              : camModeNow === 'close'
+              ? 56
               : camModeNow === 'sideScroll'
               ? 42
               : camModeNow === 'cozy'
@@ -12615,6 +12764,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               heroY + (isSitting ? 1.18 : isSwimming ? 0.98 : 1.56) + shakeY * 0.3;
             const clampedEyeY = heroInCave
               ? Math.min(rawEyeY, MountainCave.floorY + MountainCave.ceilingHeight - 0.55)
+              : heroInsideWalkInBuilding
+              ? Math.min(rawEyeY, insideBuildingCeilingY - 0.55)
               : rawEyeY;
             _targetCamPos.set(heroX + shakeX * 0.3, clampedEyeY, heroZ);
             _lookTarget.set(
@@ -12638,6 +12789,34 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               const sideDistZ = sideCfgInit?.layoutStyle === 'verticalClimber' ? 16.5 : 14.5;
               _targetCamPos.set(heroX + 1.8 + shakeX, sideY + shakeY, sideDistZ);
               _lookTarget.set(heroX + 1.8, sideLookY, 0);
+            } else if (camModeNow === 'close') {
+              // Dedicated Close View (4th camera mode): preserves inp.cameraYaw so all directional keys stay 100% consistent with Isometric
+              const closeDist = heroInCave ? 3.85 : heroInsideWalkInBuilding ? 4.05 : 5.15;
+              const closeHeight =
+                (heroInCave ? 1.95 : heroInsideWalkInBuilding ? 2.15 : 3.05) +
+                inp.lookPitchOffset * 0.4;
+
+              _targetCamPos.set(
+                heroX + Math.sin(inp.cameraYaw) * closeDist + shakeX,
+                heroY + closeHeight + shakeY,
+                heroZ + Math.cos(inp.cameraYaw) * closeDist
+              );
+              if (heroInCave || caveCamBlend > 0.35) {
+                _targetCamPos.y = Math.min(
+                  _targetCamPos.y,
+                  MountainCave.floorY + MountainCave.ceilingHeight - 0.65
+                );
+              }
+              if (heroInsideWalkInBuilding && insideBuildingCeilingY < 900) {
+                _targetCamPos.y = Math.min(_targetCamPos.y, insideBuildingCeilingY - 0.52);
+              }
+              if (!heroInCave && !heroInsideWalkInBuilding) {
+                _targetCamPos.y = Math.max(
+                  _targetCamPos.y,
+                  sampleLevelHeight(activeLevel, _targetCamPos.x, _targetCamPos.z) + 1.25
+                );
+              }
+              _lookTarget.set(heroX, heroY + 1.18, heroZ);
             } else if (camModeNow === 'front') {
               const openDist = Math.max(8.2, camDist);
               const dist = THREE.MathUtils.lerp(openDist, 3.85, caveCamBlend);
@@ -12661,8 +12840,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               if (caveCamBlend > 0.35) {
                 _targetCamPos.y = Math.min(
                   _targetCamPos.y,
-                  MountainCave.floorY + MountainCave.ceilingHeight - 0.85
+                  MountainCave.floorY + MountainCave.ceilingHeight - 0.65
                 );
+              }
+              if (heroInsideWalkInBuilding && insideBuildingCeilingY < 900) {
+                _targetCamPos.y = Math.min(_targetCamPos.y, insideBuildingCeilingY - 0.52);
               }
               _lookTarget.set(
                 heroX + Math.sin(smoothCamYaw) * THREE.MathUtils.lerp(1.8, 1.2, caveCamBlend),
@@ -12693,13 +12875,16 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               if (caveCamBlend > 0.35) {
                 _targetCamPos.y = Math.min(
                   _targetCamPos.y,
-                  MountainCave.floorY + MountainCave.ceilingHeight - 0.85
+                  MountainCave.floorY + MountainCave.ceilingHeight - 0.65
                 );
               } else {
                 _targetCamPos.y = Math.max(
                   _targetCamPos.y,
                   sampleLevelHeight(activeLevel, _targetCamPos.x, _targetCamPos.z) + 1.8
                 );
+              }
+              if (heroInsideWalkInBuilding && insideBuildingCeilingY < 900) {
+                _targetCamPos.y = Math.min(_targetCamPos.y, insideBuildingCeilingY - 0.52);
               }
               const lookAhead = THREE.MathUtils.lerp(
                 THREE.MathUtils.clamp(openDist * 0.24, 1.4, 3.6),
@@ -12725,8 +12910,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               if (caveCamBlend > 0.35) {
                 _targetCamPos.y = Math.min(
                   _targetCamPos.y,
-                  MountainCave.floorY + MountainCave.ceilingHeight - 0.85
+                  MountainCave.floorY + MountainCave.ceilingHeight - 0.65
                 );
+              }
+              if (heroInsideWalkInBuilding && insideBuildingCeilingY < 900) {
+                _targetCamPos.y = Math.min(_targetCamPos.y, insideBuildingCeilingY - 0.52);
               }
               _lookTarget.set(heroX, heroY + 1.15, heroZ);
             }
@@ -12746,6 +12934,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           }
         }
+        wasCloseCamMode = resolvedCamModeRef.current === 'close';
 
         // Override camera cleanly during Live Camera Cutaway / Skit playback
         if (activeCutaway) {
@@ -13511,9 +13700,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   ? 'bg-[#7C5CFF] border-[#7C5CFF] text-white'
                   : resolvedCamMode === 'heroFront'
                   ? 'bg-[#0EA5E9] border-[#0EA5E9] text-white'
-                  : 'bg-black/70 border-white/15 text-white hover:bg-black/85'
+                  : resolvedCamMode === 'close'
+                  ? 'bg-[#F59E0B] border-[#F59E0B] text-slate-950'
+                  : 'bg-black/55 border-white/15 text-white hover:bg-black/75'
               }`}
-              title="Cycle Camera View: Behind / Front View / POV (V)"
+              title="Cycle Camera View: Behind / Close / Front View / POV (V)"
             >
               <Eye size={14} />
               <span>
@@ -13521,6 +13712,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   ? 'POV'
                   : resolvedCamMode === 'heroFront'
                   ? 'Front View'
+                  : resolvedCamMode === 'close'
+                  ? 'Close'
                   : 'Behind'}
               </span>
               <span className="px-1.5 py-0.5 rounded bg-white/15 text-[10px] font-bold">V</span>

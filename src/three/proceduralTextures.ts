@@ -8,6 +8,9 @@ export interface TerrainTextureAtlas {
   moss: THREE.CanvasTexture;
   cobble: THREE.CanvasTexture;
   dirt: THREE.CanvasTexture;
+  leavesFloor: THREE.CanvasTexture;
+  clumpyDirt: THREE.CanvasTexture;
+  chamferedAshlarStone: THREE.CanvasTexture;
   oakBark: THREE.CanvasTexture;
   oakBarkBump: THREE.CanvasTexture;
   pineBark: THREE.CanvasTexture;
@@ -627,6 +630,165 @@ function createDirtTrailTexture(): THREE.CanvasTexture {
     ctx.beginPath();
     ctx.ellipse(x, y, rx, ry, rand() * Math.PI, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  return finishColorTexture(canvas);
+}
+
+function createLeavesFloorTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const [canvas, ctx] = makeTileCanvas(size);
+  const rand = mulberry32(1313);
+
+  // Rich forest humus underlayment
+  ctx.fillStyle = '#4B3624';
+  ctx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 85; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 14 + rand() * 24;
+    ctx.fillStyle = rand() > 0.5 ? 'rgba(84, 58, 34, 0.35)' : 'rgba(56, 40, 26, 0.35)';
+    drawWrappedBounds(size, x - r, x + r, y - r, y + r, (ox, oy) => {
+      ctx.beginPath();
+      ctx.arc(x + ox, y + oy, r, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // Scattered fallen autumn & woodland oak leaves
+  const leafColors = ['#9A5B2C', '#B77234', '#7C4D2B', '#C98A3E', '#5D6E32', '#8B4527'];
+  for (let i = 0; i < 360; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const rx = 3.2 + rand() * 5.2;
+    const ry = 1.6 + rand() * 2.8;
+    const ang = rand() * Math.PI * 2;
+    const col = leafColors[Math.floor(rand() * leafColors.length)];
+    const pad = Math.max(rx, ry) + 2;
+    drawWrappedBounds(size, x - pad, x + pad, y - pad, y + pad, (ox, oy) => {
+      ctx.save();
+      ctx.translate(x + ox, y + oy);
+      ctx.rotate(ang);
+      ctx.fillStyle = 'rgba(24, 16, 10, 0.28)';
+      ctx.beginPath();
+      ctx.ellipse(1.2, 1.4, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  // Crisp small twigs
+  for (let i = 0; i < 32; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const len = 8 + rand() * 14;
+    const ang = rand() * Math.PI * 2;
+    ctx.strokeStyle = 'rgba(64, 42, 24, 0.58)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+    ctx.stroke();
+  }
+
+  return finishColorTexture(canvas);
+}
+
+function createClumpyDirtTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const [canvas, ctx] = makeTileCanvas(size);
+  const rand = mulberry32(1419);
+
+  // Dark rich forest loam & muddy wheel-rut earth
+  ctx.fillStyle = '#473323';
+  ctx.fillRect(0, 0, size, size);
+
+  // Dark clumpy earth mounds with crisp highlight/shadow rims
+  for (let i = 0; i < 160; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const rx = 6 + rand() * 14;
+    const ry = 4.5 + rand() * 10;
+    const ang = rand() * Math.PI;
+    const pad = Math.max(rx, ry) + 2;
+    const lum = Math.round(52 + rand() * 34);
+    drawWrappedBounds(size, x - pad, x + pad, y - pad, y + pad, (ox, oy) => {
+      ctx.save();
+      ctx.translate(x + ox, y + oy);
+      ctx.rotate(ang);
+      ctx.fillStyle = 'rgba(20, 13, 8, 0.45)';
+      ctx.beginPath();
+      ctx.ellipse(1.5, 2.0, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgb(${lum + 14}, ${lum + 2}, ${Math.max(12, lum - 10)})`;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(138, 108, 78, 0.24)';
+      ctx.beginPath();
+      ctx.ellipse(-rx * 0.2, -ry * 0.25, rx * 0.55, ry * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  // Grit & dark pebbles
+  for (let i = 0; i < 180; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 1.2 + rand() * 2.6;
+    ctx.fillStyle = rand() > 0.5 ? 'rgba(98, 86, 74, 0.55)' : 'rgba(26, 18, 12, 0.52)';
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  return finishColorTexture(canvas);
+}
+
+function createChamferedAshlarStoneTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const [canvas, ctx] = makeTileCanvas(size);
+  const rand = mulberry32(1515);
+
+  ctx.fillStyle = '#363A42';
+  ctx.fillRect(0, 0, size, size);
+
+  const rows = 5;
+  const cols = 4;
+  const bh = size / rows;
+  const bw = size / cols;
+
+  for (let r = 0; r < rows; r++) {
+    const offset = (r % 2) * (bw * 0.48);
+    for (let c = -1; c <= cols; c++) {
+      const x = c * bw + offset + 2.5;
+      const y = r * bh + 2.5;
+      const w = bw - 5;
+      const h = bh - 5;
+      const shade = Math.round(108 + rand() * 34);
+      ctx.fillStyle = `rgb(${shade + 4}, ${shade + 2}, ${shade - 4})`;
+      ctx.fillRect(x, y, w, h);
+      // Chamfer highlight & shadow edge
+      ctx.strokeStyle = 'rgba(235, 240, 248, 0.28)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x + 1, y + h - 1);
+      ctx.lineTo(x + 1, y + 1);
+      ctx.lineTo(x + w - 1, y + 1);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(18, 22, 28, 0.42)';
+      ctx.beginPath();
+      ctx.moveTo(x + w - 1, y + 1);
+      ctx.lineTo(x + w - 1, y + h - 1);
+      ctx.lineTo(x + 1, y + h - 1);
+      ctx.stroke();
+    }
   }
 
   return finishColorTexture(canvas);
@@ -1277,6 +1439,9 @@ export function getTerrainTextureAtlas(): TerrainTextureAtlas {
       moss: createMossTexture(),
       cobble: createCobbleTexture(),
       dirt: createDirtTrailTexture(),
+      leavesFloor: createLeavesFloorTexture(),
+      clumpyDirt: createClumpyDirtTexture(),
+      chamferedAshlarStone: createChamferedAshlarStoneTexture(),
       oakBark: oakBark.map,
       oakBarkBump: oakBark.bump,
       pineBark: pineBark.map,

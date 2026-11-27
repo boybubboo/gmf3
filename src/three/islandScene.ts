@@ -112,11 +112,13 @@ import {
   ensureUpgradedTerrain,
   evaluateVistaHeight,
   getEnvironmentType,
+  getLevelGrassExclusionRects,
   getLevelWallBoxes,
   getSideScrollerConfig,
   getSideScrollerSegments,
   getTerrainRadius,
   IslandTerrain,
+  MOUNTAIN_CAVE_ROOMS,
   MountainCave,
   normalizeCaveGrotto,
   RiverCrossing,
@@ -217,6 +219,17 @@ export interface WorldMapRenderContext {
   activeRegionOrigin?: [number, number];
 }
 
+export interface RiverFishHandle {
+  group: THREE.Group;
+  tailGroup: THREE.Group;
+  riverPoints: [number, number][];
+  baseProgress: number;
+  speed: number;
+  lateralOffset: number;
+  depthY: number;
+  phase: number;
+}
+
 export interface IslandSceneHandles {
   group: THREE.Group;
   timeUniform: { value: number };
@@ -224,6 +237,7 @@ export interface IslandSceneHandles {
   customScatterGroups: THREE.Group;
   torchLights: TorchLightHandle[];
   flameMeshes: { mesh: THREE.Object3D; baseY: number; phase: number }[];
+  riverFish?: RiverFishHandle[];
   choppableTrees: ChoppableTreeHandle[];
   harvestableScatter: HarvestableScatterHandle[];
   terrainMesh?: THREE.Mesh;
@@ -238,6 +252,7 @@ export interface IslandSceneHandles {
   updateDirtUniforms?: (cfg?: DirtAndRoadConfig) => void;
   updateWaterBodiesUniforms?: (bodies?: WaterBodyConfig[], selectedWaterBodyId?: string | null) => void;
   updateWorldMapUniforms?: (ctx?: WorldMapRenderContext) => void;
+  updateTallGrassColor?: (hex?: string) => void;
 }
 
 export interface BuildIslandMeshOptions {
@@ -1174,6 +1189,7 @@ interface TerrainMaterialBundle {
   updateMountainUniforms: (cfg?: MountainProfileConfig) => void;
   updateDirtUniforms: (cfg?: DirtAndRoadConfig) => void;
   updateWorldMapUniforms: (ctx?: WorldMapRenderContext) => void;
+  updateTallGrassColor: (hex?: string) => void;
 }
 
 function createTerrainMaterial(
@@ -1185,13 +1201,15 @@ function createTerrainMaterial(
   windUniform?: { value: number },
   mountainConfig?: MountainProfileConfig,
   dirtConfig?: DirtAndRoadConfig,
-  worldMapContext?: WorldMapRenderContext
+  worldMapContext?: WorldMapRenderContext,
+  tallGrassPatchHex = '#76BD44'
 ): TerrainMaterialBundle {
   const atlas = getTerrainTextureAtlas();
   const grassTint = new THREE.Color(biomeGroundHex);
   const mossTint = new THREE.Color(biomeDetailHex).lerp(new THREE.Color('#3C8D4B'), 0.45);
   const mtnCfg = mountainConfig ?? createDefaultMountainConfig();
   const dCfg = dirtConfig ?? createDefaultDirtAndRoadConfig();
+  const uTallGrassPatchCol = uniform(new THREE.Color(tallGrassPatchHex));
 
   const uMtnRockH = uniform(mtnCfg.rockStartHeight);
   const uMtnSnowH = uniform(mtnCfg.snowStartHeight);
@@ -1268,14 +1286,17 @@ function createTerrainMaterial(
   const terrainColorNode = Fn(() => {
     const vW0 = attribute('aW0', 'vec4');
     const vW1 = attribute('aW1', 'vec3');
+    const vW2 = attribute('aW2', 'vec3');
     const wp = positionWorld;
     const wn = normalize(normalWorld);
 
     const wpXZ = vec2(wp.x, wp.z);
     const uvW = wpXZ.mul(0.16);
     const uvFine = wpXZ.mul(0.42);
+    const uvTuft = wpXZ.mul(1.35);
     const orgMacro = tFbm2DTsl(wpXZ.mul(0.19));
     const orgFine = tFbm2DTsl(wpXZ.mul(0.68).add(vec2(11.3, 4.7)));
+    const tuftNoise = tNoise2DTsl(uvTuft).mul(0.6).add(tNoise2DTsl(uvTuft.mul(2.35).add(vec2(5.1, 9.2))).mul(0.4));
     const edgeJitter = orgMacro.sub(0.5).mul(0.38).add(orgFine.sub(0.5).mul(0.22));
 
     const dapple1 = sin(wp.x.mul(0.075).add(sin(wp.z.mul(0.055)).mul(1.4))).mul(cos(wp.z.mul(0.068).add(0.6)));
@@ -1300,10 +1321,13 @@ function createTerrainMaterial(
     );
     const cGrassMacro = texture(texGrass, uvGrass).rgb;
     const cGrassFine = texture(texGrass, uvGrassFine).rgb;
-    const cGrass = mix(cGrassMacro, cGrassFine, 0.34)
+    // Contrasty grass-blade underlayment gives depth beneath windblown 3D grass blades
+    const grassUnderlay = float(0.84).add(tuftNoise.mul(0.32)).mul(float(0.92).add(orgMacro.mul(0.16)));
+    const cGrass = mix(cGrassMacro, cGrassFine, 0.38)
       .mul(gTint)
       .mul(meadowVar)
-      .mul(sampleTerrainReliefTsl(texGrass, uvGrass, Math.max(0.24, grassBumpStrength)));
+      .mul(grassUnderlay)
+      .mul(sampleTerrainReliefTsl(texGrass, uvGrass, Math.max(0.28, grassBumpStrength)));
 
     const cSandMacro = texture(atlas.sand, uvW).rgb;
     const cSandFine = texture(atlas.sand, uvFine.mul(1.25)).rgb;
@@ -1382,6 +1406,28 @@ function createTerrainMaterial(
       uDirtUseCustom
     ).mul(float(1.0).sub(uDirtDegrade.mul(0.24).mul(float(1.0).sub(dFbm))));
 
+    const cLeaves = mix(
+      texture(atlas.leavesFloor, uvW.mul(1.08)).rgb,
+      texture(atlas.leavesFloor, uvFine.mul(0.95)).rgb,
+      0.38
+    )
+      .mul(float(0.88).add(orgMacro.mul(0.24)))
+      .mul(sampleTerrainReliefTsl(atlas.leavesFloor, uvW.mul(1.08), 0.45));
+
+    const cClumpyDirt = mix(
+      texture(atlas.clumpyDirt, uvDirt.mul(1.05)).rgb,
+      texture(atlas.clumpyDirt, uvFine.mul(1.1)).rgb,
+      0.36
+    )
+      .mul(float(0.86).add(orgFine.mul(0.26)))
+      .mul(sampleTerrainReliefTsl(atlas.clumpyDirt, uvDirt.mul(1.05), 0.58));
+
+    const cTallGrassPatch = mix(
+      cGrass.mul(0.9),
+      cGrassFine.mul(uTallGrassPatchCol).mul(float(0.9).add(tuftNoise.mul(0.28))),
+      0.78
+    );
+
     const avgW = vec3(0.33, 0.33, 0.33);
     const hGrass = float(0.55).add(orgFine.mul(0.35)).add(dot(cGrassMacro, avgW).sub(0.5).mul(0.25));
     const hSand = float(0.42).add(orgMacro.mul(0.28)).add(dot(cSandFine, avgW).sub(0.5).mul(0.22));
@@ -1395,13 +1441,28 @@ function createTerrainMaterial(
     const w1x = select(vW1.x.greaterThan(0.01), edgeJitter.mul(0.58), 0.0);
     const w1y = select(vW1.y.greaterThan(0.01), edgeJitter.mul(-0.45), 0.0);
     const w1z = select(vW1.z.greaterThan(0.01), edgeJitter.mul(-0.62).add(hDirt.sub(0.5).mul(0.18)), 0.0);
+    const w2x = select(vW2.x.greaterThan(0.01), edgeJitter.mul(0.54), 0.0);
+    const w2y = select(vW2.y.greaterThan(0.01), edgeJitter.mul(-0.52), 0.0);
+    const w2z = select(vW2.z.greaterThan(0.01), edgeJitter.mul(0.6), 0.0);
 
     const w0Raw = max(vec4(0.0), vW0.add(vec4(w0x, w0y, w0z, w0w)));
     const w1Raw = max(vec3(0.0), vW1.add(vec3(w1x, w1y, w1z)));
+    const w2Raw = max(vec3(0.0), vW2.add(vec3(w2x, w2y, w2z)));
 
     const w0 = pow(w0Raw.add(vec4(0.0001)), vec4(1.32)).mul(step(0.002, vW0));
     const w1 = pow(w1Raw.add(vec3(0.0001)), vec3(1.32)).mul(step(0.002, vW1));
-    const sumW = w0.x.add(w0.y).add(w0.z).add(w0.w).add(w1.x).add(w1.y).add(w1.z).add(0.0001);
+    const w2 = pow(w2Raw.add(vec3(0.0001)), vec3(1.32)).mul(step(0.002, vW2));
+    const sumW = w0.x
+      .add(w0.y)
+      .add(w0.z)
+      .add(w0.w)
+      .add(w1.x)
+      .add(w1.y)
+      .add(w1.z)
+      .add(w2.x)
+      .add(w2.y)
+      .add(w2.z)
+      .add(0.0001);
 
     const texCol = cGrass
       .mul(w0.x)
@@ -1411,20 +1472,30 @@ function createTerrainMaterial(
       .add(cMoss.mul(w1.x))
       .add(cCobble.mul(w1.y))
       .add(cDirt.mul(w1.z))
+      .add(cLeaves.mul(w2.x))
+      .add(cClumpyDirt.mul(w2.y))
+      .add(cTallGrassPatch.mul(w2.z))
       .div(sumW)
       .toVar();
 
+    // Riverbanks stay lush (damp moss + earthy soil) unless the terrain actually has sand painted there
     const waterElev = wp.y.add(1.65);
-    const bankSandMask = float(1.0)
+    const bankMask = float(1.0)
       .sub(
         smoothstep(
-          float(0.18).add(edgeJitter.mul(0.45)),
-          float(1.35).add(edgeJitter.mul(0.75)),
+          float(0.14).add(edgeJitter.mul(0.4)),
+          float(1.15).add(edgeJitter.mul(0.65)),
           waterElev
         )
       )
       .mul(smoothstep(-0.85, -0.05, waterElev));
-    texCol.assign(mix(texCol, mix(cSand, cDirt.mul(1.06), float(0.22).add(orgFine.mul(0.2))), bankSandMask.mul(0.52)));
+    const paintedSandRatio = smoothstep(0.08, 0.42, vW0.y);
+    const naturalBankCol = mix(
+      mix(cMoss.mul(0.82), cClumpyDirt.mul(0.92), float(0.28).add(orgFine.mul(0.32))),
+      mix(cSand, cDirt.mul(1.04), float(0.22).add(orgFine.mul(0.2))),
+      paintedSandRatio
+    );
+    texCol.assign(mix(texCol, naturalBankCol, bankMask.mul(mix(0.34, 0.56, paintedSandRatio))));
 
     const rockSlope = smoothstep(float(0.36).add(edgeJitter.mul(0.12)), 0.76, slopeAmt);
     const rockCov = clamp(max(rockSlope, mRockBand.mul(0.82)).mul(float(1.0).sub(mSnowBand.mul(0.88))), 0.0, 1.0);
@@ -1433,7 +1504,7 @@ function createTerrainMaterial(
     const snowCov = mSnowBand.mul(float(1.0).sub(smoothstep(0.58, 0.9, slopeAmt).mul(0.65)));
     texCol.assign(mix(texCol, cSnow, snowCov.mul(0.88)));
 
-    const meadowCov = clamp(w0.x.add(w1.x.mul(0.85)).div(sumW), 0.0, 1.0).mul(float(1.0).sub(rockCov));
+    const meadowCov = clamp(w0.x.add(w1.x.mul(0.85)).add(w2.z).div(sumW), 0.0, 1.0).mul(float(1.0).sub(rockCov));
     const wDirT = normalize(vec2(0.84, 0.54));
     const wSpeedT = float(0.85).add(uWind.mul(0.95));
     const wUvT = wpXZ.mul(0.052).sub(wDirT.mul(uTime.mul(wSpeedT).mul(0.62)));
@@ -1551,6 +1622,9 @@ function createTerrainMaterial(
       uWorldMapMode.value = ctx?.mode === 'worldMap' ? 1 : 0;
       uGrayOtherLand.value =
         ctx?.mode === 'land' && ctx.worldMap && (ctx.activeRegionCode ?? 0) > 0 ? 1 : 0;
+    },
+    updateTallGrassColor: (hex?: string) => {
+      uTallGrassPatchCol.value.set(hex || '#76BD44');
     },
   };
 }
@@ -2769,6 +2843,7 @@ interface TerrainSnapshotEntry {
   colors: Float32Array;
   w0: Float32Array;
   w1: Float32Array;
+  w2: Float32Array;
   weather0: Float32Array;
   weather1: Float32Array;
   normals: Float32Array;
@@ -2900,6 +2975,7 @@ export function buildIslandMesh(
   let colors: Float32Array;
   let w0: Float32Array;
   let w1: Float32Array;
+  let w2: Float32Array;
   let weather0: Float32Array;
   let weather1: Float32Array;
   let waterDepthTexData: Float32Array;
@@ -2929,6 +3005,7 @@ export function buildIslandMesh(
     colors = snap.colors.slice();
     w0 = snap.w0.slice();
     w1 = snap.w1.slice();
+    w2 = snap.w2.slice();
     weather0 = snap.weather0.slice();
     weather1 = snap.weather1.slice();
     waterDepthTexData = snap.waterDepthTexData.slice();
@@ -2936,6 +3013,7 @@ export function buildIslandMesh(
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.setAttribute('aW0', new THREE.BufferAttribute(w0, 4));
     geo.setAttribute('aW1', new THREE.BufferAttribute(w1, 3));
+    geo.setAttribute('aW2', new THREE.BufferAttribute(w2, 3));
     geo.setAttribute('aWeather0', new THREE.BufferAttribute(weather0, 4));
     geo.setAttribute('aWeather1', new THREE.BufferAttribute(weather1, 1));
     geo.setAttribute('normal', new THREE.BufferAttribute(snap.normals.slice(), 3));
@@ -2945,6 +3023,7 @@ export function buildIslandMesh(
     colors = new Float32Array(renderWidth * renderWidth * 3);
     w0 = new Float32Array(renderWidth * renderWidth * 4);
     w1 = new Float32Array(renderWidth * renderWidth * 3);
+    w2 = new Float32Array(renderWidth * renderWidth * 3);
     weather0 = new Float32Array(renderWidth * renderWidth * 4);
     weather1 = new Float32Array(renderWidth * renderWidth);
 
@@ -2955,6 +3034,7 @@ export function buildIslandMesh(
       colors,
       w0,
       w1,
+      w2,
       weather0,
       weather1,
       undefined,
@@ -3009,6 +3089,7 @@ export function buildIslandMesh(
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.setAttribute('aW0', new THREE.BufferAttribute(w0, 4));
     geo.setAttribute('aW1', new THREE.BufferAttribute(w1, 3));
+    geo.setAttribute('aW2', new THREE.BufferAttribute(w2, 3));
     geo.setAttribute('aWeather0', new THREE.BufferAttribute(weather0, 4));
     geo.setAttribute('aWeather1', new THREE.BufferAttribute(weather1, 1));
     geo.setIndex(new THREE.BufferAttribute(indexArray, 1));
@@ -3037,6 +3118,7 @@ export function buildIslandMesh(
       colors: colors.slice(),
       w0: w0.slice(),
       w1: w1.slice(),
+      w2: w2.slice(),
       weather0: weather0.slice(),
       weather1: weather1.slice(),
       normals: normalArray.slice(),
@@ -3057,7 +3139,8 @@ export function buildIslandMesh(
     windUniform,
     terrain.mountainConfig,
     terrain.dirtAndRoadConfig,
-    worldMapContext
+    worldMapContext,
+    terrain.tallGrassPatchColor ?? '#76BD44'
   );
   const terrainMesh = new THREE.Mesh(geo, terrainMatBundle.material);
   terrainMesh.receiveShadow = true;
@@ -3335,11 +3418,16 @@ export function buildIslandMesh(
     islandGroup.add(dirtPebbleMesh);
   }
 
-  // Cave Grottos
+  // Cave Grottos (including multi-room hollow mountain cave & flickering wall torches)
+  const torchLights: TorchLightHandle[] = [];
+  const flameMeshes: IslandSceneHandles['flameMeshes'] = [];
   if (terrain.caves && terrain.caves.length > 0) {
-    const cavesGroup = buildCavesGroup(level, terrain.caves, timeUniform);
+    const cavesGroup = buildCavesGroup(level, terrain.caves, timeUniform, flameMeshes, torchLights);
     islandGroup.add(cavesGroup);
   }
+
+  // Animated swimming river trout/carp along river water bodies
+  const riverFish = buildRiverFishGroup(terrain, islandGroup, timeUniform);
 
   const grassContainer = new THREE.Group();
   const instancedGroup = new THREE.Group();
@@ -3352,13 +3440,15 @@ export function buildIslandMesh(
 
   const choppableTrees: ChoppableTreeHandle[] = [];
   const harvestableScatter: HarvestableScatterHandle[] = [];
+  const grassExclusionRects = getLevelGrassExclusionRects(level);
   const handles: IslandSceneHandles = {
     group: islandGroup,
     timeUniform,
     windUniform,
     customScatterGroups,
-    torchLights: [],
-    flameMeshes: [],
+    torchLights,
+    flameMeshes,
+    riverFish,
     choppableTrees,
     harvestableScatter,
     terrainMesh,
@@ -3372,6 +3462,9 @@ export function buildIslandMesh(
     updateWaterBodiesUniforms: (bodies, selectedWaterBodyId) =>
       waterBodyGroupBundle.updateUniforms(bodies, selectedWaterBodyId),
     updateWorldMapUniforms: (ctx) => terrainMatBundle.updateWorldMapUniforms(ctx),
+    updateTallGrassColor: (hex) => {
+      terrainMatBundle.updateTallGrassColor(hex);
+    },
   };
 
   const scatterPlan = createScatterBuildPlan(
@@ -3411,6 +3504,7 @@ export function buildIslandMesh(
       config: level.grass,
       isSoftwareGl,
       worldMapCtx: grassWorldMapCtx,
+      excludeRects: grassExclusionRects,
     });
     applyBotwStyleToObject(grassSystem.group, style, { rimStrengthScale: 0.82, shadowLiftScale: 0.85 });
     grassContainer.add(grassSystem.group);
@@ -3550,12 +3644,14 @@ export function buildIslandMesh(
         windUniform,
         terrain.mountainConfig,
         terrain.dirtAndRoadConfig,
-        worldMapContext
+        worldMapContext,
+        terrain.tallGrassPatchColor ?? '#76BD44'
       );
       terrainMesh.material = refreshedBundle.material;
       handles.updateMountainUniforms = refreshedBundle.updateMountainUniforms;
       handles.updateDirtUniforms = refreshedBundle.updateDirtUniforms;
       handles.updateWorldMapUniforms = refreshedBundle.updateWorldMapUniforms;
+      handles.updateTallGrassColor = (hex) => refreshedBundle.updateTallGrassColor(hex);
       if (Array.isArray(prevTerrainMat)) prevTerrainMat.forEach((m) => m.dispose());
       else prevTerrainMat.dispose();
       applyBotwStyleToObject(terrainMesh, style, { rimStrengthScale: 0.82, shadowLiftScale: 0.85 });
@@ -3590,6 +3686,7 @@ export function buildIslandMesh(
       config: level.grass,
       isSoftwareGl,
       worldMapCtx: grassWorldMapCtx,
+      excludeRects: grassExclusionRects,
     });
     if (deferSignal?.aborted) {
       grassSystem.dispose();
@@ -3785,7 +3882,7 @@ const _attrYellowCol = new THREE.Color(WORLD_TERRAIN_YELLOW);
 const _attrTmpCol = new THREE.Color();
 const _attrRegionColMap = new Map<number, THREE.Color>();
 const _attrGauss = [1, 4, 6, 4, 1];
-const _attrAcc = new Float32Array(7);
+const _attrAcc = new Float32Array(10);
 const _attrWmScratch: WorldMapSample = { land: 0, regionCode: 0, isBorder: false };
 
 function recomputeTerrainGridNormalsBounds(
@@ -3843,6 +3940,7 @@ function populateSubdividedTerrainAttributes(
   colors: Float32Array,
   w0: Float32Array,
   w1: Float32Array,
+  w2: Float32Array,
   weather0: Float32Array,
   weather1: Float32Array,
   bounds?: { minRow: number; maxRow: number; minCol: number; maxCol: number },
@@ -3921,7 +4019,7 @@ function populateSubdividedTerrainAttributes(
       const centerL = terrain.layers[baseR * srcWidth + baseC] ?? 0;
       const isUniform =
         centerL >= 0 &&
-        centerL < 7 &&
+        centerL < 10 &&
         (terrain.layers[rMin * srcWidth + cMin] ?? 0) === centerL &&
         (terrain.layers[rMin * srcWidth + cMax] ?? 0) === centerL &&
         (terrain.layers[rMax * srcWidth + cMin] ?? 0) === centerL &&
@@ -3939,14 +4037,11 @@ function populateSubdividedTerrainAttributes(
         w1[idx * 3 + 0] = centerL === 4 ? 1 : 0;
         w1[idx * 3 + 1] = centerL === 5 ? 1 : 0;
         w1[idx * 3 + 2] = centerL === 6 ? 1 : 0;
+        w2[idx * 3 + 0] = centerL === 7 ? 1 : 0;
+        w2[idx * 3 + 1] = centerL === 8 ? 1 : 0;
+        w2[idx * 3 + 2] = centerL === 9 ? 1 : 0;
       } else {
-        acc[0] = 0;
-        acc[1] = 0;
-        acc[2] = 0;
-        acc[3] = 0;
-        acc[4] = 0;
-        acc[5] = 0;
-        acc[6] = 0;
+        for (let k = 0; k < 10; k++) acc[k] = 0;
         let totalW = 0;
 
         for (let dr = -2; dr <= 2; dr++) {
@@ -3957,7 +4052,7 @@ function populateSubdividedTerrainAttributes(
             const nc = Math.max(0, Math.min(srcSize, baseC + dc));
             const wt = wy * gauss[dc + 2];
             const l = terrain.layers[rowOff + nc] ?? 0;
-            if (l >= 0 && l < 7) {
+            if (l >= 0 && l < 10) {
               acc[l] += wt;
               totalW += wt;
             }
@@ -3972,6 +4067,9 @@ function populateSubdividedTerrainAttributes(
         w1[idx * 3 + 0] = acc[4] * inv; // moss
         w1[idx * 3 + 1] = acc[5] * inv; // cobble
         w1[idx * 3 + 2] = acc[6] * inv; // worn dirt trail
+        w2[idx * 3 + 0] = acc[7] * inv; // woodland leaves
+        w2[idx * 3 + 1] = acc[8] * inv; // clumpy dirt
+        w2[idx * 3 + 2] = acc[9] * inv; // tall grass patch
       }
 
       if (isWorldMap && wmSample) {
@@ -4034,9 +4132,10 @@ export function updateIslandTerrainGeometryInPlace(
   const colAttr = geo.attributes.color as THREE.BufferAttribute | undefined;
   const w0Attr = geo.attributes.aW0 as THREE.BufferAttribute | undefined;
   const w1Attr = geo.attributes.aW1 as THREE.BufferAttribute | undefined;
+  const w2Attr = geo.attributes.aW2 as THREE.BufferAttribute | undefined;
   const weather0Attr = geo.attributes.aWeather0 as THREE.BufferAttribute | undefined;
   const weather1Attr = geo.attributes.aWeather1 as THREE.BufferAttribute | undefined;
-  if (!posAttr || !colAttr || !w0Attr || !w1Attr || !weather0Attr || !weather1Attr) return false;
+  if (!posAttr || !colAttr || !w0Attr || !w1Attr || !w2Attr || !weather0Attr || !weather1Attr) return false;
 
   const renderSize = handles.terrainRenderSize;
   const worldRadius =
@@ -4062,6 +4161,7 @@ export function updateIslandTerrainGeometryInPlace(
     colAttr.array as Float32Array,
     w0Attr.array as Float32Array,
     w1Attr.array as Float32Array,
+    w2Attr.array as Float32Array,
     weather0Attr.array as Float32Array,
     weather1Attr.array as Float32Array,
     bounds,
@@ -4072,6 +4172,7 @@ export function updateIslandTerrainGeometryInPlace(
   colAttr.needsUpdate = true;
   w0Attr.needsUpdate = true;
   w1Attr.needsUpdate = true;
+  w2Attr.needsUpdate = true;
   weather0Attr.needsUpdate = true;
   weather1Attr.needsUpdate = true;
 
@@ -4130,7 +4231,9 @@ function buildMountainCaveInterior(
   stoneMat: THREE.Material,
   darkInteriorMat: THREE.Material,
   mossMat: THREE.Material,
-  mossBrightMat: THREE.Material
+  mossBrightMat: THREE.Material,
+  flameMeshes: IslandSceneHandles['flameMeshes'],
+  torchLights: TorchLightHandle[]
 ): THREE.Group {
   const g = new THREE.Group();
   g.position.set(MountainCave.x, MountainCave.floorY, MountainCave.z);
@@ -4139,26 +4242,28 @@ function buildMountainCaveInterior(
   const rockGeo = createFacetedRockGeometry(1.0, 1.0, 1.0, 1.0, 13);
   const boulderGeo = createFacetedRockGeometry(1.0, 1.05, 0.92, 0.98, 29);
 
-  // 1. Damp rocky interior floor slab (matches walkable MountainCave.floorY)
-  const floorSlab = new THREE.Mesh(
-    new THREE.CylinderGeometry(5.6, 5.9, 0.24, 28),
-    darkInteriorMat
-  );
-  floorSlab.position.set(0, -0.09, -6.2);
-  floorSlab.scale.set(1.02, 1, 1.24);
-  floorSlab.receiveShadow = true;
-  floorSlab.userData.isGround = true;
-  g.add(floorSlab);
+  // 1. Continuous rock-slab floor covering all 5 interconnected chambers of The Cursed Caves
+  for (const r of MOUNTAIN_CAVE_ROOMS) {
+    const w = r.xMax - r.xMin + 1.2;
+    const d = r.zMax - r.zMin + 1.2;
+    const cx = (r.xMin + r.xMax) * 0.5;
+    const cz = (r.zMin + r.zMax) * 0.5;
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 0.28, d), darkInteriorMat);
+    slab.position.set(cx, -0.14, cz);
+    slab.receiveShadow = true;
+    slab.userData.isGround = true;
+    g.add(slab);
+  }
 
-  // 2. Dramatic Mountain-Base Cave Mouth Arch & Flanking Craggy Buttresses
+  // 2. Dramatic Mountain-Base Carved Stone Portal & Flanking Mountain Buttresses
   const mouthBlocks: [number, number, number, number, number, number, number][] = [
-    [-4.1, 2.2, 0.3, 1.85, 3.1, 2.3, 0.25],
-    [4.1, 2.2, 0.3, 1.85, 3.1, 2.3, -0.22],
-    [-6.2, 2.6, -1.2, 2.7, 3.6, 2.8, 0.4],
-    [6.2, 2.6, -1.2, 2.7, 3.6, 2.8, -0.35],
-    [0, 5.05, 0.05, 4.9, 1.55, 2.6, 0.08], // craggy overhanging brow
-    [-2.5, 4.4, -0.25, 2.3, 1.45, 2.4, -0.18],
-    [2.5, 4.4, -0.25, 2.3, 1.45, 2.4, 0.2],
+    [-4.3, 2.3, 0.4, 2.1, 3.2, 2.5, 0.25],
+    [4.3, 2.3, 0.4, 2.1, 3.2, 2.5, -0.22],
+    [-7.4, 3.2, -1.2, 3.2, 4.4, 3.2, 0.4],
+    [7.4, 3.2, -1.2, 3.2, 4.4, 3.2, -0.35],
+    [0, 5.2, 0.1, 5.4, 1.65, 2.8, 0.08], // craggy overhanging brow
+    [-2.8, 4.6, -0.25, 2.5, 1.55, 2.6, -0.18],
+    [2.8, 4.6, -0.25, 2.5, 1.55, 2.6, 0.2],
   ];
   for (const [x, y, z, sx, sy, sz, ry] of mouthBlocks) {
     const m = new THREE.Mesh(rockGeo, stoneMat);
@@ -4170,14 +4275,17 @@ function buildMountainCaveInterior(
     g.add(m);
   }
 
-  // Towering faceted Mountain Crag Cap rising right over the cave into the mountain peak behind
+  // Towering faceted Mountain Crag Mass rising seamlessly over the entire 34m deep cave complex
   const mountainCrags: [number, number, number, number, number, number, number][] = [
-    [0, 7.6, -5.8, 7.2, 4.4, 7.6, 0.2],
-    [-4.8, 6.8, -6.5, 4.8, 4.2, 5.8, 0.65],
-    [4.8, 6.6, -6.2, 4.8, 4.0, 5.8, -0.55],
-    [0, 9.6, -9.8, 6.4, 4.8, 6.2, -0.25],
-    [-3.6, 8.2, -10.8, 4.5, 4.2, 4.8, 0.45],
-    [3.8, 8.0, -10.4, 4.6, 4.0, 4.8, -0.4],
+    [0, 8.6, -7.0, 9.8, 4.8, 8.8, 0.2],
+    [-8.5, 7.6, -12.0, 7.2, 5.2, 9.2, 0.65],
+    [8.5, 7.4, -12.0, 7.2, 5.0, 9.2, -0.55],
+    [0, 11.4, -16.5, 12.2, 6.2, 10.6, -0.25],
+    [-9.2, 9.2, -23.0, 7.5, 5.6, 9.6, 0.45],
+    [9.2, 9.0, -23.0, 7.5, 5.4, 9.6, -0.4],
+    [0, 12.6, -28.0, 10.6, 6.8, 9.8, 0.15],
+    [-5.8, 8.6, -33.5, 6.2, 5.4, 6.8, 0.3],
+    [5.8, 8.4, -33.5, 6.2, 5.2, 6.8, -0.3],
   ];
   for (const [x, y, z, sx, sy, sz, ry] of mountainCrags) {
     const crag = new THREE.Mesh(rockGeo, stoneMat);
@@ -4189,17 +4297,38 @@ function buildMountainCaveInterior(
     g.add(crag);
   }
 
-  // 3. Enclosed Hollow Interior Cavern Walls (horseshoe of overlapping faceted cave monoliths)
+  // 3. Multi-Room Hollow Interior Cavern Walls & Vaulted Ceilings (zero rocks inside corridors!)
   const wallRing: [number, number, number, number, number, number][] = [
-    [-5.7, 2.3, -2.5, 1.85, 3.1, 2.5],
-    [-6.0, 2.4, -5.5, 1.95, 3.2, 2.7],
-    [-5.8, 2.4, -8.5, 2.0, 3.2, 2.6],
-    [-4.2, 2.4, -11.2, 2.35, 3.3, 2.4],
-    [0.0, 2.5, -13.1, 3.8, 3.4, 2.3],
-    [4.2, 2.4, -11.2, 2.35, 3.3, 2.4],
-    [5.8, 2.4, -8.5, 2.0, 3.2, 2.6],
-    [6.0, 2.4, -5.5, 1.95, 3.2, 2.7],
-    [5.7, 2.3, -2.5, 1.85, 3.1, 2.5],
+    // Entry tunnel sides (z: -1.5 to -7)
+    [-3.7, 2.5, -2.5, 1.65, 3.2, 2.4],
+    [3.7, 2.5, -2.5, 1.65, 3.2, 2.4],
+    [-3.9, 2.5, -5.6, 1.75, 3.2, 2.3],
+    [3.9, 2.5, -5.6, 1.75, 3.2, 2.3],
+    // Central hub NW/NE/SW/SE shoulders framing side passages
+    [-6.6, 2.6, -7.8, 1.85, 3.4, 2.1],
+    [6.6, 2.6, -7.8, 1.85, 3.4, 2.1],
+    [-6.6, 2.6, -18.4, 1.9, 3.4, 2.2],
+    [6.6, 2.6, -18.4, 1.9, 3.4, 2.2],
+    // West Crystal Grotto enclosure (x: -12.2..-6, z: -16.8..-9.2)
+    [-9.2, 2.6, -8.5, 2.8, 3.4, 1.85],
+    [-12.6, 2.7, -11.5, 2.1, 3.5, 2.6],
+    [-12.6, 2.7, -14.8, 2.1, 3.5, 2.6],
+    [-9.2, 2.6, -17.6, 2.8, 3.4, 1.85],
+    // East Spring Vault enclosure (x: +6..+12.2, z: -17.2..-9.2)
+    [9.2, 2.6, -8.5, 2.8, 3.4, 1.85],
+    [12.6, 2.7, -11.5, 2.1, 3.5, 2.6],
+    [12.6, 2.7, -14.8, 2.1, 3.5, 2.6],
+    [9.2, 2.6, -17.8, 2.8, 3.4, 1.85],
+    // Deep Sanctum Corridor & Boss Alcove (z: -20 to -34.2)
+    [-5.8, 2.6, -21.5, 1.85, 3.5, 2.6],
+    [5.8, 2.6, -21.5, 1.85, 3.5, 2.6],
+    [-6.2, 2.6, -25.6, 1.95, 3.5, 2.8],
+    [6.2, 2.6, -25.6, 1.95, 3.5, 2.8],
+    [-6.2, 2.6, -29.8, 1.95, 3.5, 2.8],
+    [6.2, 2.6, -29.8, 1.95, 3.5, 2.8],
+    [-4.2, 2.7, -34.0, 2.4, 3.6, 2.2],
+    [0.0, 2.8, -34.6, 3.9, 3.7, 2.4],
+    [4.2, 2.7, -34.0, 2.4, 3.6, 2.2],
   ];
   for (let i = 0; i < wallRing.length; i++) {
     const [x, y, z, sx, sy, sz] = wallRing[i];
@@ -4212,11 +4341,15 @@ function buildMountainCaveInterior(
     g.add(wall);
   }
 
-  // Vaulted Cavern Ceiling sealing overhead (keeps interior genuinely dark & enclosed)
+  // Vaulted Cavern Ceilings sealing all 5 chambers overhead (height >= 5.3m so Close camera stays comfortably below ceiling)
   const ceilingSlabs: [number, number, number, number, number, number][] = [
-    [0, 5.2, -3.6, 5.8, 1.35, 3.6],
-    [0, 5.35, -7.4, 6.1, 1.45, 4.1],
-    [0, 5.05, -10.8, 5.5, 1.4, 3.5],
+    [0, 5.5, -3.5, 5.2, 1.35, 4.2],
+    [0, 5.7, -10.5, 7.6, 1.45, 5.2],
+    [0, 5.7, -16.8, 7.6, 1.45, 5.0],
+    [-9.2, 5.5, -13.0, 4.6, 1.4, 5.2],
+    [9.2, 5.5, -13.0, 4.6, 1.4, 5.2],
+    [0, 5.65, -24.0, 6.8, 1.5, 5.4],
+    [0, 5.65, -30.8, 6.8, 1.5, 5.4],
   ];
   for (let i = 0; i < ceilingSlabs.length; i++) {
     const [x, y, z, sx, sy, sz] = ceilingSlabs[i];
@@ -4229,17 +4362,34 @@ function buildMountainCaveInterior(
     g.add(ceil);
   }
 
-  // Hanging ceiling stalactites (safely above hero head height)
+  // Warm flickering Wall Torches mounted along rock pillars & cavern walls
+  const torchPositions: [number, number, number, number, number, boolean, number][] = [
+    [-2.4, 2.25, -2.6, 1.0, 0.0, true, 0.3],
+    [2.4, 2.25, -5.2, -1.0, 0.0, true, 1.6],
+    [-5.1, 2.4, -8.8, 0.9, 0.4, false, 2.9],
+    [5.1, 2.4, -17.2, -0.9, -0.4, true, 4.1],
+    [-10.6, 2.35, -12.8, 1.0, 0.0, false, 5.2],
+    [10.6, 2.35, -12.8, -1.0, 0.0, true, 6.4],
+    [-4.3, 2.4, -23.5, 1.0, 0.0, false, 7.6],
+    [4.3, 2.4, -27.2, -1.0, 0.0, true, 8.8],
+    [-2.6, 2.5, -32.2, 0.7, 0.7, true, 10.1],
+    [2.6, 2.5, -32.2, -0.7, 0.7, false, 11.4],
+  ];
+  for (const [tx, ty, tz, nx, nz, realPt, ph] of torchPositions) {
+    addWallTorch(g, tx, ty, tz, nx, nz, flameMeshes, torchLights, realPt, ph);
+  }
+
+  // Hanging ceiling stalactites (safely above hero & camera height)
   const stalactiteGeo = new THREE.ConeGeometry(0.24, 1.1, 10);
   const stalactites: [number, number, number, number][] = [
-    [-2.4, 4.15, -3.2, 0.95],
-    [2.6, 4.2, -4.1, 1.05],
-    [-3.1, 4.1, -6.8, 1.2],
-    [0.8, 4.25, -5.6, 0.8],
-    [2.9, 4.05, -8.4, 1.15],
-    [-1.4, 4.1, -9.8, 1.0],
-    [1.6, 4.0, -10.4, 0.9],
-    [-0.5, 4.2, -2.5, 0.72],
+    [-1.8, 4.5, -3.4, 0.95],
+    [2.1, 4.55, -8.8, 1.05],
+    [-4.2, 4.45, -14.2, 1.2],
+    [-8.6, 4.4, -12.0, 1.0],
+    [8.8, 4.4, -14.4, 1.05],
+    [3.8, 4.4, -22.2, 1.15],
+    [-2.8, 4.45, -26.5, 1.05],
+    [2.2, 4.35, -30.8, 0.95],
   ];
   for (const [x, y, z, sc] of stalactites) {
     const st = new THREE.Mesh(stalactiteGeo, darkInteriorMat);
@@ -4456,18 +4606,124 @@ function buildMountainCaveInterior(
     bone.add(shaft, endL, endR);
     carcass.add(bone);
   }
+  carcass.position.set(-0.2, 0.08, -28.4);
+  carcass.rotation.y = 0.25;
   g.add(carcass);
 
-  // 7. Moody Cave Interior Lighting (cool daylight bounce at mouth + dim mossy cave fill inside)
-  const mouthBounce = new THREE.PointLight('#82ACD4', 3.4, 15, 1.5);
-  mouthBounce.position.set(0, 3.1, -2.6);
+  // 7. Moody Cave Interior Lighting (cool daylight bounce at mouth + crystal/sanctum fills)
+  const mouthBounce = new THREE.PointLight('#82ACD4', 3.4, 16, 1.5);
+  mouthBounce.position.set(0, 3.1, -2.2);
   g.add(mouthBounce);
 
-  const chamberFill = new THREE.PointLight('#9AB89A', 2.8, 13, 1.5);
-  chamberFill.position.set(0.3, 2.3, -7.4);
-  g.add(chamberFill);
+  const hubFill = new THREE.PointLight('#FFAA5C', 2.8, 16, 1.4);
+  hubFill.position.set(0, 3.2, -13.0);
+  g.add(hubFill);
+
+  const grottoCrystalLight = new THREE.PointLight('#4FE3FF', 3.2, 13, 1.4);
+  grottoCrystalLight.position.set(-9.2, 2.3, -13.0);
+  g.add(grottoCrystalLight);
 
   return g;
+}
+
+function buildRiverFishGroup(
+  terrain: TerrainData,
+  islandGroup: THREE.Group,
+  _timeUniform: { value: number }
+): RiverFishHandle[] {
+  const handles: RiverFishHandle[] = [];
+  const riverBody = (terrain.waterBodies ?? []).find(
+    (wb) => (wb.kind === 'river' || wb.kind === 'stream') && (wb.points?.length ?? 0) >= 2
+  );
+  const pts: [number, number][] =
+    riverBody?.points && riverBody.points.length >= 2
+      ? riverBody.points
+      : [
+          [-58, -12],
+          [-26, -15],
+          [0, -14],
+          [26, -11],
+          [58, -14],
+        ];
+
+  const fishBodyGeo = new THREE.SphereGeometry(0.16, 8, 6);
+  fishBodyGeo.scale(0.55, 0.72, 1.85);
+  const tailGeo = new THREE.ConeGeometry(0.11, 0.22, 4);
+  tailGeo.rotateX(-Math.PI / 2);
+  const finGeo = new THREE.ConeGeometry(0.06, 0.14, 4);
+  finGeo.rotateX(Math.PI * 0.2);
+
+  const fishPalette = ['#E27B3E', '#D99B38', '#C65B3B', '#E8B84B'];
+  const fishMats = fishPalette.map(
+    (hex) => new THREE.MeshStandardMaterial({ color: hex, roughness: 0.32, metalness: 0.1 })
+  );
+
+  const count = 10;
+  for (let i = 0; i < count; i++) {
+    const grp = new THREE.Group();
+    const mat = fishMats[i % fishMats.length];
+    const body = new THREE.Mesh(fishBodyGeo, mat);
+    const dorsal = new THREE.Mesh(finGeo, mat);
+    dorsal.position.set(0, 0.12, -0.02);
+    const tailGroup = new THREE.Group();
+    tailGroup.position.set(0, 0, -0.26);
+    const tail = new THREE.Mesh(tailGeo, mat);
+    tail.position.z = -0.08;
+    tailGroup.add(tail);
+
+    grp.add(body, dorsal, tailGroup);
+    grp.scale.setScalar(0.85 + (i % 3) * 0.18);
+    islandGroup.add(grp);
+
+    handles.push({
+      group: grp,
+      tailGroup,
+      riverPoints: pts,
+      baseProgress: (i / count) * 0.92 + 0.04,
+      speed: (i % 2 === 0 ? 1 : -1) * (0.014 + (i % 4) * 0.004),
+      lateralOffset: ((i % 3) - 1) * 1.15,
+      depthY: IslandTerrain.waterLevel - (0.34 + (i % 3) * 0.1),
+      phase: i * 1.37,
+    });
+  }
+  return handles;
+}
+
+export function updateRiverFishAnimations(fishList: RiverFishHandle[] | undefined, elapsedTime: number): void {
+  if (!fishList || fishList.length === 0) return;
+  for (let i = 0; i < fishList.length; i++) {
+    const f = fishList[i];
+    const pts = f.riverPoints;
+    const segCount = pts.length - 1;
+    if (segCount < 1) continue;
+
+    let t = (f.baseProgress + elapsedTime * f.speed) % 1;
+    if (t < 0) t += 1;
+    // Ping-pong smoothly so fish never teleport across river ends
+    const ping = t <= 0.5 ? t * 2 : 2 - t * 2;
+    const dirSign = t <= 0.5 ? 1 : -1;
+
+    const scaled = ping * segCount;
+    const segIdx = Math.min(segCount - 1, Math.max(0, Math.floor(scaled)));
+    const frac = scaled - segIdx;
+    const p0 = pts[segIdx];
+    const p1 = pts[segIdx + 1];
+
+    const dx = p1[0] - p0[0];
+    const dz = p1[1] - p0[1];
+    const len = Math.max(0.001, Math.hypot(dx, dz));
+    const nx = -dz / len;
+    const nz = dx / len;
+
+    const latWave = Math.sin(elapsedTime * 1.4 + f.phase) * 0.55;
+    const wx = p0[0] + dx * frac + nx * (f.lateralOffset + latWave);
+    const wz = p0[1] + dz * frac + nz * (f.lateralOffset + latWave);
+    const wy = f.depthY + Math.sin(elapsedTime * 2.2 + f.phase) * 0.05;
+
+    f.group.position.set(wx, wy, wz);
+    f.group.rotation.y = Math.atan2(dx * dirSign, dz * dirSign) + Math.sin(elapsedTime * 4.5 + f.phase) * 0.08;
+    f.tailGroup.rotation.y = Math.sin(elapsedTime * 11.5 + f.phase) * 0.42;
+  }
 }
 
 interface WaterBodyUniformBundle {
@@ -4781,7 +5037,9 @@ function buildDirtPebblesGroup(
 function buildCavesGroup(
   level: GameLevel,
   caves: CaveGrotto[],
-  timeUniform: { value: number }
+  timeUniform: { value: number },
+  flameMeshes: IslandSceneHandles['flameMeshes'],
+  torchLights: TorchLightHandle[]
 ): THREE.Group {
   const group = new THREE.Group();
   const uCaveTime = asIslandFloatUniformNode(timeUniform, 0);
@@ -4902,8 +5160,10 @@ function buildCavesGroup(
 
   const attachInteriorSpring = (
     parent: THREE.Group,
-    depthSpan: number,
+    cx: number,
+    cz: number,
     widthSpan: number,
+    depthSpan: number,
     flow: number
   ) => {
     const springMat = new MeshStandardNodeMaterial({
@@ -4919,11 +5179,11 @@ function buildCavesGroup(
       return vec4(vec3(0.18, 0.68, 0.88).add(vec3(0.1, 0.14, 0.16).mul(shimmer)), 0.84);
     })();
     const creek = new THREE.Mesh(
-      new THREE.PlaneGeometry(widthSpan * 0.46, depthSpan * 0.95, 8, 12),
+      new THREE.PlaneGeometry(widthSpan, depthSpan, 8, 12),
       springMat
     );
     creek.rotation.x = -Math.PI / 2;
-    creek.position.set(0, 0.06, -depthSpan * 0.35);
+    creek.position.set(cx, 0.06, cz);
     parent.add(creek);
   };
 
@@ -4937,31 +5197,40 @@ function buildCavesGroup(
       roughness: 0.2,
     });
 
-    // Primary reachable Mountain-Base Cave with full enterable interior
+    // Primary reachable Mountain-Base Cave with full multi-room enterable interior
     if (!builtMainMountainCave && Math.hypot(cave.x - MountainCave.x, cave.z - MountainCave.z) < 6) {
       builtMainMountainCave = true;
       const mats = resolveCaveMaterialPair(cave.x, cave.z);
-      const mainG = buildMountainCaveInterior(mats.stone, mats.dark, mossMat, mossBrightMat);
+      const mainG = buildMountainCaveInterior(
+        mats.stone,
+        mats.dark,
+        mossMat,
+        mossBrightMat,
+        flameMeshes,
+        torchLights
+      );
       mainG.scale.set(
         cave.entranceWidth ?? 1,
         cave.entranceHeight ?? 1,
         cave.cavityDepth ?? 1
       );
+      // West Crystal Grotto glowing clusters
       if ((cave.crystalDensity ?? 0.5) > 0.1) {
-        const extraCrystals = Math.round((cave.crystalDensity ?? 0.5) * 6);
+        const extraCrystals = Math.max(6, Math.round((cave.crystalDensity ?? 0.5) * 10));
         for (let ci = 0; ci < extraCrystals; ci++) {
-          const crys = new THREE.Mesh(new THREE.OctahedronGeometry(0.28 + (ci % 3) * 0.08, 0), crystalMat);
+          const crys = new THREE.Mesh(new THREE.OctahedronGeometry(0.28 + (ci % 3) * 0.09, 0), crystalMat);
           crys.position.set(
-            (ci % 2 === 0 ? -1 : 1) * (3.1 + (ci % 3) * 0.45),
-            0.7 + (ci % 2) * 0.35,
-            -2.4 - ci * 1.15
+            -7.5 - (ci % 4) * 1.1,
+            0.55 + (ci % 2) * 0.35,
+            -10.2 - ((ci * 1.45) % 5.5)
           );
-          crys.scale.set(0.7, 1.5, 0.7);
+          crys.scale.set(0.75, 1.6, 0.75);
           mainG.add(crys);
         }
       }
-      if (cave.hasSpring) {
-        attachInteriorSpring(mainG, 10.5, 4.2, cave.springFlow ?? 0.75);
+      // East Underground Spring Vault water pool
+      if (cave.hasSpring !== false) {
+        attachInteriorSpring(mainG, 9.4, -13.0, 3.8, 5.4, cave.springFlow ?? 0.75);
       }
       tagCaveId(mainG, cave.id);
       group.add(mainG);
@@ -5060,7 +5329,7 @@ function buildCavesGroup(
 
     // Optional Interior Spring / Creek
     if (cave.hasSpring) {
-      attachInteriorSpring(g, 2.2 * cd, 1.8 * cw, cave.springFlow ?? 0.75);
+      attachInteriorSpring(g, 0, -0.75 * cd, 1.8 * cw, 2.2 * cd, cave.springFlow ?? 0.75);
     }
 
     tagCaveId(g, cave.id);
@@ -5543,9 +5812,9 @@ function createScatterBuildPlan(
       run: () => {
     const trunkGeo = normalizeGeometryForBatch(
       createOrganicTrunkGeometry({
-        rTop: 0.11,
-        rBottom: 0.34,
-        height: 2.9,
+        rTop: 0.12,
+        rBottom: 0.38,
+        height: 6.0,
         yOffset: -0.35,
         radialSegs: 14,
         heightSegs: 8,
@@ -5559,20 +5828,20 @@ function createScatterBuildPlan(
       }),
       0
     );
-    const t1Raw = createDetailedPineTierGeometry(1.62, 1.52, 11, 1);
-    t1Raw.translate(0, 2.15, 0);
-    const t2Raw = createDetailedPineTierGeometry(1.38, 1.42, 11, 2);
+    const t1Raw = createDetailedPineTierGeometry(1.52, 1.48, 11, 1);
+    t1Raw.translate(0, 5.25, 0);
+    const t2Raw = createDetailedPineTierGeometry(1.28, 1.38, 11, 2);
     t2Raw.rotateY(0.29);
-    t2Raw.translate(0, 2.95, 0);
-    const t3Raw = createDetailedPineTierGeometry(1.12, 1.32, 10, 3);
+    t2Raw.translate(0, 6.05, 0);
+    const t3Raw = createDetailedPineTierGeometry(1.04, 1.28, 10, 3);
     t3Raw.rotateY(0.61);
-    t3Raw.translate(0, 3.7, 0);
-    const t4Raw = createDetailedPineTierGeometry(0.84, 1.18, 9, 4);
+    t3Raw.translate(0, 6.8, 0);
+    const t4Raw = createDetailedPineTierGeometry(0.78, 1.14, 9, 4);
     t4Raw.rotateY(0.95);
-    t4Raw.translate(0, 4.38, 0);
-    const t5Raw = createDetailedPineTierGeometry(0.52, 0.98, 7, 5);
+    t4Raw.translate(0, 7.45, 0);
+    const t5Raw = createDetailedPineTierGeometry(0.48, 0.94, 7, 5);
     t5Raw.rotateY(0.42);
-    t5Raw.translate(0, 4.98, 0);
+    t5Raw.translate(0, 8.05, 0);
 
     const tierGeos = [t1Raw, t2Raw, t3Raw, t4Raw, t5Raw].map((g) =>
       normalizeGeometryForBatch(g, 0.045, 0)
@@ -5607,7 +5876,7 @@ function createScatterBuildPlan(
       const { y } = groundAt(item.x, item.z, 0.25);
       dummy.position.set(item.x, y, item.z);
       dummy.rotation.set(0, item.rotation, 0);
-      dummy.scale.setScalar(item.size * 1.15);
+      dummy.scale.setScalar(Math.max(1.02, item.size * 1.16));
       dummy.updateMatrix();
       const mat4 = dummy.matrix.clone();
 
@@ -5679,9 +5948,9 @@ function createScatterBuildPlan(
       run: () => {
     const trunkGeo = normalizeGeometryForBatch(
       createOrganicTrunkGeometry({
-        rTop: 0.22,
-        rBottom: 0.44,
-        height: 2.5,
+        rTop: 0.24,
+        rBottom: 0.48,
+        height: 5.75,
         yOffset: -0.35,
         radialSegs: 14,
         heightSegs: 9,
@@ -5693,24 +5962,24 @@ function createScatterBuildPlan(
         uvScaleU: 2.2,
         uvScaleV: 2.4,
         branches: [
-          { startY: 1.55, length: 1.25, rBottom: 0.16, rTop: 0.075, tilt: 0.62, yaw: 0.55, bend: 0.09 },
-          { startY: 1.65, length: 1.18, rBottom: 0.15, rTop: 0.07, tilt: 0.58, yaw: 2.65, bend: 0.08 },
-          { startY: 1.75, length: 1.08, rBottom: 0.14, rTop: 0.065, tilt: 0.52, yaw: -1.45, bend: 0.07 },
+          { startY: 4.55, length: 1.28, rBottom: 0.16, rTop: 0.075, tilt: 0.56, yaw: 0.55, bend: 0.09 },
+          { startY: 4.7, length: 1.2, rBottom: 0.15, rTop: 0.07, tilt: 0.52, yaw: 2.65, bend: 0.08 },
+          { startY: 4.85, length: 1.1, rBottom: 0.14, rTop: 0.065, tilt: 0.48, yaw: -1.45, bend: 0.07 },
         ],
       }),
       0
     );
 
-    const crown1Geo = createSculptedCanopyLobeGeometry(1.36, 1.24, 0.88, 1.18, 1.2, 20, 14, 2.8, 1.9);
-    crown1Geo.translate(0.05, 3.18, 0.02);
-    const crown2Geo = createSculptedCanopyLobeGeometry(1.04, 1.12, 0.86, 1.06, 2.7, 18, 12, 2.4, 1.7);
-    crown2Geo.translate(0.86, 2.76, 0.52);
-    const crown3Geo = createSculptedCanopyLobeGeometry(0.98, 1.08, 0.88, 1.04, 4.1, 18, 12, 2.4, 1.7);
-    crown3Geo.translate(-0.82, 2.82, -0.44);
-    const crown4Geo = createSculptedCanopyLobeGeometry(0.92, 1.08, 0.84, 1.06, 5.6, 16, 12, 2.3, 1.6);
-    crown4Geo.translate(-0.28, 2.68, 0.86);
-    const crown5Geo = createSculptedCanopyLobeGeometry(0.86, 1.1, 0.88, 1.04, 7.3, 16, 12, 2.2, 1.6);
-    crown5Geo.translate(0.32, 3.68, -0.26);
+    const crown1Geo = createSculptedCanopyLobeGeometry(1.24, 1.18, 0.88, 1.12, 1.2, 20, 14, 2.8, 1.9);
+    crown1Geo.translate(0.05, 6.28, 0.02);
+    const crown2Geo = createSculptedCanopyLobeGeometry(0.96, 1.08, 0.86, 1.02, 2.7, 18, 12, 2.4, 1.7);
+    crown2Geo.translate(0.84, 5.86, 0.5);
+    const crown3Geo = createSculptedCanopyLobeGeometry(0.92, 1.04, 0.88, 1.0, 4.1, 18, 12, 2.4, 1.7);
+    crown3Geo.translate(-0.8, 5.92, -0.42);
+    const crown4Geo = createSculptedCanopyLobeGeometry(0.86, 1.04, 0.84, 1.02, 5.6, 16, 12, 2.3, 1.6);
+    crown4Geo.translate(-0.28, 5.78, 0.82);
+    const crown5Geo = createSculptedCanopyLobeGeometry(0.82, 1.06, 0.88, 1.0, 7.3, 16, 12, 2.2, 1.6);
+    crown5Geo.translate(0.32, 6.78, -0.26);
 
     const crownGeos = [crown1Geo, crown2Geo, crown3Geo, crown4Geo, crown5Geo].map((g) =>
       normalizeGeometryForBatch(g, 0.045, 0)
@@ -5745,7 +6014,7 @@ function createScatterBuildPlan(
       const { y } = groundAt(item.x, item.z, 0.25);
       dummy.position.set(item.x, y, item.z);
       dummy.rotation.set(0, item.rotation, 0);
-      dummy.scale.setScalar(item.size * 1.15);
+      dummy.scale.setScalar(Math.max(1.02, item.size * 1.16));
       dummy.updateMatrix();
       const mat4 = dummy.matrix.clone();
 
@@ -5816,9 +6085,9 @@ function createScatterBuildPlan(
       run: () => {
     const trunkGeo = normalizeGeometryForBatch(
       createOrganicTrunkGeometry({
-        rTop: 0.095,
-        rBottom: 0.22,
-        height: 3.15,
+        rTop: 0.1,
+        rBottom: 0.25,
+        height: 6.15,
         yOffset: -0.25,
         radialSegs: 12,
         heightSegs: 9,
@@ -5830,20 +6099,20 @@ function createScatterBuildPlan(
         uvScaleU: 1.65,
         uvScaleV: 2.8,
         branches: [
-          { startY: 1.95, length: 1.15, rBottom: 0.085, rTop: 0.038, tilt: 0.44, yaw: 0.85, bend: 0.08 },
-          { startY: 2.2, length: 0.98, rBottom: 0.075, rTop: 0.035, tilt: 0.4, yaw: -2.1, bend: 0.07 },
+          { startY: 4.85, length: 1.18, rBottom: 0.085, rTop: 0.038, tilt: 0.44, yaw: 0.85, bend: 0.08 },
+          { startY: 5.08, length: 1.02, rBottom: 0.075, rTop: 0.035, tilt: 0.4, yaw: -2.1, bend: 0.07 },
         ],
       }),
       0
     );
-    const leaf1Geo = createSculptedCanopyLobeGeometry(0.98, 0.96, 1.24, 0.94, 3.1, 18, 12, 2.8, 2.0);
-    leaf1Geo.translate(0.12, 3.45, -0.04);
-    const leaf2Geo = createSculptedCanopyLobeGeometry(0.74, 0.98, 1.12, 0.96, 5.4, 16, 12, 2.4, 1.8);
-    leaf2Geo.translate(0.56, 2.9, -0.34);
-    const leaf3Geo = createSculptedCanopyLobeGeometry(0.68, 0.95, 1.08, 0.94, 8.2, 16, 12, 2.3, 1.7);
-    leaf3Geo.translate(-0.48, 3.02, 0.36);
-    const leaf4Geo = createSculptedCanopyLobeGeometry(0.62, 0.92, 1.18, 0.92, 11.1, 14, 10, 2.2, 1.7);
-    leaf4Geo.translate(0.06, 4.18, 0.08);
+    const leaf1Geo = createSculptedCanopyLobeGeometry(0.92, 0.94, 1.2, 0.92, 3.1, 18, 12, 2.8, 2.0);
+    leaf1Geo.translate(0.12, 6.42, -0.04);
+    const leaf2Geo = createSculptedCanopyLobeGeometry(0.7, 0.96, 1.08, 0.94, 5.4, 16, 12, 2.4, 1.8);
+    leaf2Geo.translate(0.54, 5.9, -0.34);
+    const leaf3Geo = createSculptedCanopyLobeGeometry(0.66, 0.93, 1.04, 0.92, 8.2, 16, 12, 2.3, 1.7);
+    leaf3Geo.translate(-0.46, 6.0, 0.36);
+    const leaf4Geo = createSculptedCanopyLobeGeometry(0.6, 0.9, 1.14, 0.9, 11.1, 14, 10, 2.2, 1.7);
+    leaf4Geo.translate(0.06, 7.12, 0.08);
 
     const leafGeos = [leaf1Geo, leaf2Geo, leaf3Geo, leaf4Geo].map((g) =>
       normalizeGeometryForBatch(g, 0.065, 0)
@@ -5878,7 +6147,7 @@ function createScatterBuildPlan(
       const { y } = groundAt(item.x, item.z, 0.2);
       dummy.position.set(item.x, y, item.z);
       dummy.rotation.set(0, item.rotation, 0);
-      dummy.scale.setScalar(item.size * 1.15);
+      dummy.scale.setScalar(Math.max(1.02, item.size * 1.16));
       dummy.updateMatrix();
       const mat4 = dummy.matrix.clone();
 
@@ -6864,10 +7133,10 @@ function buildDistantVista(
           vistaGroup.add(grp);
           return;
         }
-        const pTrunk = new THREE.CylinderGeometry(0.18, 0.38, 2.5, 9);
-        pTrunk.translate(0, 0.92, 0);
+        const pTrunk = new THREE.CylinderGeometry(0.18, 0.38, 3.4, 9);
+        pTrunk.translate(0, 1.38, 0);
         const pCone = createDetailedPineTierGeometry(1.82, 4.4, 9, 2);
-        pCone.translate(0, 3.35, 0);
+        pCone.translate(0, 4.35, 0);
         const trunkEntries: BatchInstanceSpec[] = [];
         const crownEntries: BatchInstanceSpec[] = [];
         pinePts.forEach((p, idx) => {
@@ -6916,10 +7185,10 @@ function buildDistantVista(
           vistaGroup.add(grp);
           return;
         }
-        const oTrunk = new THREE.CylinderGeometry(0.26, 0.45, 2.3, 9);
-        oTrunk.translate(0, 0.9, 0);
+        const oTrunk = new THREE.CylinderGeometry(0.26, 0.45, 3.3, 9);
+        oTrunk.translate(0, 1.38, 0);
         const oCrown = createSculptedCanopyLobeGeometry(1.58, 1.2, 0.95, 1.15, 2.4, 12, 9, 2.4, 1.7);
-        oCrown.translate(0, 2.95, 0);
+        oCrown.translate(0, 3.95, 0);
         const trunkEntries: BatchInstanceSpec[] = [];
         const crownEntries: BatchInstanceSpec[] = [];
         oakPts.forEach((p, idx) => {
@@ -6967,10 +7236,10 @@ function buildDistantVista(
             });
             vistaGroup.add(grp);
           } else {
-            const bTrunk = new THREE.CylinderGeometry(0.13, 0.24, 3.0, 9);
-            bTrunk.translate(0, 1.2, 0);
+            const bTrunk = new THREE.CylinderGeometry(0.13, 0.24, 3.9, 9);
+            bTrunk.translate(0, 1.65, 0);
             const bCrown = createSculptedCanopyLobeGeometry(1.16, 0.95, 1.32, 0.95, 4.2, 12, 9, 2.4, 1.8);
-            bCrown.translate(0, 3.35, 0);
+            bCrown.translate(0, 4.35, 0);
             const trunkEntries: BatchInstanceSpec[] = [];
             const crownEntries: BatchInstanceSpec[] = [];
             birchPts.forEach((p, idx) => {
@@ -7181,10 +7450,10 @@ function buildDistantVista(
                 [1.1, 2.9, 0.85],
               ]) {
                 const trunk = new THREE.Mesh(
-                  new THREE.CylinderGeometry(0.32 * ts * treeScaleMult, 0.52 * ts * treeScaleMult, 3.6 * ts * treeScaleMult, 10),
+                  new THREE.CylinderGeometry(0.32 * ts * treeScaleMult, 0.52 * ts * treeScaleMult, 4.6 * ts * treeScaleMult, 10),
                   tMat
                 );
-                trunk.position.set(tx, 1.5 * ts * treeScaleMult, tz);
+                trunk.position.set(tx, 2.0 * ts * treeScaleMult, tz);
                 const crown =
                   item.kind === 'pineCluster'
                     ? new THREE.Mesh(
@@ -7195,7 +7464,7 @@ function buildDistantVista(
                         createSculptedCanopyLobeGeometry(2.4 * ts * treeScaleMult, 1.15, 0.95, 1.1, 2.2, 12, 9, 2.4, 1.8),
                         cMat
                       );
-                crown.position.set(tx, (item.kind === 'pineCluster' ? 5.1 : 4.2) * ts * treeScaleMult, tz);
+                crown.position.set(tx, (item.kind === 'pineCluster' ? 6.1 : 5.2) * ts * treeScaleMult, tz);
                 itemGroup.add(trunk, crown);
               }
             }

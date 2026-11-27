@@ -3918,13 +3918,13 @@ export function applyRpgAiToStore(
         treeGeneratorMode: 'ezTree',
         barkStyle: 'rough',
         barkColor: '#4E3928',
-        trunkHeight: 5.4,
+        trunkHeight: 5.8,
         trunkThickness: 0.95,
         trunkLean: 0.28,
         majorBranchCount: 6,
         majorBranchLength: 2.3,
         majorBranchSpread: 1.25,
-        majorBranchDroop: 0.35,
+        majorBranchDroop: 0.25,
         gnarlAmount: 0.55,
         rootMode: 'all',
         rootCount: 7,
@@ -3933,12 +3933,13 @@ export function applyRpgAiToStore(
         silhouette: 'umbrella',
         minPuffs: 7,
         maxPuffs: 12,
-        canopyHeight: 3.4,
+        canopyHeight: 5.5,
         basePuffSize: 2.6,
         foliageBaseColor: '#1E7A44',
         canopyLeavesEnabled: true,
         canopyLeafSeason: 'summer',
         canopyLeafColor: '#22C55E',
+        canopyLeafSize: 0.19,
         fruitEnabled: true,
         fruitCount: 18,
         fruitSize: 0.28,
@@ -3954,7 +3955,7 @@ export function applyRpgAiToStore(
         treeGeneratorMode: 'ezTree',
         barkStyle: 'knotty',
         barkColor: '#3B2A1E',
-        trunkHeight: 6.4,
+        trunkHeight: 6.6,
         trunkThickness: 1.35,
         trunkLean: 0.18,
         majorBranchCount: 6,
@@ -3968,12 +3969,13 @@ export function applyRpgAiToStore(
         silhouette: 'dome',
         minPuffs: 9,
         maxPuffs: 14,
-        canopyHeight: 5.2,
+        canopyHeight: 6.4,
         basePuffSize: 3.1,
         foliageBaseColor: '#1B5E37',
         canopyLeavesEnabled: true,
         canopyLeafSeason: 'mystic',
         canopyLeafColor: '#2E7D47',
+        canopyLeafSize: 0.19,
       };
     }
 
@@ -4081,7 +4083,7 @@ export function applyRpgAiToStore(
           ? [14, 11]
           : bKind === 'temple' || bKind === 'shrine'
           ? [0, -33]
-          : [-15, -2];
+          : [-16.5, -1.5];
       let bx = num(b.x, defaultPos[0], -45, 45);
       let bz = num(b.z, defaultPos[1], -45, 36);
       // Quality safeguard: keep buildings out of the river gorge channel (z in [-21, -7]) and central bridge road
@@ -4107,35 +4109,73 @@ export function applyRpgAiToStore(
           ? 'Walk-In Modern Lodge Hall'
           : `Walk-In ${bKind.charAt(0).toUpperCase() + bKind.slice(1)}`;
       const pt = atWorld(bx, bz);
+      const bRot = !isInterior && bx < -8 && bz < 6 ? 90 : !isInterior && bx > 8 && bz < 6 ? -90 : 0;
       const propEnt = createEntity('prop', bName, pt.x, pt.y, {
         notes: `RPG Building: ${bKind}`,
-        rotation: 0, // Keep front door (+Z) accessible and facing south toward the player approach
+        rotation: bRot, // Face front door toward the village street instead of adjacent building walls
         scale: Math.max(1.0, num(b.scale, 1.0, 1.0, 1.28)),
       });
       newEntities.push(propEnt);
     });
 
-    // 3. Props & Flora (fences, well, chickens, tethered horses, hanging lamp posts, yard-raking villager, road villagers, tropical trees, exotic plants, hollow magic trees, weathered stone paths, rope bridges, lanterns, rune puzzles)
+    // 3. Props & Flora (stoneArchBridge, peak ropeBridge, watermill, windmill, marketStall, crossroadsSignpost, fences, well, chickens, pasture cows/pigs, tethered horses, hanging lamp posts, yard-raking villager, road villagers, tropical trees, exotic plants, hollow magic trees, weathered stone paths, lanterns, rune puzzles)
     const rawProps = Array.isArray(raw.propsAndFlora) ? raw.propsAndFlora : [];
-    let hasRopeBridge = false;
+    let hasRiverBridge = false;
+    let hasPeakRopeBridge = false;
     let hasTetheredHorses = false;
     let hasRakingVillager = false;
     let hasHangingLamps = false;
+    let hasWatermill = false;
+    let hasWindmill = false;
+    let hasMarketStall = false;
+    let hasCrossroadsSignpost = false;
     let fenceCount = 0;
 
-    rawProps.slice(0, 28).forEach((pRaw, idx) => {
+    rawProps.slice(0, 32).forEach((pRaw, idx) => {
       if (!pRaw || typeof pRaw !== 'object') return;
       const p = pRaw as Record<string, unknown>;
       const kind = typeof p.kind === 'string' ? p.kind : 'lantern';
-      const pName = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Prop ${idx + 1}`;
+      const defaultPropLabel =
+        kind === 'stoneArchBridge'
+          ? 'Ancient Stone Arch Bridge'
+          : kind === 'ropeBridge'
+          ? 'Rope & Wooden Slat Bridge'
+          : kind === 'watermill'
+          ? 'River Watermill & Timber Sawmill'
+          : kind === 'windmill'
+          ? 'Hilltop Timber Windmill'
+          : kind === 'marketStall'
+          ? 'Oakhollow Market Stall'
+          : kind === 'crossroadsSignpost'
+          ? 'Forest Crossroads Signpost'
+          : kind === 'pastureCow'
+          ? 'Pasture Dairy Cow'
+          : kind === 'pasturePig'
+          ? 'Pasture Pig'
+          : `Prop ${idx + 1}`;
+      const pName = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : defaultPropLabel;
       let px = num(p.x, (idx % 5 - 2) * 10, -55, 55);
       let pz = num(p.z, Math.floor(idx / 5) * 10 - 20, -55, 55);
 
-      if (kind === 'ropeBridge') {
-        hasRopeBridge = true;
+      if (kind === 'stoneArchBridge') {
+        hasRiverBridge = true;
         px = 0;
         pz = -14;
+      } else if (kind === 'ropeBridge') {
+        if (Math.hypot(px + 32, pz + 33) < 14) {
+          hasPeakRopeBridge = true;
+          px = -32;
+          pz = -33;
+        } else {
+          hasRiverBridge = true;
+          px = 0;
+          pz = -14;
+        }
       }
+      if (kind === 'watermill') hasWatermill = true;
+      if (kind === 'windmill') hasWindmill = true;
+      if (kind === 'marketStall') hasMarketStall = true;
+      if (kind === 'crossroadsSignpost') hasCrossroadsSignpost = true;
       if (kind === 'tetheredHorses') hasTetheredHorses = true;
       if (kind === 'rakingVillager') hasRakingVillager = true;
       if (kind === 'hangingLampPost') hasHangingLamps = true;
@@ -4147,29 +4187,52 @@ export function applyRpgAiToStore(
           createEntity('npc', pName.includes('Prop') ? `Village Traveler ${idx + 1}` : pName, pt.x, pt.y, {
             brain: 'wander',
             speed: 1.3,
-            dialogue: 'Greetings traveler! You can open the Tavern and Blacksmith doors with E and walk right inside.',
+            dialogue: 'Greetings traveler! You can open the Tavern and Blacksmith doors with E and walk inside, or explore the Cursed Caves up the mountain trail.',
             notes: 'RPG Villager: roadWalker',
           })
         );
         return;
       }
 
+      const isBridge = kind === 'ropeBridge' || kind === 'stoneArchBridge';
       const isLight = kind === 'lantern';
       const isPuzzle = kind === 'runePuzzle';
       const ent = createEntity(isLight ? 'light' : isPuzzle ? 'puzzle' : 'prop', pName, pt.x, pt.y, {
         notes: isLight ? 'RPG Lantern: volumetric' : `RPG Prop: ${kind}`,
-        rotation: kind === 'ropeBridge' ? 0 : num(p.rotationDeg, 0, -180, 180),
-        scale: kind === 'ropeBridge' ? 1.0 : num(p.scale, 1.0, 0.85, 1.5),
+        rotation: isBridge ? 0 : num(p.rotationDeg, 0, -180, 180),
+        scale: isBridge ? 1.0 : num(p.scale, 1.0, 0.85, 1.5),
       });
       newEntities.push(ent);
     });
 
     // Under-the-hood Quality Control Safeguards:
-    // A. Always place the walkable Rope & Wooden Slat Bridge across the Emerald Gorge River at (0, -14)
-    if (!isInterior && !modifyExisting && !hasRopeBridge) {
+    // A. Ensure a real walkable bridge crosses the Emerald Gorge River at (0, -14)
+    if (!isInterior && !modifyExisting && !hasRiverBridge) {
+      const useRopeRiver = scenarioHint === 'jungleRuins' || scenarioHint === 'deepWoodedForest';
       const bridgePt = atWorld(0, -14);
       newEntities.push(
-        createEntity('prop', 'Rope Bridge with Broken Slat', bridgePt.x, bridgePt.y, {
+        createEntity(
+          'prop',
+          useRopeRiver ? 'Rope Bridge with Broken Slat' : 'Ancient Stone Arch Bridge',
+          bridgePt.x,
+          bridgePt.y,
+          {
+            notes: useRopeRiver ? 'RPG Prop: ropeBridge' : 'RPG Prop: stoneArchBridge',
+            rotation: 0,
+            scale: 1.0,
+          }
+        )
+      );
+    }
+    if (
+      !isInterior &&
+      !modifyExisting &&
+      !hasPeakRopeBridge &&
+      scenarioHint === 'medievalVillage'
+    ) {
+      const peakBridgePt = atWorld(-32, -33);
+      newEntities.push(
+        createEntity('prop', 'Peak-to-Peak Rope & Slat Bridge', peakBridgePt.x, peakBridgePt.y, {
           notes: 'RPG Prop: ropeBridge',
           rotation: 0,
           scale: 1.0,
@@ -4177,14 +4240,60 @@ export function applyRpgAiToStore(
       );
     }
 
-    // B. For Medieval/Coastal Villages, automatically ensure realism props (tethered horses outside tavern, fenced chicken pen, hanging lamp posts, raking villager & strolling villagers)
+    // B. For Medieval/Coastal Villages, automatically ensure realism props (crossroads signpost, market stalls, watermill, windmill, tethered horses, fenced chickens, hanging lamp posts, raking villager & strolling villagers)
     if (
       !isInterior &&
       !modifyExisting &&
       (scenarioHint === 'medievalVillage' || scenarioHint === 'coastalVillage' || placedTavernPos !== null)
     ) {
+      if (!hasCrossroadsSignpost) {
+        const sPt = atWorld(-3.2, 31);
+        newEntities.push(
+          createEntity('prop', 'Forest Crossroads Signpost', sPt.x, sPt.y, {
+            notes: 'RPG Prop: crossroadsSignpost',
+            scale: 1.0,
+            rotation: -12,
+          })
+        );
+      }
+      if (!hasMarketStall) {
+        for (const [mx, mz, mName, mTint, mRot] of [
+          [-6.8, 22, 'Red Striped Orchard Market Stall', '#B91C1C', 18],
+          [6.8, 22, 'Emerald Herb Market Stall', '#15803D', -18],
+        ] as [number, number, string, string, number][]) {
+          const mPt = atWorld(mx, mz);
+          newEntities.push(
+            createEntity('prop', mName, mPt.x, mPt.y, {
+              notes: 'RPG Prop: marketStall',
+              styleTint: mTint,
+              scale: 1.0,
+              rotation: mRot,
+            })
+          );
+        }
+      }
+      if (!hasWatermill && scenarioHint === 'medievalVillage') {
+        const wPt = atWorld(23, -5.5);
+        newEntities.push(
+          createEntity('prop', 'River Watermill & Timber Sawmill', wPt.x, wPt.y, {
+            notes: 'RPG Prop: watermill',
+            scale: 1.0,
+            rotation: 0,
+          })
+        );
+      }
+      if (!hasWindmill && scenarioHint === 'medievalVillage') {
+        const wmPt = atWorld(28, 28);
+        newEntities.push(
+          createEntity('prop', 'Hilltop Timber Windmill', wmPt.x, wmPt.y, {
+            notes: 'RPG Prop: windmill',
+            scale: 1.0,
+            rotation: -28,
+          })
+        );
+      }
       if (!hasTetheredHorses) {
-        const [tx, tz] = placedTavernPos ?? [-14, 12];
+        const [tx, tz] = placedTavernPos ?? [-13, 11];
         const hPt = atWorld(tx + 5.8, tz + 6.8);
         newEntities.push(
           createEntity('prop', 'Tethered Tavern Horses & Hitching Post', hPt.x, hPt.y, {
@@ -4195,7 +4304,7 @@ export function applyRpgAiToStore(
         );
       }
       if (!hasRakingVillager) {
-        const [cx, cz] = placedCottagePos ?? [-15, -2];
+        const [cx, cz] = placedCottagePos ?? [-14, -1];
         const rPt = atWorld(cx + 5.8, cz + 5.2);
         newEntities.push(
           createEntity('prop', 'Villager Raking Yard Leaves', rPt.x, rPt.y, {

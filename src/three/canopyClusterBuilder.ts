@@ -166,7 +166,8 @@ export function generateTreeCanopyLayout(
   const rolledPuffCount = minP + Math.floor(rand() * (maxP - minP + 1));
 
   const heightJitter = (rand() - 0.5) * 2 * config.heightVariation;
-  const crownBaseY = Math.max(0.9, config.canopyHeight + heightJitter);
+  const minCrownBaseY = base ? Math.max(4.45, base.trunkTopY * 0.88) : 4.45;
+  const crownBaseY = Math.max(minCrownBaseY, config.canopyHeight + heightJitter);
 
   const baseHueNorm = config.hueShift / 360;
   const treeHueOffset = (rand() - 0.5) * 2 * (config.hueVariation / 360);
@@ -361,6 +362,9 @@ export function generateTreeCanopyLayout(
       py = THREE.MathUtils.lerp(py, by, branchAttach);
       pz = THREE.MathUtils.lerp(pz, bz, branchAttach);
     }
+
+    const minPuffUndersideY = base ? Math.max(3.25, base.trunkTopY * 0.62) : 3.25;
+    py = Math.max(py, minPuffUndersideY + sy * 0.85);
 
     rawPuffs.push({
       x: px,
@@ -1058,13 +1062,15 @@ function buildConiferCanopyGroup(
   const treeHueJitter = (rand() - 0.5) * 2 * (config.hueVariation / 360);
   const treeValJitter = (rand() - 0.5) * 2 * config.valueVariation;
 
-  // Lowest whorl starts warmly above the trunk base so the flared pine trunk peeks below the bottom skirt
-  const crownStartY = Math.max(
-    0.55,
-    Math.min(base.trunkTopY * 0.68, (config.canopyHeight ?? 1.25) * 0.72)
+  // Lowest whorl starts high above the trunk base so lower forest stays clean and walkable
+  const minCrownStartY = Math.max(3.3, base.trunkTopY * 0.56);
+  const desiredCrownStartY = (config.canopyHeight ?? 3.4) * 0.85 + base.trunkTopY * 0.16;
+  const crownStartY = Math.min(
+    base.trunkTopY * 0.78,
+    Math.max(minCrownStartY, desiredCrownStartY)
   );
-  const crownTopY = base.trunkTopY + 0.65 + scarcity * 0.75;
-  const spanY = Math.max(1.6, crownTopY - crownStartY);
+  const crownTopY = Math.max(crownStartY + 2.6, base.trunkTopY + 1.15 + scarcity * 0.75);
+  const spanY = Math.max(1.8, crownTopY - crownStartY);
 
   // Bidirectional leaf pitch angle:
   // droop = -1.0 -> -1.34 rad (~77 deg upward, nearly vertical!)
@@ -1415,8 +1421,8 @@ function buildBirchLeafCanopyGroup(
   const rand = createTreePrng(hashTreeSeed(`${treeKey}_birch_leaves`, config.seed));
   const group = new THREE.Group();
 
-  const density = THREE.MathUtils.clamp(config.birchLeafDensity ?? 1.35, 0.3, 2.2);
-  const leafSize = THREE.MathUtils.clamp(config.birchLeafSize ?? 1.05, 0.5, 2.0);
+  const density = THREE.MathUtils.clamp(config.birchLeafDensity ?? 1.45, 0.3, 2.2);
+  const leafSize = THREE.MathUtils.clamp((config.birchLeafSize ?? 0.68) * 0.6, 0.24, 0.88);
   const baseLeafColor = new THREE.Color(config.birchLeafColor ?? '#98D14A');
 
   const hueShiftNorm = config.hueShift / 360;
@@ -1432,17 +1438,19 @@ function buildBirchLeafCanopyGroup(
   const leavesPerSprig = Math.max(7, Math.round(13 * density));
   const leafParts: THREE.BufferGeometry[] = [];
   const tmpColor = new THREE.Color();
-  const baseBlade = createLeafBladeGeometry(0.17 * leafSize, 0.28 * leafSize);
+  const baseBlade = createLeafBladeGeometry(0.14 * leafSize, 0.24 * leafSize);
+  const minLeafFloorY = Math.max(3.25, base.trunkTopY * 0.62);
 
   for (const att of attachments) {
     // Cluster-level hue & value shift so each leafy bough reads with vivid autumn/spring variety
     const clusterHue = (rand() - 0.5) * 2 * hueSpreadNorm * 0.85;
     const clusterVal = (rand() - 0.5) * 2 * valSpread * 0.8;
-    const sprigRadius = 0.26 * att.scale * (0.85 + leafSize * 0.25);
+    const sprigRadius = 0.24 * att.scale * (0.85 + leafSize * 0.25);
+    const attY = Math.max(minLeafFloorY, att.pos.y);
 
     for (let l = 0; l < leavesPerSprig; l++) {
       const leafGeo = baseBlade.clone();
-      const s = (0.72 + rand() * 0.65) * att.scale;
+      const s = (0.72 + rand() * 0.6) * att.scale;
       leafGeo.scale(s, s, s);
       leafGeo.rotateX((rand() - 0.42) * 1.45);
       leafGeo.rotateY(rand() * Math.PI * 2);
@@ -1453,7 +1461,7 @@ function buildBirchLeafCanopyGroup(
       const dist = sprigRadius * Math.pow(rand(), 0.6);
       leafGeo.translate(
         att.pos.x + Math.cos(theta) * Math.cos(phi) * dist,
-        att.pos.y + Math.sin(phi) * dist * 0.72,
+        Math.max(minLeafFloorY, attY + Math.sin(phi) * dist * 0.72),
         att.pos.z + Math.sin(theta) * Math.cos(phi) * dist
       );
 
@@ -2205,11 +2213,11 @@ function buildCanopyContourLeavesGroup(
   instMesh.userData.noVertexPaint = true;
 
   const baseLeafColor = new THREE.Color(config.canopyLeafColor ?? '#58B446');
-  const baseSize = THREE.MathUtils.clamp(config.canopyLeafSize ?? 0.34, 0.1, 0.85);
+  const baseSize = THREE.MathUtils.clamp((config.canopyLeafSize ?? 0.22) * 0.58, 0.075, 0.42);
   const sizeRandomness = THREE.MathUtils.clamp(config.canopyLeafSizeRandomness ?? 0.45, 0, 1);
   const hueSpreadNorm = THREE.MathUtils.clamp(config.canopyLeafHueSpread ?? 16, 0, 90) / 360;
   const valueSpread = THREE.MathUtils.clamp(config.canopyLeafValueSpread ?? 0.16, 0, 0.45);
-  const surfaceOffset = THREE.MathUtils.clamp(config.canopyLeafSurfaceOffset ?? 0.08, 0, 0.48);
+  const surfaceOffset = THREE.MathUtils.clamp(config.canopyLeafSurfaceOffset ?? 0.06, 0, 0.36);
   const tiltRandomness = THREE.MathUtils.clamp(config.canopyLeafTiltRandomness ?? 0.48, 0, 1);
   const globalHueNorm = (config.hueShift ?? 0) / 360;
   const globalSatShift = (config.saturationShift ?? 0) * 0.7;
@@ -2706,7 +2714,7 @@ export function buildProceduralCanopyForest(
       fallbackBaseColor,
       { sceneryTextures, weatherWindUniform, detail: 'forest' }
     );
-    const s = item.size * 1.12;
+    const s = Math.max(1.04, item.size * 1.16);
     treeGroup.position.set(item.x, y, item.z);
     treeGroup.rotation.set(0, item.rotation, 0);
     treeGroup.scale.setScalar(s);

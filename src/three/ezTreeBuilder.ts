@@ -428,8 +428,12 @@ export function generateEzBranchGeometry(
   const hVariety = 1 + (rand() - 0.5) * 2 * variety * 0.22;
   const rVariety = 1 + (rand() - 0.5) * 2 * variety * 0.2;
 
-  // Height scaling keeps EZ-Tree proportions harmonized with stylized island scale
-  const heightNormScale = THREE.MathUtils.clamp(config.trunkHeight / 3.0, 0.55, 2.2) * hVariety;
+  const isBushPreset = params.presetId === 'ezBush';
+
+  // Height scaling keeps EZ-Tree proportions harmonized with tall, clear-trunk forest scale
+  const effectiveTrunkHeight = isBushPreset ? config.trunkHeight : Math.max(4.8, config.trunkHeight);
+  const heightNormScale =
+    THREE.MathUtils.clamp(effectiveTrunkHeight / 3.0, isBushPreset ? 0.55 : 1.38, 2.4) * hVariety;
   const thickNormScale = THREE.MathUtils.clamp(config.trunkThickness, 0.4, 2.1) * rVariety;
 
   const levels = THREE.MathUtils.clamp(Math.round(params.levels), 1, 3);
@@ -473,7 +477,10 @@ export function generateEzBranchGeometry(
     {
       origin: new THREE.Vector3(0, -0.14, 0), // seat trunk cleanly slightly below terrain ground
       orientation: new THREE.Euler(0, rand() * Math.PI * 2, 0),
-      length: Math.max(0.8, (params.length[0] ?? 3.0) * heightNormScale),
+      length: Math.max(
+        isBushPreset ? 0.8 : 4.8 * hVariety,
+        (params.length[0] ?? 4.2) * heightNormScale
+      ),
       radius: Math.max(0.08, (params.radius[0] ?? 0.42) * thickNormScale),
       level: 0,
       sectionCount: sectionCounts[0],
@@ -508,12 +515,13 @@ export function generateEzBranchGeometry(
           (detail === 'forest' ? 0.78 : 1.0)
       )
     );
-    const startT = THREE.MathUtils.clamp(params.leafStart ?? 0.12, 0, 0.88);
+    const startT = THREE.MathUtils.clamp(params.leafStart ?? 0.15, 0, 0.88);
     const baseLeafSize = THREE.MathUtils.clamp(
-      (params.leafSize ?? 1.2) * (0.58 + 0.32 * heightNormScale),
-      0.24,
-      2.8
+      (params.leafSize ?? 0.72) * (0.34 + 0.14 * heightNormScale),
+      0.14,
+      1.05
     );
+    const minLeafOriginY = getMinCanopyY();
     const leafAngleRad = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(params.leafAngle ?? 42, 0, 85));
     const isDouble = params.billboard !== 'single';
 
@@ -527,6 +535,7 @@ export function generateEzBranchGeometry(
       const secA = sections[sA];
       const secB = sections[sB];
       const origin = new THREE.Vector3().lerpVectors(secA.origin, secB.origin, alpha);
+      if (!isBushPreset && origin.y < minLeafOriginY) continue;
 
       const qA = new THREE.Quaternion().setFromEuler(secA.orientation);
       const qB = new THREE.Quaternion().setFromEuler(secB.orientation);
@@ -578,6 +587,9 @@ export function generateEzBranchGeometry(
 
         for (const [qx, qy, qz, qu, qv, swayW] of quadVerts) {
           tmpVec.set(qx, qy, qz).applyQuaternion(planeQ).add(origin);
+          if (!isBushPreset && tmpVec.y < minLeafOriginY - 0.2) {
+            tmpVec.y = minLeafOriginY - 0.2;
+          }
           if (tmpVec.y > maxTreeY) maxTreeY = tmpVec.y;
           leafVerts.push(tmpVec.x, tmpVec.y, tmpVec.z);
           leafNormals.push(quadNorm.x, quadNorm.y, quadNorm.z);
@@ -591,7 +603,8 @@ export function generateEzBranchGeometry(
     }
   };
 
-  let trunkTopY = 2.8;
+  let trunkTopY = isBushPreset ? 1.5 : 4.8;
+  const getMinCanopyY = () => (isBushPreset ? -10 : Math.max(3.2, trunkTopY * 0.58));
 
   while (queue.length > 0) {
     const branch = queue.shift()!;
@@ -656,6 +669,12 @@ export function generateEzBranchGeometry(
         // Advance origin along current tangent
         tmpVec.set(0, sectionLength, 0).applyEuler(curOrient);
         curOrigin.add(tmpVec);
+        if (!isBushPreset && lvl > 0) {
+          const minY = getMinCanopyY();
+          if (curOrigin.y < minY) {
+            curOrigin.y = minY;
+          }
+        }
 
         // Apply gnarliness perturbation + helical twist + tropism growth force
         const fudge = (gnarlAmt * 0.55) / Math.max(0.28, Math.sqrt(Math.max(0.04, secRadius)));
@@ -679,6 +698,16 @@ export function generateEzBranchGeometry(
                   forceDir.clone().negate()
                 );
           qSection.slerp(targetQ, THREE.MathUtils.clamp(forceScale * 0.32, 0, 0.45));
+        }
+
+        if (!isBushPreset && lvl > 0) {
+          const minY = getMinCanopyY();
+          tmpVec.set(0, 1, 0).applyQuaternion(qSection);
+          const minDirY =
+            curOrigin.y < minY + 0.55 ? 0.14 : params.presetId === 'ezWillow' ? -0.14 : -0.02;
+          if (tmpVec.y < minDirY) {
+            qSection.slerp(new THREE.Quaternion(), curOrigin.y < minY + 0.55 ? 0.45 : 0.28);
+          }
         }
 
         curOrient.setFromQuaternion(qSection);
@@ -722,7 +751,8 @@ export function generateEzBranchGeometry(
     // Generate child branches or attach leaves
     if (lvl < levels) {
       const childCount = Math.max(0, Math.round(params.children[lvl] ?? 3));
-      const childStartT = THREE.MathUtils.clamp(params.start[lvl] ?? 0.25, 0.05, 0.92);
+      const rawStartT = THREE.MathUtils.clamp(params.start[lvl] ?? 0.25, 0.05, 0.92);
+      const childStartT = !isBushPreset && lvl === 0 ? Math.max(0.66, rawStartT) : rawStartT;
       const splitAngleRad = THREE.MathUtils.degToRad(
         THREE.MathUtils.clamp(params.angle[lvl] ?? 48, 8, 86)
       );
@@ -745,6 +775,9 @@ export function generateEzBranchGeometry(
           sections[s1].origin,
           sAlpha
         );
+        if (!isBushPreset) {
+          childOrigin.y = Math.max(getMinCanopyY(), childOrigin.y);
+        }
         const pQuatA = new THREE.Quaternion().setFromEuler(sections[s0].orientation);
         const pQuatB = new THREE.Quaternion().setFromEuler(sections[s1].orientation);
         const parentQuat = pQuatA.slerp(pQuatB, sAlpha);
@@ -772,6 +805,15 @@ export function generateEzBranchGeometry(
         const radialAxis = new THREE.Vector3(Math.cos(azimuth), 0, Math.sin(azimuth)).normalize();
         const splitQ = new THREE.Quaternion().setFromAxisAngle(radialAxis, tilt);
         const childQuat = parentQuat.clone().multiply(splitQ);
+        if (!isBushPreset) {
+          const childDir = new THREE.Vector3(0, 1, 0).applyQuaternion(childQuat);
+          const minChildY = lvl === 0 ? 0.18 : params.presetId === 'ezWillow' ? -0.08 : 0.04;
+          if (childDir.y < minChildY) {
+            childDir.y = minChildY;
+            childDir.normalize();
+            childQuat.setFromUnitVectors(upVec, childDir);
+          }
+        }
         const childEuler = new THREE.Euler().setFromQuaternion(childQuat);
 
         queue.push({

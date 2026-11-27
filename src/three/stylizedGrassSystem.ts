@@ -49,7 +49,15 @@ import {
   createDriftingCloudShadowNode,
   getSharedBotwUniforms,
 } from './botwStyleUtils';
-import { ensureUpgradedTerrain, getTerrainRadius, IslandTerrain, sampleTerrainHeight } from '../utils/terrain';
+import {
+  ensureUpgradedTerrain,
+  getTerrainRadius,
+  type GrassExclusionRect,
+  IslandTerrain,
+  isInsideMountainCave,
+  sampleTerrainHeight,
+  terrainHasMainMountainCave,
+} from '../utils/terrain';
 import { sampleWorldMapAtWorld } from '../utils/worldMap';
 import { isIOSDevice } from './webglUtils';
 
@@ -58,8 +66,8 @@ export function createDefaultGrassConfig(): GrassFieldConfig {
     enabled: true,
     quality: 'lush',
     viewDistance: 74,
-    bladeHeight: 0.74,
-    bladeWidth: 0.104,
+    bladeHeight: 0.44,
+    bladeWidth: 0.072,
     windWaveStrength: 1.0,
     tipGlow: 0.68,
     interactiveParting: true,
@@ -329,7 +337,8 @@ function populateTerrainAndColorTextures(
   biomeGroundHex: string,
   biomeDetailHex: string,
   bounds?: { minRow: number; maxRow: number; minCol: number; maxCol: number },
-  worldMapCtx?: GrassWorldMapMaskContext
+  worldMapCtx?: GrassWorldMapMaskContext,
+  excludeRects?: GrassExclusionRect[]
 ): void {
   const size = terrain.size;
   const width = size + 1;
@@ -337,6 +346,7 @@ function populateTerrainAndColorTextures(
   const step = (2 * worldRadius) / size;
   const waterLevel = IslandTerrain.waterLevel;
   const caves = terrain.caves ?? [];
+  const hasMainCave = terrainHasMainMountainCave(terrain);
 
   const rStart = bounds ? Math.max(0, bounds.minRow) : 0;
   const rEnd = bounds ? Math.min(size, bounds.maxRow) : size;
@@ -353,6 +363,9 @@ function populateTerrainAndColorTextures(
   const cSnow = new THREE.Color('#E8F3F6');
   const cCobble = new THREE.Color('#9A9589');
   const cDirt = new THREE.Color('#9C784E');
+  const cLeaves = new THREE.Color('#7B4E2D');
+  const cClumpyDirt = new THREE.Color('#4E3724');
+  const cTallGrassPatch = new THREE.Color(terrain.tallGrassPatchColor ?? '#76BD44');
 
   const hGridRStart = Math.max(0, rStart - 1);
   const hGridREnd = Math.min(size, rEnd + 1);
@@ -398,6 +411,7 @@ function populateTerrainAndColorTextures(
       nz /= len;
 
       let grassW = 0;
+      let tallW = 0;
       let totalW = 0;
       let colR = 0;
       let colG = 0;
@@ -411,8 +425,9 @@ function populateTerrainAndColorTextures(
           const nc = Math.max(0, Math.min(size, col + dc));
           const wt = wy * k[dc + 1];
           const layer = terrain.layers[rowOff + nc] ?? 0;
-          const contrib = layer === 0 ? 1.0 : layer === 4 ? 0.88 : 0.0;
+          const contrib = layer === 0 ? 1.0 : layer === 4 ? 0.88 : layer === 9 ? 1.0 : 0.0;
           grassW += contrib * wt;
+          if (layer === 9) tallW += wt;
           totalW += wt;
 
           const lc =
@@ -428,6 +443,12 @@ function populateTerrainAndColorTextures(
               ? cCobble
               : layer === 6
               ? cDirt
+              : layer === 7
+              ? cLeaves
+              : layer === 8
+              ? cClumpyDirt
+              : layer === 9
+              ? cTallGrassPatch
               : cGrass;
           colR += lc.r * wt;
           colG += lc.g * wt;
@@ -436,6 +457,7 @@ function populateTerrainAndColorTextures(
       }
 
       let mask = totalW > 0 ? grassW / totalW : 0;
+      const tallFrac = totalW > 0 ? tallW / totalW : 0;
       const invW = totalW > 0 ? 1 / totalW : 1;
 
       const aboveWater = THREE.MathUtils.smoothstep(h, waterLevel + 0.28, waterLevel + 1.05);
@@ -455,6 +477,26 @@ function populateTerrainAndColorTextures(
         }
       }
 
+      // Exclude 3D grass inside the multi-room MountainCave or walk-in building/bridge footprints
+      if (mask > 0.01 && hasMainCave && isInsideMountainCave(wx, wz)) {
+        mask = 0;
+      }
+      if (mask > 0.01 && excludeRects && excludeRects.length > 0) {
+        for (let ri = 0; ri < excludeRects.length; ri++) {
+          const er = excludeRects[ri];
+          const dxE = wx - er.x;
+          const dzE = wz - er.z;
+          const cE = Math.cos(er.yaw);
+          const sE = Math.sin(er.yaw);
+          const lxE = dxE * cE - dzE * sE;
+          const lzE = dxE * sE + dzE * cE;
+          if (Math.abs(lxE) <= er.hw && Math.abs(lzE) <= er.hd) {
+            mask = 0;
+            break;
+          }
+        }
+      }
+
       const edgeDist = Math.max(Math.abs(wx), Math.abs(wz));
       const insideIsland = 1.0 - THREE.MathUtils.smoothstep(edgeDist, worldRadius - 6.0, worldRadius - 1.2);
       mask *= insideIsland * densityBias;
@@ -468,9 +510,15 @@ function populateTerrainAndColorTextures(
         }
       }
 
+      // Pack [0..1] normal density + up to +0.8 tall-grass patch boost when tallFrac > 0
+      const packedMask =
+        mask > 0.05 && tallFrac > 0.05
+          ? THREE.MathUtils.clamp(mask, 0, 1) + tallFrac * 0.8
+          : THREE.MathUtils.clamp(mask, 0, 1);
+
       const o = idx * 4;
       texData[o] = h;
-      texData[o + 1] = THREE.MathUtils.clamp(mask, 0, 1);
+      texData[o + 1] = packedMask;
       texData[o + 2] = nx * 0.5 + 0.5;
       texData[o + 3] = nz * 0.5 + 0.5;
 
@@ -867,7 +915,8 @@ function createGrassNodeMaterial(opts: {
             const clumpScaledMul = float(1.0).sub(clumpHeightSpan.mul(0.45)).add(clumpHash.y.mul(clumpHeightSpan));
 
             const borderShrink = smoothstep(0.08, 0.65, grassMask);
-            const speciesHeightMul = mix(0.84, 1.48, isCarex);
+            const tallPatchBoost = clamp(grassMask.sub(1.0).div(0.8), 0.0, 1.0);
+            const speciesHeightMul = mix(0.84, 1.48, isCarex).mul(mix(1.0, 1.72, tallPatchBoost));
             const heightScale = uBladeHeight
               .mul(float(0.58).add(clumpNoise.mul(0.54)).add(bladeRnd.mul(0.28)))
               .mul(clumpScaledMul)
@@ -1060,7 +1109,7 @@ function createGrassNodeMaterial(opts: {
     ).mul(ridgeShade);
 
     // Blend blade roots & lower body softly toward the underlying painted terrain color map
-    const groundBlendFactor = clamp(float(0.44).sub(vHeight.mul(0.28)), 0.12, 0.44);
+    const groundBlendFactor = clamp(float(0.52).sub(vHeight.mul(0.24)), 0.16, 0.52);
     const groundMatched = styledCol.mul(vGroundTint).mul(1.26);
     const baseCol = mix(styledCol, groundMatched, groundBlendFactor);
 
@@ -1365,6 +1414,7 @@ export class StylizedGrassSystem {
   private readonly _tileBox = new THREE.Box3();
 
   private worldMapCtx?: GrassWorldMapMaskContext;
+  private excludeRects?: GrassExclusionRect[];
 
   constructor(opts: {
     terrain: TerrainData;
@@ -1375,11 +1425,13 @@ export class StylizedGrassSystem {
     config?: Partial<GrassFieldConfig>;
     isSoftwareGl?: boolean;
     worldMapCtx?: GrassWorldMapMaskContext;
+    excludeRects?: GrassExclusionRect[];
   }) {
     this.group = new THREE.Group();
     this.group.name = 'StylizedGrassSystem';
     this.group.userData.disposeExtra = () => this.dispose();
     this.worldMapCtx = opts.worldMapCtx;
+    this.excludeRects = opts.excludeRects;
 
     const resolved = resolveGrassConfig(opts.config);
     if ((opts.isSoftwareGl || isIOSDevice()) && resolved.quality !== 'off') {
@@ -1394,7 +1446,7 @@ export class StylizedGrassSystem {
     this.densityBias = palette.densityBias;
 
     const clampedBladeHeight = THREE.MathUtils.clamp(resolved.bladeHeight, 0.25, 1.6);
-    this.maxBladeHeight = clampedBladeHeight * 1.5;
+    this.maxBladeHeight = clampedBladeHeight * 1.85;
     const maxBladeHeightMilli = Math.round(this.maxBladeHeight * 1000);
 
     const upgraded = ensureUpgradedTerrain(opts.terrain);
@@ -1411,8 +1463,11 @@ export class StylizedGrassSystem {
     const wmCode = opts.worldMapCtx?.activeRegionCode ?? 0;
     const wmOriginX = opts.worldMapCtx?.activeRegionOrigin?.[0] ?? 0;
     const wmOriginZ = opts.worldMapCtx?.activeRegionOrigin?.[1] ?? 0;
+    const hasExcl = (opts.excludeRects?.length ?? 0) > 0;
 
-    const cacheIdx = bakedGrassMapCache.findIndex(
+    const cacheIdx = hasExcl
+      ? -1
+      : bakedGrassMapCache.findIndex(
       (c) =>
         c.heightsRef === upgraded.heights &&
         c.layersRef === upgraded.layers &&
@@ -1453,7 +1508,8 @@ export class StylizedGrassSystem {
         this.biomeGroundHex,
         this.biomeDetailHex,
         undefined,
-        this.worldMapCtx
+        this.worldMapCtx,
+        this.excludeRects
       );
       packTerrainHalfFloat(this.terrainTexData, this.terrainTexHalfData, this.terrainTexSize);
 
@@ -1462,7 +1518,8 @@ export class StylizedGrassSystem {
       this.worldCellMaxY = new Float32Array(totalWorldCells);
       this.recomputeChunkBounds();
 
-      bakedGrassMapCache.unshift({
+      if (!hasExcl) {
+        bakedGrassMapCache.unshift({
         heightsRef: upgraded.heights,
         layersRef: upgraded.layers,
         revision: upgraded.revision ?? 0,
@@ -1484,12 +1541,13 @@ export class StylizedGrassSystem {
         worldCellHasGrass: this.worldCellHasGrass,
         worldCellMinY: this.worldCellMinY,
         worldCellMaxY: this.worldCellMaxY,
-        grassWorldCells: this.grassWorldCells,
-      });
-      if (bakedGrassMapCache.length > 1) {
-        bakedGrassMapCache.length = 1;
+          grassWorldCells: this.grassWorldCells,
+        });
+        if (bakedGrassMapCache.length > 1) {
+          bakedGrassMapCache.length = 1;
+        }
+        this.buffersSharedFromCache = true;
       }
-      this.buffersSharedFromCache = true;
     }
 
     this.terrainTex = new THREE.DataTexture(
@@ -1829,7 +1887,8 @@ export class StylizedGrassSystem {
       this.biomeGroundHex,
       this.biomeDetailHex,
       bounds,
-      this.worldMapCtx
+      this.worldMapCtx,
+      this.excludeRects
     );
     packTerrainHalfFloat(this.terrainTexData, this.terrainTexHalfData, this.terrainTexSize, bounds);
     this.terrainTex.needsUpdate = true;

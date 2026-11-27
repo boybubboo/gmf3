@@ -50,7 +50,15 @@ export type StudioTheme = 'dark' | 'light';
 
 export type VisualStyleId = 'painterlyPBR' | 'celToon' | 'softFantasy';
 
-export type CameraMode = 'front' | 'heroFront' | 'chase' | 'cozy' | 'isometric' | 'sideScroll' | 'firstPerson';
+export type CameraMode =
+  | 'front'
+  | 'heroFront'
+  | 'chase'
+  | 'cozy'
+  | 'close'
+  | 'isometric'
+  | 'sideScroll'
+  | 'firstPerson';
 
 export type EnvironmentType = 'openWorld' | 'dungeon' | 'castle' | 'sideScroller' | 'scifi';
 
@@ -1680,6 +1688,9 @@ export type TerrainBrush =
   | 'paintSand'
   | 'paintRock'
   | 'paintSnow'
+  | 'paintLeaves'
+  | 'paintClumpyDirt'
+  | 'paintTallGrass'
   | 'weatherMoss'
   | 'weatherCracks'
   | 'weatherErode'
@@ -1826,7 +1837,9 @@ export interface DirtAndRoadConfig {
 export interface TerrainData {
   size: number; // 64 (or legacy 48 auto-migrated)
   heights: number[]; // (size+1)*(size+1)
-  layers: number[]; // 0=grass, 1=sand, 2=rock, 3=snow, 4=moss, 5=cobble, 6=dirt
+  layers: number[]; // 0=grass, 1=sand, 2=rock, 3=snow, 4=moss, 5=cobble, 6=dirt, 7=leaves, 8=clumpyDirt, 9=tallGrassPatch
+  /** Optional custom tint color for painted longer-grass patches (layer 9) */
+  tallGrassPatchColor?: string;
   /** Optional packed 5-channel weathering/degradation grid (moss, cracks, scorch, mud, frost) */
   weathering?: number[];
   scatter: ScatterItem[];
