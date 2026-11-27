@@ -1061,7 +1061,8 @@ export type FxEmitterCategory =
   | 'customMesh'
   | 'burstArc'
   | 'weather'
-  | 'critter';
+  | 'critter'
+  | 'arcane';
 
 export type FxEmitterPresetId =
   | 'smoke'
@@ -1080,7 +1081,13 @@ export type FxEmitterPresetId =
   | 'butterflies'
   | 'moths'
   | 'fireflies'
-  | 'birds';
+  | 'birds'
+  | 'dimensionalPortal'
+  | 'arcaneSigil'
+  | 'crystalEruption'
+  | 'energyPillar'
+  | 'voidVortex'
+  | 'meteorStrike';
 
 export type BirdFlightPattern = 'wander' | 'vFormation' | 'flock' | 'circle';
 export type BirdFlightMode = 'random' | 'directional';

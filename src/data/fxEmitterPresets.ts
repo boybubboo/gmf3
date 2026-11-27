@@ -103,6 +103,7 @@ export const FX_CATEGORY_LABELS: Record<FxEmitterCategory, string> = {
   burstArc: 'Burst & Arc FX',
   weather: 'Weather & Atmosphere',
   critter: 'Living Critter Swarms',
+  arcane: 'Arcane, Portals & Abilities',
 };
 
 export const FX_EMITTER_PRESETS: FxPresetMeta[] = [
@@ -523,6 +524,122 @@ export const FX_EMITTER_PRESETS: FxPresetMeta[] = [
       flightHeading: 40,
       landingEnabled: true,
       landingFrequency: 0.35,
+    }
+  ),
+
+  // F. Arcane, Portals & Procedural Spell Abilities
+  makePreset(
+    'dimensionalPortal',
+    'Dimensional Portal Gate',
+    'arcane',
+    'Arcane, Portals & Abilities',
+    'Swirling shader-driven dimensional vortex gateway framed by counter-rotating runic rings and orbiting shards.',
+    '#8B5CF6',
+    {
+      elevationY: 0.15,
+      maxParticles: 32,
+      startColor: '#A855F7',
+      endColor: '#22D3EE',
+      emissiveIntensity: 2.2,
+      areaRadius: 2.0,
+      areaHeight: 4.0,
+      speed: 1.0,
+      burstInterval: 0,
+    }
+  ),
+  makePreset(
+    'arcaneSigil',
+    'Arcane Cast Sigil',
+    'arcane',
+    'Arcane, Portals & Abilities',
+    'Procedural SDF runic magic circle on the ground with rotating geometric sigils, shockwave rings, and rising energy curtain.',
+    '#38BDF8',
+    {
+      elevationY: 0.08,
+      maxParticles: 36,
+      startColor: '#38BDF8',
+      endColor: '#C084FC',
+      emissiveIntensity: 2.0,
+      areaRadius: 2.8,
+      areaHeight: 2.4,
+      speed: 1.0,
+      burstInterval: 4.2,
+    }
+  ),
+  makePreset(
+    'crystalEruption',
+    'Crystal Spire Eruption',
+    'arcane',
+    'Arcane, Portals & Abilities',
+    'Procedural cluster of luminous faceted crystal spires erupting dynamically from an arcane ground fracture ring.',
+    '#22D3EE',
+    {
+      elevationY: 0.05,
+      maxParticles: 36,
+      startColor: '#67E8F9',
+      endColor: '#818CF8',
+      emissiveIntensity: 2.1,
+      areaRadius: 2.2,
+      areaHeight: 3.4,
+      speed: 1.0,
+      burstInterval: 4.8,
+    }
+  ),
+  makePreset(
+    'energyPillar',
+    'Orbital Energy Pillar',
+    'arcane',
+    'Arcane, Portals & Abilities',
+    'Towering vertical plasma sky beam wrapped in spinning double-helix ribbons and pulsing ground impact shockwaves.',
+    '#F59E0B',
+    {
+      elevationY: 0.08,
+      maxParticles: 36,
+      startColor: '#FDE047',
+      endColor: '#38BDF8',
+      emissiveIntensity: 2.4,
+      areaRadius: 2.1,
+      areaHeight: 11.0,
+      speed: 1.15,
+      burstInterval: 3.8,
+    }
+  ),
+  makePreset(
+    'voidVortex',
+    'Void Gravity Vortex',
+    'arcane',
+    'Arcane, Portals & Abilities',
+    'Swirling dark singularity core with blazing Fresnel corona, accretion funnel disc, and inward-spiraling debris.',
+    '#C026D3',
+    {
+      elevationY: 1.6,
+      maxParticles: 40,
+      startColor: '#E879F9',
+      endColor: '#4F46E5',
+      emissiveIntensity: 2.3,
+      areaRadius: 2.5,
+      areaHeight: 3.0,
+      speed: 1.05,
+      burstInterval: 0,
+    }
+  ),
+  makePreset(
+    'meteorStrike',
+    'Starfall Meteor Strike',
+    'arcane',
+    'Arcane, Portals & Abilities',
+    'Lock-on ground targeting circle struck by a blazing descending meteor that detonates into an energy shockwave dome.',
+    '#FB7185',
+    {
+      elevationY: 0.06,
+      maxParticles: 40,
+      startColor: '#FDBA74',
+      endColor: '#F43F5E',
+      emissiveIntensity: 2.6,
+      areaRadius: 2.6,
+      areaHeight: 10.5,
+      speed: 1.0,
+      burstInterval: 3.8,
     }
   ),
 ];

@@ -2,14 +2,8 @@ import * as THREE from 'three';
 import { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
 import {
   Fn,
-  abs,
-  attribute,
-  cos,
-  float,
   instancedBufferAttribute,
-  instancedDynamicBufferAttribute,
   positionLocal,
-  sign,
   sin,
   uniform,
 } from 'three/tsl';
@@ -24,9 +18,10 @@ import {
 /**
  * Living GPU-Instanced Wildlife Flocking & Cave Ambient System.
  *
- * Renders three ecological layers in 3 single draw calls using TSL vertex animation:
- *  1. Sky Bird Flocks — sculpted 3D birds soaring & banking gracefully in thermals with
- *     realistic flap-and-glide cycles and true hinged shoulder + flexible wingtip TSL animation
+ * Renders three ecological layers:
+ *  1. Sky Bird Flocks — 3-mesh rigid-wing sculpted avian flocks (body + mirrored left/right hinged
+ *     feathered wings, matching the smooth FX spawner bird rig) soaring calmly on steady thermal
+ *     altitudes with natural flap-and-glide cycles and gentle banking (zero bobbing or vertex glitches)
  *  2. River & Cove Fish Schools — darting organically below water with TSL tail-swim wiggle + hero scatter
  *  3. Cave Fireflies / Bioluminescent Spores — floating inside carved mountain caves
  *
@@ -43,7 +38,8 @@ interface BirdAgent {
   homeX: number;
   homeZ: number;
   orbitDir: number;
-  cruiseOffset: number;
+  /** Precomputed stable thermal soaring altitude well above highest terrain along the orbit ring */
+  baseAltY: number;
   scale: number;
   headingYaw: number;
   pitch: number;
@@ -54,7 +50,6 @@ interface BirdAgent {
   wingPhase: number;
   flapRate: number;
   wingAngle: number;
-  wingTipLag: number;
   altPhase: number;
   altSpeed: number;
 }
@@ -81,127 +76,113 @@ interface FireflyAgent {
   scale: number;
 }
 
-const BIRD_SHOULDER_X = 0.085;
+function mirrorGeometryX(src: THREE.BufferGeometry): THREE.BufferGeometry {
+  const geo = src.clone();
+  const pos = geo.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    pos.setX(i, -pos.getX(i));
+  }
+  const idx = geo.getIndex();
+  if (idx) {
+    const arr = idx.array;
+    for (let i = 0; i < arr.length; i += 3) {
+      const tmp = arr[i + 1];
+      (arr as Uint16Array | Uint32Array)[i + 1] = arr[i + 2];
+      (arr as Uint16Array | Uint32Array)[i + 2] = tmp;
+    }
+    idx.needsUpdate = true;
+  } else {
+    for (let i = 0; i < pos.count; i += 3) {
+      const x1 = pos.getX(i + 1);
+      const y1 = pos.getY(i + 1);
+      const z1 = pos.getZ(i + 1);
+      pos.setXYZ(i + 1, pos.getX(i + 2), pos.getY(i + 2), pos.getZ(i + 2));
+      pos.setXYZ(i + 2, x1, y1, z1);
+    }
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
 
-/**
- * Builds a clean, watertight 3D stylized soaring bird facing +Z:
- *  - Sculpted tapered fuselage (beak -> head -> plump chest -> tail base)
- *  - Fanned V-tail feathers
- *  - Continuous cambered left & right wings (inner arm + swept outer primaries, zero gaps)
- *  - Vertex colors (warm pale belly, shaded charcoal wingtips & tail for crisp sky contrast)
- *  - Per-vertex `aWingWeight` (0 on torso/head/tail, smooth ramp across inner & outer wing)
- */
-function createStylizedBirdGeometry(): THREE.BufferGeometry {
-  const pos: number[] = [];
-  const col: number[] = [];
-  const wingW: number[] = [];
-
+function buildSculptedBirdBodyGeometry(): THREE.BufferGeometry {
+  // Streamlined bird body facing +Z (beak at +Z, fanned tail at -Z), matching FX spawner birds
+  const positions: number[] = [];
   const pushTri = (
-    ax: number, ay: number, az: number, ca: [number, number, number], wa: number,
-    bx: number, by: number, bz: number, cb: [number, number, number], wb: number,
-    cx: number, cy: number, cz: number, cc: [number, number, number], wc: number
+    a: [number, number, number],
+    b: [number, number, number],
+    c: [number, number, number]
   ) => {
-    pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
-    col.push(ca[0], ca[1], ca[2], cb[0], cb[1], cb[2], cc[0], cc[1], cc[2]);
-    wingW.push(wa, wb, wc);
+    positions.push(...a, ...b, ...c);
   };
 
-  // Neutral-white tinted vertex colors so per-instance setColorAt multiplies cleanly
-  const cBack: [number, number, number] = [0.96, 0.97, 0.99];
-  const cBelly: [number, number, number] = [0.84, 0.87, 0.91];
-  const cHead: [number, number, number] = [0.92, 0.94, 0.97];
-  const cBeak: [number, number, number] = [0.95, 0.72, 0.34];
-  const cWingMid: [number, number, number] = [0.88, 0.90, 0.94];
-  const cWingTip: [number, number, number] = [0.34, 0.38, 0.46];
-  const cTail: [number, number, number] = [0.46, 0.50, 0.58];
+  const nose: [number, number, number] = [0, 0.08, 0.72];
+  const headRing: [number, number, number][] = [
+    [0, 0.2, 0.44],
+    [0.12, 0.09, 0.42],
+    [0, -0.02, 0.44],
+    [-0.12, 0.09, 0.42],
+  ];
+  const chestRing: [number, number, number][] = [
+    [0, 0.19, 0.12],
+    [0.2, 0.03, 0.1],
+    [0, -0.15, 0.12],
+    [-0.2, 0.03, 0.1],
+  ];
+  const hipRing: [number, number, number][] = [
+    [0, 0.11, -0.34],
+    [0.12, 0.0, -0.34],
+    [0, -0.08, -0.34],
+    [-0.12, 0.0, -0.34],
+  ];
+  const tailTipL: [number, number, number] = [-0.24, 0.07, -0.78];
+  const tailTipC: [number, number, number] = [0, 0.05, -0.7];
+  const tailTipR: [number, number, number] = [0.24, 0.07, -0.78];
 
-  // Key fuselage landmarks (+Z forward, +Y up)
-  const beak: [number, number, number] = [0, 0.018, 0.44];
-  const headTop: [number, number, number] = [0, 0.075, 0.27];
-  const headBot: [number, number, number] = [0, -0.025, 0.26];
-  const headL: [number, number, number] = [-0.048, 0.025, 0.25];
-  const headR: [number, number, number] = [0.048, 0.025, 0.25];
-
-  const chestTop: [number, number, number] = [0, 0.088, 0.04];
-  const chestBot: [number, number, number] = [0, -0.072, 0.05];
-  const shL: [number, number, number] = [-BIRD_SHOULDER_X, 0.024, 0.06];
-  const shR: [number, number, number] = [BIRD_SHOULDER_X, 0.024, 0.06];
-
-  const rumpTop: [number, number, number] = [0, 0.042, -0.24];
-  const rumpBot: [number, number, number] = [0, -0.022, -0.23];
-  const rumpL: [number, number, number] = [-0.052, 0.012, -0.22];
-  const rumpR: [number, number, number] = [0.052, 0.012, -0.22];
-
-  // Beak pyramid
-  pushTri(...beak, cBeak, 0, ...headTop, cHead, 0, ...headL, cHead, 0);
-  pushTri(...beak, cBeak, 0, ...headR, cHead, 0, ...headTop, cHead, 0);
-  pushTri(...beak, cBeak, 0, ...headL, cHead, 0, ...headBot, cBelly, 0);
-  pushTri(...beak, cBeak, 0, ...headBot, cBelly, 0, ...headR, cHead, 0);
-
-  // Head -> Chest torso loft
-  pushTri(...headTop, cHead, 0, ...chestTop, cBack, 0, ...headL, cHead, 0);
-  pushTri(...chestTop, cBack, 0, ...shL, cBack, 0, ...headL, cHead, 0);
-  pushTri(...headTop, cHead, 0, ...headR, cHead, 0, ...chestTop, cBack, 0);
-  pushTri(...chestTop, cBack, 0, ...headR, cHead, 0, ...shR, cBack, 0);
-
-  pushTri(...headL, cHead, 0, ...shL, cBelly, 0, ...headBot, cBelly, 0);
-  pushTri(...shL, cBelly, 0, ...chestBot, cBelly, 0, ...headBot, cBelly, 0);
-  pushTri(...headR, cHead, 0, ...headBot, cBelly, 0, ...shR, cBelly, 0);
-  pushTri(...shR, cBelly, 0, ...headBot, cBelly, 0, ...chestBot, cBelly, 0);
-
-  // Chest -> Rump torso loft
-  pushTri(...chestTop, cBack, 0, ...rumpTop, cBack, 0, ...shL, cBack, 0);
-  pushTri(...rumpTop, cBack, 0, ...rumpL, cBack, 0, ...shL, cBack, 0);
-  pushTri(...chestTop, cBack, 0, ...shR, cBack, 0, ...rumpTop, cBack, 0);
-  pushTri(...rumpTop, cBack, 0, ...shR, cBack, 0, ...rumpR, cBack, 0);
-
-  pushTri(...shL, cBelly, 0, ...rumpL, cBelly, 0, ...chestBot, cBelly, 0);
-  pushTri(...rumpL, cBelly, 0, ...rumpBot, cBelly, 0, ...chestBot, cBelly, 0);
-  pushTri(...shR, cBelly, 0, ...chestBot, cBelly, 0, ...rumpR, cBelly, 0);
-  pushTri(...rumpR, cBelly, 0, ...chestBot, cBelly, 0, ...rumpBot, cBelly, 0);
-
-  // Forked swallowtail fan (double-sided via top + underside)
-  const tailL: [number, number, number] = [-0.14, 0.022, -0.50];
-  const tailMid: [number, number, number] = [0, 0.016, -0.42];
-  const tailR: [number, number, number] = [0.14, 0.022, -0.50];
-  pushTri(...rumpL, cTail, 0, ...tailL, cTail, 0, ...tailMid, cTail, 0);
-  pushTri(...rumpL, cTail, 0, ...tailMid, cTail, 0, ...rumpTop, cBack, 0);
-  pushTri(...rumpTop, cBack, 0, ...tailMid, cTail, 0, ...rumpR, cTail, 0);
-  pushTri(...rumpR, cTail, 0, ...tailMid, cTail, 0, ...tailR, cTail, 0);
-  // Tail underside
-  pushTri(...rumpL, cTail, 0, ...tailMid, cTail, 0, ...tailL, cTail, 0);
-  pushTri(...rumpR, cTail, 0, ...tailR, cTail, 0, ...tailMid, cTail, 0);
-
-  // Continuous 2-segment swept gull/hawk wings (mirrored cleanly for left & right)
-  const addWing = (side: -1 | 1) => {
-    const rootLead: [number, number, number] = [side * BIRD_SHOULDER_X, 0.032, 0.14];
-    const rootTrail: [number, number, number] = [side * BIRD_SHOULDER_X, 0.016, -0.15];
-    const elbowLead: [number, number, number] = [side * 0.44, 0.056, 0.06];
-    const elbowTrail: [number, number, number] = [side * 0.42, 0.026, -0.19];
-    const tipLead: [number, number, number] = [side * 0.92, 0.028, -0.14];
-    const tipTrail: [number, number, number] = [side * 0.80, 0.018, -0.25];
-
-    if (side === 1) {
-      // Inner wing quad (2 connected tris)
-      pushTri(...rootLead, cBack, 0.02, ...rootTrail, cBack, 0.02, ...elbowLead, cWingMid, 0.48);
-      pushTri(...elbowLead, cWingMid, 0.48, ...rootTrail, cBack, 0.02, ...elbowTrail, cWingMid, 0.46);
-      // Outer primary wing quad (shares exact elbowLead & elbowTrail vertices -> zero gap!)
-      pushTri(...elbowLead, cWingMid, 0.48, ...elbowTrail, cWingMid, 0.46, ...tipLead, cWingTip, 1.0);
-      pushTri(...tipLead, cWingTip, 1.0, ...elbowTrail, cWingMid, 0.46, ...tipTrail, cWingTip, 0.92);
-    } else {
-      pushTri(...rootLead, cBack, 0.02, ...elbowLead, cWingMid, 0.48, ...rootTrail, cBack, 0.02);
-      pushTri(...elbowLead, cWingMid, 0.48, ...elbowTrail, cWingMid, 0.46, ...rootTrail, cBack, 0.02);
-      pushTri(...elbowLead, cWingMid, 0.48, ...tipLead, cWingTip, 1.0, ...elbowTrail, cWingMid, 0.46);
-      pushTri(...tipLead, cWingTip, 1.0, ...tipTrail, cWingTip, 0.92, ...elbowTrail, cWingMid, 0.46);
+  const stitchRing = (
+    r1: [number, number, number][],
+    r2: [number, number, number][]
+  ) => {
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      pushTri(r1[i], r2[i], r2[j]);
+      pushTri(r1[i], r2[j], r1[j]);
     }
   };
-  addWing(-1);
-  addWing(1);
+
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    pushTri(nose, headRing[i], headRing[j]);
+  }
+  stitchRing(headRing, chestRing);
+  stitchRing(chestRing, hipRing);
+
+  // Fanned tail feathers (double-sided)
+  pushTri(hipRing[0], tailTipR, tailTipC);
+  pushTri(hipRing[0], tailTipC, tailTipL);
+  pushTri(hipRing[2], tailTipC, tailTipR);
+  pushTri(hipRing[2], tailTipL, tailTipC);
+  pushTri(hipRing[1], tailTipR, hipRing[0]);
+  pushTri(hipRing[3], hipRing[0], tailTipL);
 
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  geo.setAttribute('aWingWeight', new THREE.Float32BufferAttribute(wingW, 1));
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+function buildBirdRightWingGeometry(): THREE.BufferGeometry {
+  // Swept feathered avian wing extending along +X, leading edge toward +Z, hinging at x = 0
+  const ws = new THREE.Shape();
+  ws.moveTo(0, 0.24);
+  ws.quadraticCurveTo(0.52, 0.34, 1.15, 0.06);
+  ws.quadraticCurveTo(1.55, -0.14, 1.75, -0.34);
+  ws.quadraticCurveTo(1.22, -0.36, 0.82, -0.26);
+  ws.quadraticCurveTo(0.42, -0.22, 0, -0.24);
+  ws.closePath();
+  const geo = new THREE.ShapeGeometry(ws, 5);
+  geo.rotateX(Math.PI / 2);
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
   return geo;
@@ -230,8 +211,9 @@ export class WildlifeFlockingSystem {
 
   private readonly level: GameLevel;
   private readonly uTime = uniform(0);
-  private birdMesh: THREE.InstancedMesh | null = null;
-  private birdFlapAttr: THREE.InstancedBufferAttribute | null = null;
+  private birdBodyMesh: THREE.InstancedMesh | null = null;
+  private birdLeftWingMesh: THREE.InstancedMesh | null = null;
+  private birdRightWingMesh: THREE.InstancedMesh | null = null;
   private fishMesh: THREE.InstancedMesh | null = null;
   private fireflyMesh: THREE.InstancedMesh | null = null;
 
@@ -242,6 +224,8 @@ export class WildlifeFlockingSystem {
   private readonly _dummy = new THREE.Object3D();
   private readonly _lookTarget = new THREE.Vector3();
   private readonly _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  private readonly _quat = new THREE.Quaternion();
+  private readonly _wingQuat = new THREE.Quaternion();
   private disposed = false;
 
   constructor(level: GameLevel, densityScale = 1.0) {
@@ -254,90 +238,93 @@ export class WildlifeFlockingSystem {
     const worldR = Math.min(terrain ? getTerrainRadius(terrain) : 78, 130);
     const scaleClamp = THREE.MathUtils.clamp(densityScale, 0.35, 1.5);
 
-    this.initBirds(level, worldR, Math.round(24 * scaleClamp));
+    this.initBirds(level, worldR, Math.round(20 * scaleClamp));
     this.initFish(level, worldR, Math.round(26 * scaleClamp));
     this.initCaveFireflies(level, Math.round(36 * scaleClamp));
   }
 
   private initBirds(level: GameLevel, worldR: number, count: number): void {
     if (count <= 0) return;
-    const geo = createStylizedBirdGeometry();
-    // Per-instance live wing articulation: (innerWingAngleRad, outerTipLagRad)
-    const flapData = new Float32Array(count * 2);
-    const flapAttr = new THREE.InstancedBufferAttribute(flapData, 2);
-    flapAttr.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('aFlapState', flapAttr);
-    this.birdFlapAttr = flapAttr;
 
-    const mat = new MeshStandardNodeMaterial({
+    const bodyGeo = buildSculptedBirdBodyGeometry();
+    const rightWingGeo = buildBirdRightWingGeometry();
+    const leftWingGeo = mirrorGeometryX(rightWingGeo);
+
+    const bodyMat = new THREE.MeshStandardMaterial({
       color: '#FFFFFF',
-      vertexColors: true,
-      roughness: 0.72,
-      metalness: 0.04,
+      roughness: 0.62,
+      metalness: 0.06,
       side: THREE.DoubleSide,
     });
+    const wingMatL = new THREE.MeshStandardMaterial({
+      color: '#FFFFFF',
+      roughness: 0.58,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+    });
+    const wingMatR = wingMatL.clone();
 
-    // True hinged shoulder rotation + subtle flexible primary-feather wingtip lag (zero stretching!)
-    const flapNode = instancedDynamicBufferAttribute<'vec2'>(flapAttr, 'vec2');
-    mat.positionNode = Fn(() => {
-      const p = positionLocal.toVar();
-      const w = attribute('aWingWeight', 'float');
-      const shoulder = float(BIRD_SHOULDER_X);
-
-      // Side sign (-1 left, +1 right) and horizontal span beyond the shoulder hinge
-      const sideSign = sign(p.x);
-      const span = abs(p.x).sub(shoulder).max(0.0);
-
-      // Inner wing rotates cleanly around shoulder; outer primaries add subtle delayed flex
-      const outerWeight = w.sub(0.45).max(0.0).mul(1.8);
-      const angle = flapNode.x.add(flapNode.y.mul(outerWeight));
-
-      const ca = cos(angle);
-      const sa = sin(angle);
-      const hingedSpan = span.mul(ca);
-      const hingedLift = span.mul(sa);
-
-      // Only displace vertices with wing weight > 0 (torso, head, beak & tail stay 100% rigid!)
-      const mask = w.mul(40.0).clamp(0.0, 1.0);
-      p.x.assign(p.x.mul(float(1.0).sub(mask)).add(sideSign.mul(shoulder.add(hingedSpan)).mul(mask)));
-      p.y.addAssign(hingedLift.mul(mask));
-      return p;
-    })();
-
-    const inst = new THREE.InstancedMesh(geo, mat, count);
-    inst.castShadow = false;
-    inst.receiveShadow = false;
-    inst.frustumCulled = false;
+    const bodyInst = new THREE.InstancedMesh(bodyGeo, bodyMat, count);
+    const leftWingInst = new THREE.InstancedMesh(leftWingGeo, wingMatL, count);
+    const rightWingInst = new THREE.InstancedMesh(rightWingGeo, wingMatR, count);
+    bodyInst.castShadow = false;
+    bodyInst.receiveShadow = false;
+    bodyInst.frustumCulled = false;
+    leftWingInst.castShadow = false;
+    leftWingInst.receiveShadow = false;
+    leftWingInst.frustumCulled = false;
+    rightWingInst.castShadow = false;
+    rightWingInst.receiveShadow = false;
+    rightWingInst.frustumCulled = false;
 
     const flockCenters = [
-      { x: -worldR * 0.28, z: -worldR * 0.24, dir: 1 },
-      { x: worldR * 0.30, z: worldR * 0.18, dir: -1 },
-      { x: 0, z: -worldR * 0.36, dir: 1 },
+      { x: -worldR * 0.28, z: -worldR * 0.24, dir: 1, ceilingY: 22 },
+      { x: worldR * 0.30, z: worldR * 0.18, dir: -1, ceilingY: 22 },
+      { x: 0, z: -worldR * 0.36, dir: 1, ceilingY: 22 },
     ];
-    const palette = [
+
+    // Precompute a smooth, constant safe soaring ceiling above the highest terrain point
+    // along each flock's entire flight ring so birds NEVER spike or bob over cliffs/hills!
+    for (const fc of flockCenters) {
+      let maxH = sampleLevelHeight(level, fc.x, fc.z);
+      for (let s = 0; s < 16; s++) {
+        const a = (s / 16) * Math.PI * 2;
+        const h1 = sampleLevelHeight(level, fc.x + Math.cos(a) * 22, fc.z + Math.sin(a) * 22);
+        const h2 = sampleLevelHeight(level, fc.x + Math.cos(a) * 38, fc.z + Math.sin(a) * 38);
+        if (h1 > maxH) maxH = h1;
+        if (h2 > maxH) maxH = h2;
+      }
+      fc.ceilingY = Math.max(18.5, maxH + 11.5);
+    }
+
+    const bodyPalette = [
       new THREE.Color('#F8FAFC'), // Crisp gull ivory
       new THREE.Color('#E2E8F0'), // Soft sky dove
       new THREE.Color('#F5EFE6'), // Warm cream seabird
-      new THREE.Color('#D6CFC2'), // Woodland kestrel sand
+      new THREE.Color('#DDD6C7'), // Woodland kestrel sand
+    ];
+    const wingPalette = [
+      new THREE.Color('#94A3B8'), // Slate gull wing
+      new THREE.Color('#64748B'), // Deep slate wing
+      new THREE.Color('#A89F91'), // Warm taupe wing
+      new THREE.Color('#475569'), // Charcoal wingtip tone
     ];
 
     for (let i = 0; i < count; i++) {
       const fc = flockCenters[i % flockCenters.length];
       const ang = (i / count) * Math.PI * 2 + (i % 3) * 0.65;
-      const rad = 14 + (i % 6) * 5.2;
+      const rad = 16 + (i % 6) * 4.8;
       const px = fc.x + Math.cos(ang) * rad;
       const pz = fc.z + Math.sin(ang) * rad;
-      const groundY = sampleLevelHeight(level, px, pz);
-      const cruiseOffset = 15.5 + (i % 5) * 3.1;
-      const py = Math.max(18, groundY + cruiseOffset);
-      const speed = 6.2 + (i % 4) * 0.75;
+      const baseAltY = fc.ceilingY + (i % 5) * 2.1;
+      const speed = 5.6 + (i % 4) * 0.65;
       const vx = -Math.sin(ang) * speed * fc.dir;
       const vz = Math.cos(ang) * speed * fc.dir;
       const startGliding = i % 3 !== 0;
 
       this.birds.push({
         px,
-        py,
+        py: baseAltY,
         pz,
         vx,
         vy: 0,
@@ -345,29 +332,33 @@ export class WildlifeFlockingSystem {
         homeX: fc.x,
         homeZ: fc.z,
         orbitDir: fc.dir,
-        cruiseOffset,
-        scale: 0.78 + (i % 5) * 0.11,
+        baseAltY,
+        scale: 0.48 + (i % 5) * 0.075,
         headingYaw: Math.atan2(vx, vz),
         pitch: 0,
         bankRoll: 0,
         isGliding: startGliding,
-        glideTimer: startGliding ? 1.8 + (i % 5) * 0.8 : 1.0 + (i % 4) * 0.45,
+        glideTimer: startGliding ? 2.6 + (i % 5) * 0.9 : 1.1 + (i % 4) * 0.35,
         wingPhase: i * 1.37,
-        flapRate: 4.1 + (i % 4) * 0.32,
-        wingAngle: 0.12,
-        wingTipLag: 0,
+        flapRate: 6.2 + (i % 4) * 0.55,
+        wingAngle: 0.14,
         altPhase: i * 1.13,
-        altSpeed: 0.2 + (i % 4) * 0.04,
+        altSpeed: 0.16 + (i % 4) * 0.03,
       });
 
-      flapData[i * 2] = 0.12;
-      flapData[i * 2 + 1] = 0;
-      inst.setColorAt(i, palette[i % palette.length]);
+      bodyInst.setColorAt(i, bodyPalette[i % bodyPalette.length]);
+      const wCol = wingPalette[i % wingPalette.length];
+      leftWingInst.setColorAt(i, wCol);
+      rightWingInst.setColorAt(i, wCol);
     }
-    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
-    flapAttr.needsUpdate = true;
-    this.birdMesh = inst;
-    this.group.add(inst);
+    if (bodyInst.instanceColor) bodyInst.instanceColor.needsUpdate = true;
+    if (leftWingInst.instanceColor) leftWingInst.instanceColor.needsUpdate = true;
+    if (rightWingInst.instanceColor) rightWingInst.instanceColor.needsUpdate = true;
+
+    this.birdBodyMesh = bodyInst;
+    this.birdLeftWingMesh = leftWingInst;
+    this.birdRightWingMesh = rightWingInst;
+    this.group.add(bodyInst, leftWingInst, rightWingInst);
   }
 
   private initFish(level: GameLevel, worldR: number, count: number): void {
@@ -540,10 +531,14 @@ export class WildlifeFlockingSystem {
     this.uTime.value = elapsed;
     const safeDt = Math.min(0.05, Math.max(0.001, dt));
 
-    // 1. Update Sky Bird Flocks (smooth continuous boids + thermal soaring + banking + flap-and-glide)
-    if (this.birdMesh && this.birdFlapAttr && this.birds.length > 0) {
+    // 1. Update Sky Bird Flocks (smooth continuous boids + steady thermal soaring + 3-mesh rigid-wing flapping)
+    if (
+      this.birdBodyMesh &&
+      this.birdLeftWingMesh &&
+      this.birdRightWingMesh &&
+      this.birds.length > 0
+    ) {
       const n = this.birds.length;
-      const flapArr = this.birdFlapAttr.array as Float32Array;
       const sepRadius = 6.2;
       const sepRadiusSq = sepRadius * sepRadius;
 
@@ -560,7 +555,6 @@ export class WildlifeFlockingSystem {
         let aliZ = 0;
         let neighbors = 0;
 
-        // Lightweight neighbor stride check with smooth quadratic separation (no sudden jolts)
         for (let k = 1; k <= 5; k++) {
           const other = this.birds[(i + k * 3) % n];
           const dx = b.px - other.px;
@@ -575,7 +569,7 @@ export class WildlifeFlockingSystem {
             if (d2 < sepRadiusSq) {
               const dist = Math.sqrt(d2);
               const w = 1 - dist / sepRadius;
-              const push = w * w * 2.4;
+              const push = w * w * 2.2;
               sepX += (dx / dist) * push;
               sepZ += (dz / dist) * push;
             }
@@ -588,31 +582,29 @@ export class WildlifeFlockingSystem {
         const homeDist = Math.hypot(toHomeX, toHomeZ);
         const preferredOrbitR = 22 + (i % 5) * 4.5;
 
-        let ax = sepX * 3.2;
-        let az = sepZ * 3.2;
+        let ax = sepX * 3.0;
+        let az = sepZ * 3.0;
         if (neighbors > 0) {
-          ax += (cohX / neighbors - b.px) * 0.14 + (aliX / neighbors - b.vx) * 0.42;
-          az += (cohZ / neighbors - b.pz) * 0.14 + (aliZ / neighbors - b.vz) * 0.42;
+          ax += (cohX / neighbors - b.px) * 0.12 + (aliX / neighbors - b.vx) * 0.38;
+          az += (cohZ / neighbors - b.pz) * 0.12 + (aliZ / neighbors - b.vz) * 0.38;
         }
 
-        // Gentle radial leash back toward preferred thermal ring + tangential glide swirl
         const radialErr = homeDist - preferredOrbitR;
         if (homeDist > 1.5) {
           const invH = 1 / homeDist;
-          const pull = THREE.MathUtils.clamp(radialErr * 0.14, -1.6, 2.8);
+          const pull = THREE.MathUtils.clamp(radialErr * 0.12, -1.4, 2.4);
           ax += toHomeX * invH * pull;
           az += toHomeZ * invH * pull;
-          // Tangential swirl matching flock's clockwise/counter-clockwise thermal direction
-          ax += (-toHomeZ * invH) * b.orbitDir * 1.45;
-          az += (toHomeX * invH) * b.orbitDir * 1.45;
+          ax += (-toHomeZ * invH) * b.orbitDir * 1.4;
+          az += (toHomeX * invH) * b.orbitDir * 1.4;
         }
 
         b.vx += ax * safeDt;
         b.vz += az * safeDt;
         const spd = Math.hypot(b.vx, b.vz);
-        const targetSpd = b.isGliding ? 6.6 : 7.4;
+        const targetSpd = b.isGliding ? 5.8 : 6.4;
         const clampedSpd = THREE.MathUtils.damp(
-          THREE.MathUtils.clamp(spd, 5.2, 8.8),
+          THREE.MathUtils.clamp(spd, 4.8, 7.6),
           targetSpd,
           1.8,
           safeDt
@@ -622,78 +614,87 @@ export class WildlifeFlockingSystem {
           b.vz = (b.vz / spd) * clampedSpd;
         }
 
-        // Dynamic terrain clearance + slow, serene thermal altitude drift (never violent bouncing!)
-        const groundY = sampleLevelHeight(this.level, b.px, b.pz);
-        const safeFloorY = Math.max(16.5, groundY + 13.5);
-        const desiredY =
-          Math.max(safeFloorY, groundY + b.cruiseOffset) +
-          Math.sin(elapsed * b.altSpeed + b.altPhase) * 0.95;
-        const targetVy = THREE.MathUtils.clamp((desiredY - b.py) * 0.45, -1.35, 1.35);
-        b.vy = THREE.MathUtils.damp(b.vy, targetVy, 2.2, safeDt);
+        // Serene, level thermal soaring around precomputed safe ceiling (ZERO sudden vertical spikes!)
+        const desiredY = b.baseAltY + Math.sin(elapsed * b.altSpeed + b.altPhase) * 0.45;
+        const targetVy = THREE.MathUtils.clamp((desiredY - b.py) * 0.35, -0.45, 0.45);
+        b.vy = THREE.MathUtils.damp(b.vy, targetVy, 2.5, safeDt);
 
         b.px += b.vx * safeDt;
         b.py += b.vy * safeDt;
         b.pz += b.vz * safeDt;
 
-        // Flap-and-glide state machine (a few calm wingbeats followed by long soaring glides)
+        // Calm flap-and-glide state machine (long glides with occasional rhythmic wingbeats)
         b.glideTimer -= safeDt;
         if (b.glideTimer <= 0) {
           b.isGliding = !b.isGliding;
           b.glideTimer = b.isGliding
-            ? 2.8 + ((i * 13 + Math.floor(elapsed * 7)) % 7) * 0.45
-            : 1.35 + ((i * 7 + Math.floor(elapsed * 5)) % 5) * 0.25;
+            ? 3.4 + ((i * 13 + Math.floor(elapsed * 7)) % 7) * 0.55
+            : 1.2 + ((i * 7 + Math.floor(elapsed * 5)) % 4) * 0.28;
         }
-        // Climbing gently triggers active wingbeats
-        const activelyFlapping = !b.isGliding || b.vy > 0.55;
-        if (activelyFlapping) {
-          const climbBoost = b.vy > 0.35 ? 1.22 : 1.0;
-          b.wingPhase += safeDt * b.flapRate * Math.PI * 2 * 0.38 * climbBoost;
-          // Natural asymmetric wingbeat (slightly fuller downstroke than upstroke)
-          const s = Math.sin(b.wingPhase);
-          const targetAngle = s * 0.46 + 0.05;
-          const targetTipLag = -Math.cos(b.wingPhase) * 0.24;
-          b.wingAngle = THREE.MathUtils.damp(b.wingAngle, targetAngle, 12, safeDt);
-          b.wingTipLag = THREE.MathUtils.damp(b.wingTipLag, targetTipLag, 10, safeDt);
+        if (!b.isGliding) {
+          b.wingPhase += safeDt * b.flapRate;
+          const targetAngle = Math.sin(b.wingPhase) * 0.52;
+          b.wingAngle = THREE.MathUtils.damp(b.wingAngle, targetAngle, 14, safeDt);
         } else {
-          // Graceful soaring dihedral (wings held steadily slightly upward with tiny breeze flex)
-          const glideDihedral = 0.13 + Math.sin(elapsed * 1.1 + b.altPhase) * 0.025;
+          // Steady upward soaring dihedral while gliding
+          const glideDihedral = 0.14;
           b.wingAngle = THREE.MathUtils.damp(b.wingAngle, glideDihedral, 5.5, safeDt);
-          b.wingTipLag = THREE.MathUtils.damp(b.wingTipLag, 0.05, 5.5, safeDt);
         }
 
-        flapArr[i * 2] = b.wingAngle;
-        flapArr[i * 2 + 1] = b.wingTipLag;
-
-        // Smooth aerodynamic orientation (yaw + gentle pitch + banking roll into turns)
+        // Smooth aerodynamic orientation (yaw + ultra-subtle pitch + graceful turn bank)
         const desiredYaw = Math.atan2(b.vx, b.vz);
         let dYaw = desiredYaw - b.headingYaw;
         while (dYaw > Math.PI) dYaw -= Math.PI * 2;
         while (dYaw < -Math.PI) dYaw += Math.PI * 2;
-        b.headingYaw += dYaw * Math.min(1, safeDt * 5.5);
+        b.headingYaw += dYaw * Math.min(1, safeDt * 5.0);
 
         const desiredPitch = THREE.MathUtils.clamp(
-          -Math.atan2(b.vy, Math.max(2.0, clampedSpd)) * 0.55,
-          -0.24,
-          0.24
+          -Math.atan2(b.vy, Math.max(2.5, clampedSpd)) * 0.45,
+          -0.16,
+          0.16
         );
-        b.pitch = THREE.MathUtils.damp(b.pitch, desiredPitch, 4.5, safeDt);
+        b.pitch = THREE.MathUtils.damp(b.pitch, desiredPitch, 4.0, safeDt);
 
         const turnCross = (prevVx * b.vz - prevVz * b.vx) / Math.max(0.001, safeDt);
-        const desiredBank = THREE.MathUtils.clamp(-turnCross * 0.016, -0.48, 0.48);
+        const desiredBank = THREE.MathUtils.clamp(-turnCross * 0.014, -0.38, 0.38);
         b.bankRoll = THREE.MathUtils.damp(b.bankRoll, desiredBank, 4.0, safeDt);
 
-        // Tiny subtle body counter-lift synced to active wing downstroke (max ±3.5cm)
-        const flapBodyLift = activelyFlapping ? -Math.sin(b.wingAngle) * 0.035 * b.scale : 0;
-
-        this._dummy.position.set(b.px, b.py + flapBodyLift, b.pz);
+        const sz = b.scale;
         this._euler.set(b.pitch, b.headingYaw, b.bankRoll, 'YXZ');
-        this._dummy.quaternion.setFromEuler(this._euler);
-        this._dummy.scale.setScalar(b.scale);
+        this._quat.setFromEuler(this._euler);
+
+        // Rigid body matrix (zero vertical body bobbing!)
+        this._dummy.position.set(b.px, b.py, b.pz);
+        this._dummy.quaternion.copy(this._quat);
+        this._dummy.scale.setScalar(sz);
         this._dummy.updateMatrix();
-        this.birdMesh.setMatrixAt(i, this._dummy.matrix);
+        this.birdBodyMesh.setMatrixAt(i, this._dummy.matrix);
+
+        // Symmetric rigid-hinged right & left wings (matching FX spawner birds!)
+        const wingScale = sz * 1.15;
+        const wingOffsetY = sz * 0.08;
+
+        // Right wing (+X): +wingAngle around Z lifts tip UP
+        this._euler.set(0, 0, b.wingAngle, 'YXZ');
+        this._wingQuat.setFromEuler(this._euler);
+        this._dummy.position.set(b.px, b.py + wingOffsetY, b.pz);
+        this._dummy.quaternion.copy(this._quat).multiply(this._wingQuat);
+        this._dummy.scale.setScalar(wingScale);
+        this._dummy.updateMatrix();
+        this.birdRightWingMesh.setMatrixAt(i, this._dummy.matrix);
+
+        // Left wing (-X mirrored): -wingAngle around Z lifts tip UP identically
+        this._euler.set(0, 0, -b.wingAngle, 'YXZ');
+        this._wingQuat.setFromEuler(this._euler);
+        this._dummy.position.set(b.px, b.py + wingOffsetY, b.pz);
+        this._dummy.quaternion.copy(this._quat).multiply(this._wingQuat);
+        this._dummy.scale.setScalar(wingScale);
+        this._dummy.updateMatrix();
+        this.birdLeftWingMesh.setMatrixAt(i, this._dummy.matrix);
       }
-      this.birdMesh.instanceMatrix.needsUpdate = true;
-      this.birdFlapAttr.needsUpdate = true;
+      this.birdBodyMesh.instanceMatrix.needsUpdate = true;
+      this.birdLeftWingMesh.instanceMatrix.needsUpdate = true;
+      this.birdRightWingMesh.instanceMatrix.needsUpdate = true;
     }
 
     // 2. Update River/Cove Fish Schools (with live hero scatter reaction!)
@@ -782,11 +783,14 @@ export class WildlifeFlockingSystem {
       }
       mesh.dispose();
     };
-    disposeInst(this.birdMesh);
+    disposeInst(this.birdBodyMesh);
+    disposeInst(this.birdLeftWingMesh);
+    disposeInst(this.birdRightWingMesh);
     disposeInst(this.fishMesh);
     disposeInst(this.fireflyMesh);
-    this.birdMesh = null;
-    this.birdFlapAttr = null;
+    this.birdBodyMesh = null;
+    this.birdLeftWingMesh = null;
+    this.birdRightWingMesh = null;
     this.fishMesh = null;
     this.fireflyMesh = null;
     this.birds.length = 0;

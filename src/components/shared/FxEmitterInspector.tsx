@@ -70,6 +70,7 @@ const CATEGORY_ORDER: FxEmitterCategory[] = [
   'burstArc',
   'weather',
   'critter',
+  'arcane',
 ];
 
 export const FxEmitterInspector: React.FC<FxEmitterInspectorProps> = ({
@@ -127,6 +128,7 @@ export const FxEmitterInspector: React.FC<FxEmitterInspectorProps> = ({
   const isLightning = cfg.preset === 'lightning';
   const isWeather = category === 'weather';
   const isCritter = category === 'critter';
+  const isArcane = category === 'arcane';
 
   return (
     <div className="space-y-3.5 pt-3 border-t border-slate-200/70 dark:border-white/[0.08]">
@@ -166,6 +168,8 @@ export const FxEmitterInspector: React.FC<FxEmitterInspectorProps> = ({
               ? 'Trigger Splash Burst'
               : isLightning
               ? 'Strike Bolt Now'
+              : isArcane
+              ? 'Cast / Trigger Surge'
               : 'Preview / Burst'}
           </span>
         </button>
@@ -234,7 +238,7 @@ export const FxEmitterInspector: React.FC<FxEmitterInspectorProps> = ({
           decimals={1}
           onChange={(v) => patchFx({ elevationY: v })}
         />
-        {!isLightning && (
+        {!isLightning && !isArcane && (
           <SliderRow
             label={isCritter ? 'Max Swarm Cap' : 'Max Particles Cap'}
             value={cfg.maxParticles}
@@ -1065,6 +1069,110 @@ export const FxEmitterInspector: React.FC<FxEmitterInspectorProps> = ({
             unit="m"
             onChange={(v) => patchFx({ critterSize: v })}
           />
+        </div>
+      )}
+
+      {/* F. ARCANE, PORTALS & PROCEDURAL SPELL ABILITIES */}
+      {isArcane && (
+        <div className="space-y-2.5 pt-2.5 border-t border-slate-200/60 dark:border-white/[0.06]">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="space-y-1 text-[11px] font-semibold">
+              <span className="text-slate-600 dark:text-[#A5AEC4]">Core / Primary Color</span>
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#12151E] border border-slate-200/80 dark:border-white/[0.08]">
+                <input
+                  type="color"
+                  value={cfg.startColor}
+                  onChange={(e) => patchFx({ startColor: e.target.value })}
+                  className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0"
+                />
+                <span className="font-mono text-[10px] uppercase text-slate-600 dark:text-[#C8D0E4]">
+                  {cfg.startColor}
+                </span>
+              </div>
+            </label>
+            <label className="space-y-1 text-[11px] font-semibold">
+              <span className="text-slate-600 dark:text-[#A5AEC4]">Rim / Accent Color</span>
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#12151E] border border-slate-200/80 dark:border-white/[0.08]">
+                <input
+                  type="color"
+                  value={cfg.endColor}
+                  onChange={(e) => patchFx({ endColor: e.target.value })}
+                  className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0"
+                />
+                <span className="font-mono text-[10px] uppercase text-slate-600 dark:text-[#C8D0E4]">
+                  {cfg.endColor}
+                </span>
+              </div>
+            </label>
+          </div>
+
+          <SliderRow
+            label={cfg.preset === 'dimensionalPortal' ? 'Portal Radius' : 'Effect Radius'}
+            value={cfg.areaRadius}
+            min={0.7}
+            max={8.0}
+            step={0.1}
+            unit="m"
+            decimals={1}
+            onChange={(v) => patchFx({ areaRadius: v })}
+          />
+          {(cfg.preset === 'arcaneSigil' ||
+            cfg.preset === 'crystalEruption' ||
+            cfg.preset === 'energyPillar' ||
+            cfg.preset === 'meteorStrike') && (
+            <SliderRow
+              label={
+                cfg.preset === 'meteorStrike'
+                  ? 'Meteor Drop Altitude'
+                  : cfg.preset === 'crystalEruption'
+                  ? 'Crystal Spire Height'
+                  : cfg.preset === 'energyPillar'
+                  ? 'Beam Height'
+                  : 'Energy Veil Height'
+              }
+              value={cfg.areaHeight}
+              min={1.0}
+              max={18.0}
+              step={0.2}
+              unit="m"
+              decimals={1}
+              onChange={(v) => patchFx({ areaHeight: v })}
+            />
+          )}
+          <SliderRow
+            label="Animation / Spin Speed"
+            value={cfg.speed}
+            min={0.2}
+            max={3.0}
+            step={0.05}
+            unit="x"
+            decimals={2}
+            onChange={(v) => patchFx({ speed: v })}
+          />
+          <SliderRow
+            label="Emissive Glow Intensity"
+            value={cfg.emissiveIntensity}
+            min={0.4}
+            max={4.0}
+            step={0.1}
+            decimals={1}
+            onChange={(v) => patchFx({ emissiveIntensity: v })}
+          />
+          {(cfg.preset === 'arcaneSigil' ||
+            cfg.preset === 'crystalEruption' ||
+            cfg.preset === 'energyPillar' ||
+            cfg.preset === 'meteorStrike') && (
+            <SliderRow
+              label="Cycle / Repeat Interval"
+              value={cfg.burstInterval}
+              min={1.2}
+              max={12.0}
+              step={0.2}
+              unit="s"
+              decimals={1}
+              onChange={(v) => patchFx({ burstInterval: v })}
+            />
+          )}
         </div>
       )}
     </div>

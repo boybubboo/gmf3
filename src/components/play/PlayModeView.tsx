@@ -9822,8 +9822,15 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               const fxPreset = rt.fxRuntime.getConfig().preset;
               if (
                 didInteract &&
-                dist <= 4.5 &&
-                (fxPreset === 'waterSplash' || fxPreset === 'lightning')
+                dist <= 4.8 &&
+                (fxPreset === 'waterSplash' ||
+                  fxPreset === 'lightning' ||
+                  fxPreset === 'dimensionalPortal' ||
+                  fxPreset === 'arcaneSigil' ||
+                  fxPreset === 'crystalEruption' ||
+                  fxPreset === 'energyPillar' ||
+                  fxPreset === 'voidVortex' ||
+                  fxPreset === 'meteorStrike')
               ) {
                 rt.fxRuntime.triggerBurst();
                 interactConsumed = true;

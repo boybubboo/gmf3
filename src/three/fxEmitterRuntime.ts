@@ -22,6 +22,7 @@ import {
 } from 'three/tsl';
 import { getFxPresetMeta } from '../data/fxEmitterPresets';
 import type { FxEmitterConfig, FxEmitterPresetId } from '../types/maker';
+import { ArcaneVfxController, isArcanePreset } from './arcaneVfxSystem';
 import { getCachedAssetSync, loadCustomAssetToCache } from './gltfAssetManager';
 
 type SpriteKind = 'puff' | 'flame' | 'spark' | 'star' | 'droplet' | 'snowflake';
@@ -402,7 +403,8 @@ interface CritterAgent {
 
 function getCategoryForPreset(
   preset: FxEmitterPresetId
-): 'billboard' | 'customMesh' | 'lightning' | 'critter' {
+): 'billboard' | 'customMesh' | 'lightning' | 'critter' | 'arcane' {
+  if (isArcanePreset(preset)) return 'arcane';
   if (preset === 'fallingLeaves') return 'customMesh';
   if (preset === 'lightning') return 'lightning';
   if (
@@ -563,7 +565,10 @@ export class FxEmitterRuntime {
   private critters: CritterAgent[] = [];
   private flockDirProgress = 0;
 
-  private activeMode: 'billboard' | 'customMesh' | 'lightning' | 'critter' = 'billboard';
+  // Pool E: Procedural TSL Arcane, Portal & Spell Ability VFX
+  private arcaneController: ArcaneVfxController | null = null;
+
+  private activeMode: 'billboard' | 'customMesh' | 'lightning' | 'critter' | 'arcane' = 'billboard';
   private activeCap = 0;
 
   constructor(config: FxEmitterConfig, entityId: string, isEditor: boolean) {
@@ -609,6 +614,11 @@ export class FxEmitterRuntime {
     const glowChanged = prev.glowEnabled !== next.glowEnabled;
     const colorChanged = prev.startColor !== next.startColor || prev.endColor !== next.endColor;
 
+    const arcaneGeomChanged =
+      nextMode === 'arcane' &&
+      (Math.abs((prev.areaRadius || 2) - (next.areaRadius || 2)) > 0.01 ||
+        Math.abs((prev.areaHeight || 3) - (next.areaHeight || 3)) > 0.01);
+
     this.config = { ...next, targetOffset: [...next.targetOffset] as [number, number, number] };
     this.fxRoot.position.y = next.elevationY ?? 0;
 
@@ -618,6 +628,7 @@ export class FxEmitterRuntime {
       critterCountChanged ||
       presetChanged ||
       customMeshChanged ||
+      arcaneGeomChanged ||
       (nextMode === 'critter' && (glowChanged || colorChanged))
     ) {
       this.rebuildPools();
@@ -625,6 +636,9 @@ export class FxEmitterRuntime {
     }
 
     // Live uniform updates without rebuilding pools
+    if (this.arcaneController) {
+      this.arcaneController.syncUniformsFromConfig(next);
+    }
     if (this.billboardEmissiveUniform) {
       this.billboardEmissiveUniform.value = 1 + Math.max(0, next.emissiveIntensity) * 0.65;
     }
@@ -662,6 +676,10 @@ export class FxEmitterRuntime {
       }
       return;
     }
+    if (this.activeMode === 'arcane') {
+      this.arcaneController?.triggerBurst();
+      return;
+    }
     if (this.activeMode === 'critter') {
       // Excite swarm outward briefly on burst
       for (let i = 0; i < this.critters.length; i++) {
@@ -674,6 +692,11 @@ export class FxEmitterRuntime {
   }
 
   private clearPools(): void {
+    if (this.arcaneController) {
+      this.arcaneController.dispose();
+      this.arcaneController = null;
+    }
+
     while (this.fxRoot.children.length > 0) {
       const ch = this.fxRoot.children[0];
       this.fxRoot.remove(ch);
@@ -736,6 +759,9 @@ export class FxEmitterRuntime {
       this.initCustomMeshPool();
     } else if (mode === 'lightning') {
       this.initLightningPool();
+    } else if (mode === 'arcane') {
+      this.arcaneController = new ArcaneVfxController(cfg);
+      this.fxRoot.add(this.arcaneController.root);
     } else {
       this.initCritterPool();
     }
@@ -1450,6 +1476,8 @@ export class FxEmitterRuntime {
       this.stepCustomMeshPool(safeDt);
     } else if (this.activeMode === 'lightning') {
       this.stepLightningPool(safeDt, camera);
+    } else if (this.activeMode === 'arcane') {
+      this.arcaneController?.update(safeDt, cfg);
     } else {
       this.stepCritterPool(safeDt);
     }
