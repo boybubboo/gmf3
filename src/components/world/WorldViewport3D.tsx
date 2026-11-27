@@ -42,6 +42,8 @@ import {
   resampleCaveStrokePath,
   type CaveStrokePoint,
 } from '../../three/caveSplineBuilder';
+import { attachSunCSM, type CsmShadowHandle } from '../../three/csmShadowSetup';
+import { WildlifeFlockingSystem } from '../../three/wildlifeFlockingSystem';
 import {
   getWorldMapRadius,
   sampleWorldMapAtWorld,
@@ -514,6 +516,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     fxContainer: THREE.Group;
     fxEmitters: Map<string, FxEmitterRuntime>;
     islandHandles: IslandSceneHandles | null;
+    wildlifeSystem: WildlifeFlockingSystem | null;
     weatherPoints: THREE.Points | null;
     selectionRing: THREE.Mesh;
     brushGroup: THREE.Group;
@@ -613,6 +616,14 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     sun.shadow.autoUpdate = false;
     sun.shadow.needsUpdate = !isSoftwareGl;
     scene.add(sun);
+    scene.add(sun.target);
+    let sunCsm: CsmShadowHandle | null = attachSunCSM(sun, {
+      isSoftwareGl,
+      cascades: 3,
+      maxFar: 220,
+      lightMargin: 90,
+      mapSize: 1024,
+    });
 
     let envTex: THREE.Texture | null = null;
     let postPipeline: PostProcessingPipeline | null = null;
@@ -842,6 +853,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       fxContainer,
       fxEmitters: new Map(),
       islandHandles: null,
+      wildlifeSystem: null,
       weatherPoints: null,
       selectionRing,
       brushGroup,
@@ -2000,6 +2012,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
       postPipeline?.setSize(w, h);
+      sunCsm?.updateFrustums();
     };
 
     const onResize = () => {
@@ -2278,6 +2291,9 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
             refs.islandHandles.windUniform.value
           );
         }
+        if (refs?.wildlifeSystem && refs.islandContainer.visible) {
+          refs.wildlifeSystem.update(dt, t);
+        }
         syncSkyDomeToCamera(scene, camera.position);
         try {
           if (postPipeline) {
@@ -2367,6 +2383,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       dom.removeEventListener('pointerdown', onPointerDown);
       controls.removeEventListener('change', saveCurrentCameraPose);
       controls.dispose();
+      sunCsm?.dispose();
+      sunCsm = null;
       postPipeline?.dispose();
       postPipeline = null;
       envTex?.dispose();
@@ -2560,6 +2578,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         sceneRefs.current.rendererInitialized = false;
         sceneRefs.current.islandHandles?.chunkedTerrain?.dispose();
         sceneRefs.current.islandHandles?.grassSystem?.dispose();
+        sceneRefs.current.wildlifeSystem?.dispose();
+        sceneRefs.current.wildlifeSystem = null;
         sceneRefs.current.islandHandles = null;
         sceneRefs.current.groundMeshes = [];
         sceneRefs.current.animatedVillageGroups = [];
@@ -2567,6 +2587,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         sceneRefs.current.fxEmitters.clear();
         sceneRefs.current = null;
       }
+      sunCsm?.dispose();
+      sunCsm = null;
       postPipeline?.dispose();
       envTex?.dispose();
       disposeObject3D(scene);
@@ -3018,6 +3040,11 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
     refs.islandHandles?.chunkedTerrain?.dispose();
     refs.islandHandles?.grassSystem?.dispose();
+    if (refs.wildlifeSystem) {
+      refs.islandContainer.remove(refs.wildlifeSystem.group);
+      refs.wildlifeSystem.dispose();
+      refs.wildlifeSystem = null;
+    }
     disposeObject3D(refs.islandContainer);
     refs.islandContainer.clear();
     const handles = buildIslandMesh(level, customAssets, refs.isSoftwareGl, {
@@ -3035,6 +3062,11 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     });
     refs.islandHandles = handles;
     refs.islandContainer.add(handles.group);
+    if (!refs.isSoftwareGl && getEnvironmentType(level) !== 'dungeon') {
+      const wildlife = new WildlifeFlockingSystem(level, 0.85);
+      refs.wildlifeSystem = wildlife;
+      refs.islandContainer.add(wildlife.group);
+    }
     handles.updateWaterBodiesUniforms?.(level.terrain?.waterBodies, propsRef.current.selectedWaterBodyId);
     handles.updateMountainUniforms?.(liveTerrain.mountainConfig);
     handles.updateProceduralUniforms?.(liveTerrain.proceduralConfig);

@@ -1000,10 +1000,10 @@ export const PersistentMinimapHUD: React.FC<{ store: MakerStore }> = React.memo(
       ? 'Dungeon'
       : 'World';
 
-  // Position cleanly in Editor (above bottom nav) vs RPG Play Mode (top-4 right-4 above Chronicle Objectives) vs standard Play Mode (below topTrailing Coins/Pause)
+  // Position cleanly in Editor (above bottom nav) vs RPG Play Mode (below top-right FPS badge, above Chronicle Objectives) vs standard Play Mode (below topTrailing Coins/Pause & FPS badge)
   const dockClass = isPlaying
     ? displayLevel.gameplayMode === 'rpg'
-      ? 'fixed top-4 right-4 z-[55]'
+      ? 'fixed top-[56px] right-4 z-[55]'
       : 'fixed top-[68px] right-4 z-[55]'
     : 'fixed bottom-[64px] right-4 z-30';
 

@@ -78,6 +78,8 @@ import {
   type BatchInstanceSpec,
 } from './batchedScatterBuilder';
 import { getBiome, getSky } from '../data/registries';
+import { initBvhAcceleration } from './bvhAcceleration';
+import { configureGltfRendererSupport } from './gltfAssetManager';
 import type {
   CaveGrotto,
   CustomAssetMeta,
@@ -211,16 +213,21 @@ export interface ChoppableTreeHandle {
   shakeTimer: number;
   shakeDirX: number;
   shakeDirZ: number;
+  hasFruit?: boolean;
+  fruitCount?: number;
+  fruitLabel?: string;
 }
 
 export interface HarvestableScatterHandle {
   id: string;
-  scatterKind: 'mushroom' | 'berryBush' | 'fern' | 'broadleaf' | 'flower' | 'rock';
+  scatterKind: 'mushroom' | 'berryBush' | 'bush' | 'fern' | 'broadleaf' | 'flower' | 'rock';
   x: number;
   y: number;
   z: number;
   size: number;
   collected: boolean;
+  hp?: number;
+  maxHp?: number;
   batchedEntries: BatchEntryRef[];
 }
 
@@ -370,9 +377,10 @@ export function createMakerRenderer(isSoftwareGl: boolean, forceWebGL = false): 
     powerPreference: 'high-performance',
     forceWebGL,
   });
+  initBvhAcceleration();
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMapping = THREE.AgXToneMapping;
+  renderer.toneMappingExposure = 1.04;
   renderer.setPixelRatio(
     isSoftwareGl || isIOS ? 1 : Math.min(window.devicePixelRatio || 1, 1.5)
   );
@@ -430,6 +438,7 @@ export async function initMakerRenderer(
   }
 
   await renderer.init();
+  configureGltfRendererSupport(renderer);
 
   if (backend?.isWebGPUBackend === true) {
     recordWebGPUMaxTextureArrayLayers(getRendererMaxTextureArrayLayers(renderer));
@@ -1068,53 +1077,80 @@ export function ensureSkyDome(scene: THREE.Scene) {
         )
       );
 
-      // Rayleigh/Mie forward-scatter horizon glow & crisp solar aureole
-      const mieGlow = pow(sunDot, 3.2).mul(float(0.075).add(uWarmGlow.mul(0.14)));
+      // Physical Rayleigh optical depth + Henyey-Greenstein Mie forward scattering
+      const cosTheta = dot(dir, sunDirN);
+      const opticalAirMass = float(1.0).div(max(0.06, elev.add(0.11)));
+      const rayleighHorizonLift = float(1.0)
+        .sub(exp(opticalAirMass.mul(-0.22)))
+        .mul(float(1.0).sub(elev));
+      const rayleighTint = mix(uHorizon, uSunColor, float(0.28).add(uWarmGlow.mul(0.32)));
+      col.assign(mix(col, rayleighTint, clamp(rayleighHorizonLift.mul(0.45), 0.0, 0.55)));
+
+      // Henyey-Greenstein phase function (g = 0.78) for realistic atmospheric solar aureole
+      const g = float(0.78);
+      const g2 = g.mul(g);
+      const hgPhase = float(1.0)
+        .sub(g2)
+        .div(pow(max(0.04, float(1.0).add(g2).sub(g.mul(2.0).mul(cosTheta))), 1.5))
+        .mul(0.0795);
+      const mieScatter = clamp(hgPhase, 0.0, 2.8).mul(float(0.12).add(uWarmGlow.mul(0.22)));
+
       col.addAssign(
-        uSunColor.mul(horizonBand).mul(float(0.06).add(pow(sunAzimuth, 2.0).mul(0.18))).mul(uWarmGlow)
+        uSunColor.mul(horizonBand).mul(float(0.08).add(pow(sunAzimuth, 2.2).mul(0.22))).mul(uWarmGlow)
       );
-      col.addAssign(uSunColor.mul(mieGlow));
-      col.addAssign(uSunColor.mul(pow(sunDot, 11.0)).mul(float(0.14).add(uWarmGlow.mul(0.14))));
-      col.addAssign(uSunColor.mul(pow(sunDot, 72.0)).mul(0.34));
-      col.addAssign(uSunColor.mul(pow(sunDot, 400.0)).mul(0.82));
+      col.addAssign(uSunColor.mul(mieScatter));
+      col.addAssign(uSunColor.mul(pow(sunDot, 14.0)).mul(float(0.16).add(uWarmGlow.mul(0.16))));
+      col.addAssign(uSunColor.mul(pow(sunDot, 84.0)).mul(0.38));
+      col.addAssign(uSunColor.mul(pow(sunDot, 460.0)).mul(0.95));
 
-      If(uCloudDensity.greaterThan(0.01).and(dir.y.greaterThan(0.01)), () => {
-        const skyUV = vec2(dir.x, dir.z).div(dir.y.add(0.18)).mul(1.45);
-        const drift = vec2(uTime.mul(0.025), uTime.mul(0.011));
+      If(uCloudDensity.greaterThan(0.01).and(dir.y.greaterThan(0.008)), () => {
+        const skyUV = vec2(dir.x, dir.z).div(dir.y.add(0.16)).mul(1.42);
+        const drift = vec2(uTime.mul(0.024), uTime.mul(0.011));
         const n1 = skyFbmCloudTsl(skyUV.add(drift));
-        const n2 = skyFbmCloudTsl(skyUV.mul(2.15).sub(drift.mul(1.35)));
-        const rawCloud = n1.mul(0.68).add(n2.mul(0.32)).toVar();
-        const sunOffset = vec2(sunDirN.x, sunDirN.z).mul(0.15);
-        const litThickness = float(0.78).toVar();
+        const n2 = skyFbmCloudTsl(skyUV.mul(2.25).sub(drift.mul(1.38)));
+        const rawCloud = n1.mul(0.66).add(n2.mul(0.34)).toVar();
+        const sunOffset = vec2(sunDirN.x, sunDirN.z).mul(0.16);
+        const opticalThickness = float(0.45).toVar();
 
-        // Balanced & Ultra: multi-slice cumulus depth + sun-directional self-shadowing
+        // Balanced & Ultra: multi-slice volumetric cumulus depth + Beer-Lambert sun marching
         If(sharedAtmoU.uCloudDetailLevel.greaterThan(0.55), () => {
-          const shadowSample = skyFbmCloudTsl(skyUV.add(drift).add(sunOffset));
-          const wispDeck = skyFbmCloudTsl(skyUV.mul(1.32).add(drift.mul(1.6)).add(vec2(14.2, 6.7)));
-          rawCloud.assign(mix(rawCloud, max(rawCloud, wispDeck.mul(0.92)), 0.36));
-          litThickness.assign(smoothstep(-0.18, 0.24, rawCloud.sub(shadowSample)));
+          const shadowSample1 = skyFbmCloudTsl(skyUV.add(drift).add(sunOffset.mul(0.55)));
+          const shadowSample2 = skyFbmCloudTsl(skyUV.add(drift).add(sunOffset.mul(1.25)));
+          const wispDeck = skyFbmCloudTsl(skyUV.mul(1.35).add(drift.mul(1.55)).add(vec2(14.2, 6.7)));
+          rawCloud.assign(mix(rawCloud, max(rawCloud, wispDeck.mul(0.94)), 0.36));
+          opticalThickness.assign(
+            clamp(shadowSample1.mul(0.55).add(shadowSample2.mul(0.45)).sub(rawCloud.mul(0.35)), 0.0, 1.2)
+          );
 
-          // Ultra: high-altitude cirrus/cumulus parallax stratum
+          // Ultra: high-altitude cirrus parallax deck for expansive open-world vistas
           If(sharedAtmoU.uCloudDetailLevel.greaterThan(0.9), () => {
             const upperDeck = skyFbmCloudTsl(
-              skyUV.mul(0.84).add(drift.mul(0.75)).sub(sunOffset.mul(1.3))
+              skyUV.mul(0.82).add(drift.mul(0.72)).sub(sunOffset.mul(1.35))
             );
-            rawCloud.assign(max(rawCloud, upperDeck.mul(0.85)));
+            rawCloud.assign(max(rawCloud, upperDeck.mul(0.86)));
           });
         });
 
-        const threshold = mix(0.82, 0.28, uCloudDensity);
+        const threshold = mix(0.82, 0.27, uCloudDensity);
         const cloudMask = smoothstep(threshold, threshold.add(0.24), rawCloud);
-        const horizonFade = smoothstep(0.01, 0.22, dir.y);
-        const alpha = cloudMask.mul(horizonFade).mul(float(0.28).add(uCloudDensity.mul(0.56)));
+        const horizonFade = smoothstep(0.008, 0.21, dir.y);
+        const alpha = cloudMask.mul(horizonFade).mul(float(0.32).add(uCloudDensity.mul(0.58)));
 
-        const shadowCol = mix(uCloudColor.mul(0.62), uMidSky.mul(0.78), 0.36);
-        const bodyCloud = mix(shadowCol, uCloudColor, litThickness);
-        const silverRim = pow(sunDot, 5.5)
-          .mul(float(1.0).sub(cloudMask.mul(0.52)))
-          .mul(float(0.28).add(uWarmGlow.mul(0.28)));
-        const litCloud = mix(bodyCloud, uSunColor.mul(1.2), clamp(silverRim, 0.0, 0.85));
-        col.assign(mix(col, litCloud, clamp(alpha, 0.0, 0.85)));
+        // Beer-Lambert + Beer-Powder volumetric cloud lighting (dark bottoms, bright sunlit crests)
+        const beer = exp(opticalThickness.mul(-2.25));
+        const powder = float(1.0).sub(exp(cloudMask.mul(-2.8)));
+        const litEnergy = clamp(beer.mul(float(0.45).add(powder.mul(0.75))).add(0.22), 0.14, 1.15);
+
+        const shadowCol = mix(uCloudColor.mul(0.56), uMidSky.mul(0.76), 0.42);
+        const bodyCloud = mix(shadowCol, uCloudColor.mul(1.08), clamp(litEnergy, 0.0, 1.0));
+        // Forward-scattered silver lining around sun-facing cloud edges
+        const silverRim = clamp(hgPhase.mul(0.42), 0.0, 1.15)
+          .mul(float(1.0).sub(cloudMask.mul(0.54)))
+          .mul(float(0.32).add(uWarmGlow.mul(0.35)));
+        const litCloud = mix(bodyCloud, uSunColor.mul(1.28), clamp(silverRim, 0.0, 0.88));
+        // Aerial perspective blend into horizon haze
+        const distBlend = mix(litCloud, uHorizon, float(1.0).sub(horizonFade).mul(0.52));
+        col.assign(mix(col, distBlend, clamp(alpha, 0.0, 0.9)));
       });
 
       // Subtle anti-banding dither across smooth horizon gradients
@@ -1336,7 +1372,19 @@ function createWaterSurfaceNodes(params: WaterSurfaceNodesParams) {
 
     const dHx = dx1.add(dx2).add(dx3).add(dx4).mul(slopeScale);
     const dHz = dz1.add(dz2).add(dz3).add(dz4).mul(slopeScale);
-    return normalize(vec3(dHx.negate(), float(1.0), dHz.negate()));
+    // Close-up capillary wind micro-ripples (fade cleanly beyond 42m to prevent far aliasing)
+    const camDistXZ = length(vec2(cameraPosition.x, cameraPosition.z).sub(wpXZ));
+    const closeCapillaryFade = float(1.0)
+      .sub(smoothstep(10.0, 44.0, camDistXZ))
+      .mul(smoothstep(0.25, 0.8, sharedU.uWaterDetailLevel));
+    const capUv = wpXZ.mul(2.35).sub(flowVecNode.mul(timeNode.mul(1.85)));
+    const capX = cos(capUv.x.mul(1.7).add(sin(capUv.y.mul(1.4)).mul(0.8)).add(timeNode.mul(2.8)))
+      .mul(0.022)
+      .mul(closeCapillaryFade);
+    const capZ = sin(capUv.y.mul(1.9).sub(cos(capUv.x.mul(1.3)).mul(0.8)).sub(timeNode.mul(2.3)))
+      .mul(0.022)
+      .mul(closeCapillaryFade);
+    return normalize(vec3(dHx.add(capX).negate(), float(1.0), dHz.add(capZ).negate()));
   };
 
   const normalNode = Fn(() => {
@@ -1414,7 +1462,7 @@ function createWaterSurfaceNodes(params: WaterSurfaceNodesParams) {
       .mul(smoothstep(0.32, 0.78, sharedU.uWaterDetailLevel));
     const causticLight = sharedU.uSunColor.mul(causticRidge).mul(causticMask).mul(0.34);
 
-    // 3. Analytic wave normal -> Planar atmospheric sky reflection & solar specular sparkle
+    // 3. Analytic wave normal -> Planar atmospheric sky reflection, IOR refraction & solar sparkle
     const waveN = computeWaveNormalWorld(wpXZ, timeNode);
     const viewDir = normalize(cameraPosition.sub(wp));
     const reflDir = normalize(reflect(viewDir.negate(), waveN));
@@ -1425,19 +1473,32 @@ function createWaterSurfaceNodes(params: WaterSurfaceNodesParams) {
     const sunDirN = normalize(sharedU.uSunDir);
     const reflSunDot = max(0.0, dot(reflDir, sunDirN));
     const sunGlint = pow(reflSunDot, 96.0).mul(0.78);
+    // Crisp high-frequency diamond sun sparkle on capillary wave crests
+    const diamondGlint = pow(reflSunDot, 320.0).mul(1.15);
     const sunSheen = pow(reflSunDot, 16.0).mul(0.18);
-    const skyReflCol = skyReflBase.add(sharedU.uSunColor.mul(sunGlint.add(sunSheen)));
+    const skyReflCol = skyReflBase.add(sharedU.uSunColor.mul(sunGlint.add(diamondGlint).add(sunSheen)));
 
+    // Physical Schlick Fresnel (IOR 1.333 -> F0 = 0.02) + shallow backlit turquoise subsurface scatter
     const ndv = clamp(dot(waveN, viewDir), 0.0, 1.0);
-    const fresnel = float(0.04).add(float(0.96).mul(pow(float(1.0).sub(ndv), 4.4)));
+    const fresnel = float(0.02).add(float(0.98).mul(pow(float(1.0).sub(ndv), 4.6)));
+    const backLight = pow(clamp(dot(viewDir.negate(), sunDirN), 0.0, 1.0), 3.0);
+    const sssWaveMask = smoothstep(0.05, 0.65, float(1.0).sub(depthNorm))
+      .mul(float(0.35).add(backLight.mul(0.65)))
+      .mul(float(1.0).sub(sharedU.uNightFactor.mul(0.85)));
+    const sssTurquoise = vec3(0.09, 0.44, 0.48).mul(sssWaveMask).mul(0.42);
+    // Snell-refracted warm sandy seabed transmission in ultra-shallow coves (< 1.1m)
+    const refractedBedMask = float(1.0).sub(smoothstep(0.04, 1.15, waterDepth)).mul(ndv);
+    const refractedBedTint = vec3(0.76, 0.68, 0.52).mul(refractedBedMask).mul(0.22);
 
     const waterWithCaustics = opticalCol
       .add(causticLight)
+      .add(sssTurquoise)
+      .add(refractedBedTint)
       .add(vec3(0.12, 0.22, 0.28).mul(flowStreak));
     const reflectedWater = mix(
       waterWithCaustics,
       skyReflCol,
-      clamp(fresnel.mul(0.78), 0.0, 0.84)
+      clamp(fresnel.mul(0.82), 0.0, 0.88)
     );
 
     // 4. Organic shoreline & lapping wave foam
@@ -1998,20 +2059,40 @@ function createTerrainMaterial(
       vec3(0.055, 0.075, 0.015).mul(distantWave).mul(meadowCov).mul(clamp(uWind.mul(0.7).add(0.35), 0.25, 1.2))
     );
 
-    // GPU finite-difference micro-normals & directional ridge lighting (ProceduralTerrains style)
+    // GPU finite-difference micro-normals & directional ridge lighting + close-up tactile grain (0–28m)
     const sunDir = normalize(getSharedBotwUniforms().uSunDir);
+    const camDistT = length(cameraPosition.sub(wp));
+    const closeDetailFade = float(1.0).sub(smoothstep(6.0, 28.0, camDistT)).mul(uTerrainDetailLevel);
     const reliefFreq = mix(float(0.65), float(1.45), rockCov);
     const mEps = float(0.32);
     const mC = tFbm2DTsl(wpXZ.mul(reliefFreq));
     const mDx = tFbm2DTsl(wpXZ.add(vec2(mEps, 0.0)).mul(reliefFreq)).sub(mC).div(mEps);
     const mDz = tFbm2DTsl(wpXZ.add(vec2(0.0, mEps)).mul(reliefFreq)).sub(mC).div(mEps);
+    // High-frequency close-up mineral/pebble grain (fades cleanly before aliasing distance)
+    const hiFreq = mix(float(3.6), float(6.4), rockCov);
+    const hiC = tNoise2DTsl(wpXZ.mul(hiFreq).add(vec2(wp.y.mul(1.8), wp.y.mul(-1.4))));
+    const hiDx = tNoise2DTsl(wpXZ.add(vec2(0.08, 0.0)).mul(hiFreq).add(vec2(wp.y.mul(1.8), wp.y.mul(-1.4))))
+      .sub(hiC)
+      .mul(closeDetailFade);
+    const hiDz = tNoise2DTsl(wpXZ.add(vec2(0.0, 0.08)).mul(hiFreq).add(vec2(wp.y.mul(1.8), wp.y.mul(-1.4))))
+      .sub(hiC)
+      .mul(closeDetailFade);
     const reliefGain = mix(float(0.22), float(0.72), rockCov).mul(uProcMicroNormal).mul(uTerrainDetailLevel);
-    const microN = normalize(wn.add(vec3(mDx.negate().mul(reliefGain), 0.0, mDz.negate().mul(reliefGain))));
+    const microN = normalize(
+      wn.add(
+        vec3(
+          mDx.negate().mul(reliefGain).sub(hiDx.mul(mix(float(1.1), float(2.4), rockCov))),
+          0.0,
+          mDz.negate().mul(reliefGain).sub(hiDz.mul(mix(float(1.1), float(2.4), rockCov)))
+        )
+      )
+    );
     const baseSunDot = clamp(dot(wn, sunDir), 0.0, 1.0);
     const microSunDot = clamp(dot(microN, sunDir), 0.0, 1.0);
-    const microLitDelta = microSunDot.sub(baseSunDot).mul(mix(float(0.22), float(0.48), rockCov));
+    const microLitDelta = microSunDot.sub(baseSunDot).mul(mix(float(0.22), float(0.52), rockCov));
     const microCavity = float(1.0).sub(clamp(float(0.45).sub(mC).mul(0.38).mul(rockCov).mul(uTerrainDetailLevel), 0.0, 0.25));
-    const microDetail = float(0.96).add(orgFine.sub(0.5).mul(0.09)).add(microLitDelta);
+    const closeGrainContrast = hiC.sub(0.5).mul(mix(float(0.09), float(0.16), rockCov)).mul(closeDetailFade);
+    const microDetail = float(0.96).add(orgFine.sub(0.5).mul(0.09)).add(microLitDelta).add(closeGrainContrast);
     texCol.mulAssign(microDetail.mul(microCavity));
 
     const vWeather0 = attribute('aWeather0', 'vec4');
@@ -2087,6 +2168,22 @@ function createTerrainMaterial(
     flatShading: false,
   });
   mat.colorNode = terrainColorNode;
+  // Close-up physical micro-normal perturbation (0..26m) so PBR specular & point lights catch rock/soil facets
+  mat.normalNode = Fn(() => {
+    const wp = positionWorld;
+    const wn = normalize(normalWorld);
+    const wpXZ = vec2(wp.x, wp.z);
+    const camDist = length(cameraPosition.sub(wp));
+    const closeFade = float(1.0).sub(smoothstep(5.0, 26.0, camDist)).mul(uTerrainDetailLevel).mul(uProcMicroNormal);
+    const slopeAmt = clamp(float(1.0).sub(abs(wn.y)), 0.0, 1.0);
+    const nFreq = mix(float(2.4), float(4.8), slopeAmt);
+    const baseSample = tNoise2DTsl(wpXZ.mul(nFreq).add(vec2(wp.y.mul(1.6), wp.y.mul(-1.2))));
+    const dxSample = tNoise2DTsl(wpXZ.add(vec2(0.09, 0.0)).mul(nFreq).add(vec2(wp.y.mul(1.6), wp.y.mul(-1.2)))).sub(baseSample);
+    const dzSample = tNoise2DTsl(wpXZ.add(vec2(0.0, 0.09)).mul(nFreq).add(vec2(wp.y.mul(1.6), wp.y.mul(-1.2)))).sub(baseSample);
+    const strength = mix(float(0.38), float(0.95), slopeAmt).mul(closeFade);
+    const perturbedWorld = normalize(wn.add(vec3(dxSample.negate().mul(strength), 0.0, dzSample.negate().mul(strength))));
+    return transformNormalToView(perturbedWorld);
+  })();
   mat.roughnessNode = Fn(() => {
     const vW0 = attribute('aW0', 'vec4');
     const vW1 = attribute('aW1', 'vec3');
@@ -2220,6 +2317,8 @@ function addWallTorch(
   glowCore.position.set(0, 0.55, 0.64);
 
   torchGroup.add(plate, bracket, stick, flame, glowCore);
+  torchGroup.userData.grabbableWallTorch = true;
+  torchGroup.userData.wallTorchRemovableParts = [stick, flame, glowCore];
   parent.add(torchGroup);
 
   flameMeshes.push({ mesh: flame, baseY: 0.62, phase });
@@ -2228,6 +2327,7 @@ function addWallTorch(
     const pt = new THREE.PointLight('#FF9238', 11.5, 28, 1.35);
     pt.position.set(x + nx * 0.95, y + 0.7, z + nz * 0.95);
     parent.add(pt);
+    torchGroup.userData.wallTorchLight = pt;
     torchLights.push({ light: pt, baseIntensity: 11.5, phase });
   }
 }
@@ -6668,10 +6768,19 @@ function createScatterBuildPlan(
   const pushForestRecords = (
     records: ReturnType<typeof buildProceduralCanopyForest>['records']
   ) => {
-    for (const rec of records) {
+    for (let rIdx = 0; rIdx < records.length; rIdx++) {
+      const rec = records[rIdx];
+      const kind = rec.item.kind === 'pine' ? 'pine' : rec.item.kind === 'birch' ? 'birch' : 'oak';
+      let hasFruit = false;
+      rec.treeGroup.traverse((ch) => {
+        if (ch.name === 'canopy-fruit-group') hasFruit = true;
+      });
+      // Give natural woodland oaks/birches occasional wild orchard fruit so climbing trees is rewarding!
+      const naturalOrchard = !hasFruit && kind !== 'pine' && rIdx % 3 === 0;
+      const bearsFruit = hasFruit || naturalOrchard;
       choppableTrees.push({
         id: rec.item.id,
-        kind: rec.item.kind === 'pine' ? 'pine' : rec.item.kind === 'birch' ? 'birch' : 'oak',
+        kind,
         x: rec.item.x,
         y: rec.y,
         z: rec.item.z,
@@ -6687,6 +6796,9 @@ function createScatterBuildPlan(
         shakeTimer: 0,
         shakeDirX: 0,
         shakeDirZ: 1,
+        hasFruit: bearsFruit,
+        fruitCount: bearsFruit ? 3 : 0,
+        fruitLabel: hasFruit ? 'Tree Fruit' : 'Wild Orchard Fruit',
       });
     }
   };
@@ -7443,8 +7555,10 @@ function createScatterBuildPlan(
       new THREE.Color(biome.ground).lerp(new THREE.Color('#4B8C3B'), 0.58),
       new THREE.Color(biome.ground).lerp(new THREE.Color('#649E42'), 0.5),
     ];
+    const bushHeights: number[] = [];
     bushes.forEach((item, i) => {
       const { y } = groundAt(item.x, item.z, 0.42 * item.size);
+      bushHeights.push(y);
       dummy.position.set(item.x, y, item.z);
       dummy.rotation.set(0, item.rotation, 0);
       dummy.scale.set(item.size * (0.94 + (i % 3) * 0.08), item.size * (0.88 + ((i + 1) % 3) * 0.09), item.size);
@@ -7466,6 +7580,24 @@ function createScatterBuildPlan(
       receiveShadow: true,
     });
     addBatchMeshes(bushBatch.batchedMesh);
+    bushes.forEach((item, i) => {
+      harvestableScatter.push({
+        id: item.id,
+        scatterKind: 'bush',
+        x: item.x,
+        y: bushHeights[i] ?? 0,
+        z: item.z,
+        size: item.size,
+        collected: false,
+        hp: 3,
+        maxHp: 3,
+        batchedEntries: [
+          bushBatch.entryRefs[i * 3],
+          bushBatch.entryRefs[i * 3 + 1],
+          bushBatch.entryRefs[i * 3 + 2],
+        ],
+      });
+    });
       },
     });
   }

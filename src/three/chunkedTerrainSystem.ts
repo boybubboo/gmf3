@@ -7,6 +7,7 @@ import {
   sampleTerrainHeight,
   sampleTerrainWeathering,
 } from '../utils/terrain';
+import { disposeObjectBVH, initBvhAcceleration } from './bvhAcceleration';
 
 export interface TerrainWorldMapContext {
   worldMap?: WorldMapData;
@@ -637,9 +638,32 @@ export class ChunkedTerrainSystem {
     chunk.geometry.attributes.aWeather1.needsUpdate = true;
     chunk.geometry.computeBoundingBox();
     chunk.geometry.computeBoundingSphere();
+
+    // Maintain O(log N) MeshBVH on LOD0 surface range for fast sculpting & Play Mode raycasting
+    initBvhAcceleration();
+    const bvhGeo = chunk.geometry as THREE.BufferGeometry & {
+      boundsTree?: unknown;
+      computeBoundsTree?: (opts?: Record<string, unknown>) => void;
+      disposeBoundsTree?: () => void;
+    };
+    if (bvhGeo.boundsTree && typeof bvhGeo.disposeBoundsTree === 'function') {
+      bvhGeo.disposeBoundsTree();
+    }
+    if (typeof bvhGeo.computeBoundsTree === 'function') {
+      try {
+        const lod0 = this.sharedIndices.ranges[0];
+        bvhGeo.computeBoundsTree({
+          range: { start: lod0.start, count: lod0.count },
+          maxLeafSize: 16,
+        });
+      } catch {
+        // Fallback safely to standard raycast
+      }
+    }
   }
 
   public dispose(): void {
+    disposeObjectBVH(this.group);
     for (let i = 0; i < this.chunks.length; i++) {
       this.chunks[i].geometry.dispose();
     }

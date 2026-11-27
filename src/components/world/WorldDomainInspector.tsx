@@ -654,6 +654,13 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
               );
             })}
           </div>
+          <button
+            type="button"
+            onClick={() => store.erodeAllMountains(0.95)}
+            className="w-full py-1.5 px-2.5 rounded-xl text-[11px] font-bold bg-sky-500/12 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300 border border-sky-500/25 transition-colors"
+          >
+            Erode Mountains (Hydraulic + Scree)
+          </button>
 
           <div className="grid grid-cols-4 gap-1">
             {(['smooth', 'dome', 'peak', 'plateau'] as TerrainBrushFalloff[]).map((f) => (

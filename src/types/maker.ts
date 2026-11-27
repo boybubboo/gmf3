@@ -2339,6 +2339,17 @@ export interface PostProcessingConfig {
   ssrEnabled?: boolean;
   ssrIntensity?: number; // 0..1.5
   ssrMaxRoughness?: number; // 0.1..0.9
+  // Tone Mapping curve ('agx' for creamy AAA highlight roll-off, or 'aces')
+  toneMapping?: 'agx' | 'aces';
+  // Half-Res Ground-Truth Ambient Occlusion (r187 GTAONode)
+  gtaoEnabled?: boolean;
+  gtaoIntensity?: number; // 0..2.0
+  gtaoRadius?: number; // 0.2..2.5
+  // Screen-Space Volumetric Sun Shafts (God Rays)
+  godRaysEnabled?: boolean;
+  godRaysIntensity?: number; // 0..1.5
+  // Opt-In Temporal Reprojection Anti-Aliasing (r187 TRAANode, OFF by default)
+  traaEnabled?: boolean;
 }
 
 export interface GameProject {

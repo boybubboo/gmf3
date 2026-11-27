@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { buildObjectBVH } from './bvhAcceleration';
 import type {
   AssetCategory,
   BuildingBlockConfig,
@@ -74,6 +78,44 @@ export interface CustomModelInstance {
 }
 
 const loader = new GLTFLoader();
+// Attach Meshopt (bundled locally), Draco, and KTX2/Basis Universal decoders for AAA compressed GLBs
+loader.setMeshoptDecoder(MeshoptDecoder);
+
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+dracoLoader.setDecoderConfig({ type: 'wasm' });
+loader.setDRACOLoader(dracoLoader);
+
+const ktx2Loader = new KTX2Loader();
+ktx2Loader.setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/libs/basis/');
+loader.setKTX2Loader(ktx2Loader);
+
+let ktx2SupportDetected = false;
+
+/**
+ * Configures GPU-compressed KTX2 / Basis Universal transcoding targets for the active
+ * WebGPURenderer (or WebGL2 fallback) once after renderer initialization.
+ */
+export function configureGltfRendererSupport(renderer: WebGPURenderer): void {
+  if (ktx2SupportDetected) return;
+  ktx2SupportDetected = true;
+  try {
+    const ktxAny = ktx2Loader as unknown as {
+      detectSupportAsync?: (r: WebGPURenderer) => Promise<KTX2Loader>;
+      detectSupport?: (r: WebGPURenderer) => KTX2Loader;
+    };
+    if (typeof ktxAny.detectSupportAsync === 'function') {
+      void ktxAny.detectSupportAsync(renderer).catch(() => {
+        // Ignore if running in software fallback
+      });
+    } else if (typeof ktxAny.detectSupport === 'function') {
+      ktxAny.detectSupport(renderer);
+    }
+  } catch {
+    // Safe fallback
+  }
+}
+
 const parsedCache = new Map<string, CachedGLTF>();
 const pendingLoads = new Map<string, Promise<CachedGLTF | null>>();
 const listeners = new Set<() => void>();
@@ -178,6 +220,11 @@ function downsampleGLTFTexture(
   }
   tex.anisotropy = Math.min(tex.anisotropy || MAX_GLTF_TEX_ANISOTROPY, MAX_GLTF_TEX_ANISOTROPY);
 
+  // Preserve GPU-compressed KTX2 / Basis Universal textures directly in VRAM (4x-8x memory savings)
+  if ((tex as THREE.CompressedTexture).isCompressedTexture) {
+    return;
+  }
+
   const img = tex.image as
     | { width?: number; height?: number; naturalWidth?: number; naturalHeight?: number; close?: () => void }
     | undefined;
@@ -257,6 +304,8 @@ function prepareGLTFScene(gltf: GLTF, category: AssetCategory): CachedGLTF {
     interleave: true,
     computeBounds: true,
   });
+  // Build O(log N) MeshBVH bounds trees on static meshes for instant editor picking & Play Mode raycasts
+  buildObjectBVH(root, 180);
   const { baseScale, baseGroundOffset } = computeNormalizedBounds(root, category);
   const skeletonInfo = inspectModelSkeleton(root);
   const clipDiagnostics = animations.map((c, idx) => inspectAnimationClip(c, `Clip ${idx + 1}`));

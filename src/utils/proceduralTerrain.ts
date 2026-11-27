@@ -9,6 +9,7 @@ import type {
   TerrainBrushOptions,
   TerrainData,
 } from '../types/maker';
+import { runTerrainErosion } from '../three/terrainErosion';
 
 export interface ProtectedTerrainAnchor {
   x: number;
@@ -879,18 +880,22 @@ export function applyProceduralTerrainStamp(
       : new Array<number>(width * width).fill(0);
 
   if (brush === 'hydraulicErosion') {
-    runThermalHydraulicErosionPass(
-      updatedHeights,
-      width,
-      minRow,
-      maxRow,
-      minCol,
-      maxCol,
-      step,
-      clamp(strength * 0.85, 0.2, 1.0)
-    );
+    // Run real particle-based hydraulic rain-droplet + thermal scree erosion inside brush radius
+    const eroded = runTerrainErosion(terrain, {
+      region: { x, z, radius },
+      droplets: Math.round(520 + Math.min(45, radius) * 18),
+      maxSteps: 22,
+      strength: clamp(strength * 0.95, 0.25, 1.8),
+      thermalPasses: 1,
+    });
+    for (let i = 0; i < updatedHeights.length && i < eroded.heights.length; i++) {
+      updatedHeights[i] = eroded.heights[i];
+    }
+    for (let i = 0; i < updatedLayers.length && i < eroded.layers.length; i++) {
+      updatedLayers[i] = eroded.layers[i];
+    }
 
-    // Carve fine rainwater rills & accumulate silt/cracks within the brush disk
+    // Add fine weathering cracks, silt & cliff exposure along newly carved gullies
     for (let row = minRow; row <= maxRow; row++) {
       const vz = -worldRadius + row * step;
       const rowOff = row * width;

@@ -217,6 +217,13 @@ export function createDefaultPostProcessingConfig(): PostProcessingConfig {
     ssrEnabled: false,
     ssrIntensity: 0.65,
     ssrMaxRoughness: 0.55,
+    toneMapping: 'agx',
+    gtaoEnabled: true,
+    gtaoIntensity: 0.72,
+    gtaoRadius: 0.85,
+    godRaysEnabled: true,
+    godRaysIntensity: 0.52,
+    traaEnabled: false,
   };
 }
 
@@ -243,6 +250,27 @@ export function resolvePostProcessingConfig(
   }
   if (cfg.ssrMaxRoughness === undefined) {
     merged.ssrMaxRoughness = 0.55;
+  }
+  if (cfg.toneMapping === undefined) {
+    merged.toneMapping = 'agx';
+  }
+  if (cfg.gtaoEnabled === undefined) {
+    merged.gtaoEnabled = true;
+  }
+  if (cfg.gtaoIntensity === undefined) {
+    merged.gtaoIntensity = 0.72;
+  }
+  if (cfg.gtaoRadius === undefined) {
+    merged.gtaoRadius = 0.85;
+  }
+  if (cfg.godRaysEnabled === undefined) {
+    merged.godRaysEnabled = true;
+  }
+  if (cfg.godRaysIntensity === undefined) {
+    merged.godRaysIntensity = 0.52;
+  }
+  if (cfg.traaEnabled === undefined) {
+    merged.traaEnabled = false;
   }
   return merged;
 }

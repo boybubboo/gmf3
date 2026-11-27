@@ -228,6 +228,7 @@ import {
   smoothOrganicMossLayers,
   uid,
 } from '../utils/terrain';
+import { runTerrainErosion } from '../three/terrainErosion';
 
 import {
   loadProjectsSnapshotFromIDB,
@@ -1761,6 +1762,28 @@ export function useMakerStore() {
       if (committedCaveId) {
         setSelectedCaveId(committedCaveId);
       }
+    },
+    [updateLevel]
+  );
+
+  const erodeAllMountains = useCallback(
+    (strength = 0.9) => {
+      updateLevel(
+        'erode mountains (hydraulic + scree)',
+        (lvl) => {
+          const base = lvl.terrain ?? createInitialTerrain();
+          return {
+            ...lvl,
+            terrain: runTerrainErosion(base, {
+              droplets: 12000,
+              maxSteps: 34,
+              strength,
+              thermalPasses: 3,
+            }),
+          };
+        },
+        true
+      );
     },
     [updateLevel]
   );
@@ -4453,6 +4476,7 @@ export function useMakerStore() {
     deleteCurrentLevel,
     applyBrush,
     commitCaveStroke,
+    erodeAllMountains,
     resetTerrain,
     addEntity,
     addEntitiesBatch,

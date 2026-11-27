@@ -271,6 +271,26 @@ export function buildVistaTreeSpeciesInstancedGroup(opts: {
   const instTint = new THREE.Color();
   const botwCache = new Map<THREE.Material, THREE.Material>();
 
+  // Split placements: mid-ground full 3D vista instances vs. far-horizon lightweight star cross-card impostors
+  const IMPOSTOR_DIST_SQ = 148 * 148;
+  const nearPlacements: VistaTreePlacement[] = [];
+  const farPlacements: VistaTreePlacement[] = [];
+  for (let i = 0; i < placements.length; i++) {
+    const p = placements[i];
+    if (p.x * p.x + p.z * p.z > IMPOSTOR_DIST_SQ) {
+      farPlacements.push(p);
+    } else {
+      nearPlacements.push(p);
+    }
+  }
+
+  // Track representative foliage & bark aesthetics for building a matching far-horizon impostor archetype
+  let repFoliageMap: THREE.Texture | null = null;
+  let repFoliageAlphaTest = 0;
+  let repTreeHeight = 5.4;
+  let repCanopyRadius = 2.15;
+  let repCanopyColor = new THREE.Color('#4A7C3F');
+
   for (const bucket of buckets.values()) {
     if (bucket.geos.length === 0) continue;
     const merged = mergeGeometries(bucket.geos, false);
@@ -278,7 +298,40 @@ export function buildVistaTreeSpeciesInstancedGroup(opts: {
     bucket.geos.length = 0;
     if (!merged) continue;
 
+    merged.computeBoundingBox();
     merged.computeBoundingSphere();
+
+    if (bucket.isFoliage && merged.boundingBox) {
+      const bb = merged.boundingBox;
+      repTreeHeight = Math.max(3.2, bb.max.y);
+      repCanopyRadius = Math.max(1.2, Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) * 0.5);
+      if (bucket.mapTex) {
+        repFoliageMap = bucket.mapTex;
+        repFoliageAlphaTest = bucket.alphaTest;
+      }
+      const colAttr = merged.attributes.color as THREE.BufferAttribute | undefined;
+      if (colAttr && colAttr.count > 0) {
+        const sampleStep = Math.max(1, Math.floor(colAttr.count / 24));
+        let sr = 0;
+        let sg = 0;
+        let sb = 0;
+        let sc = 0;
+        for (let k = 0; k < colAttr.count; k += sampleStep) {
+          sr += colAttr.getX(k);
+          sg += colAttr.getY(k);
+          sb += colAttr.getZ(k);
+          sc++;
+        }
+        if (sc > 0) {
+          repCanopyColor.setRGB(sr / sc, sg / sc, sb / sc);
+        }
+      }
+    }
+
+    if (nearPlacements.length === 0) {
+      merged.dispose();
+      continue;
+    }
 
     const mat = new THREE.MeshStandardMaterial({
       color: '#FFFFFF',
@@ -292,13 +345,13 @@ export function buildVistaTreeSpeciesInstancedGroup(opts: {
       envMapIntensity: bucket.isFoliage ? 0.34 : 0.45,
     });
 
-    const instMesh = new THREE.InstancedMesh(merged, mat, placements.length);
+    const instMesh = new THREE.InstancedMesh(merged, mat, nearPlacements.length);
     instMesh.castShadow = false;
     instMesh.receiveShadow = false;
     instMesh.frustumCulled = false;
 
-    for (let i = 0; i < placements.length; i++) {
-      const p = placements[i];
+    for (let i = 0; i < nearPlacements.length; i++) {
+      const p = nearPlacements[i];
       dummy.position.set(p.x, p.y, p.z);
       dummy.rotation.set(0, p.rot, 0);
       dummy.scale.setScalar(p.s * treeScaleMultiplier);
@@ -335,6 +388,86 @@ export function buildVistaTreeSpeciesInstancedGroup(opts: {
     );
 
     resultGroup.add(instMesh);
+  }
+
+  // Far-horizon ultra-lightweight 3-plane star cross-card impostor forest (~12 tris per tree, radially lit normals)
+  if (farPlacements.length > 0) {
+    const canopyCenterY = repTreeHeight * 0.64;
+    const crownH = repTreeHeight * 0.68;
+    const crownW = repCanopyRadius * 1.95;
+    const cardPlanes: THREE.BufferGeometry[] = [];
+    for (let k = 0; k < 3; k++) {
+      const plane = new THREE.PlaneGeometry(crownW, crownH, 1, 1);
+      plane.rotateY((k * Math.PI) / 3);
+      plane.translate(0, canopyCenterY, 0);
+      // Point normals radially outward from canopy center for soft lush tree volume (no flat card lighting seams)
+      const pos = plane.attributes.position as THREE.BufferAttribute;
+      const nrm = plane.attributes.normal as THREE.BufferAttribute;
+      const vCols = new Float32Array(pos.count * 3);
+      for (let v = 0; v < pos.count; v++) {
+        const vx = pos.getX(v);
+        const vy = pos.getY(v) - canopyCenterY;
+        const vz = pos.getZ(v);
+        const len = Math.max(0.01, Math.hypot(vx, vy * 1.15 + crownH * 0.25, vz));
+        nrm.setXYZ(v, vx / len, (vy * 1.15 + crownH * 0.25) / len, vz / len);
+        const topShade = vy > 0 ? 1.06 : 0.72;
+        vCols[v * 3] = repCanopyColor.r * topShade;
+        vCols[v * 3 + 1] = repCanopyColor.g * topShade;
+        vCols[v * 3 + 2] = repCanopyColor.b * topShade;
+      }
+      plane.setAttribute('color', new THREE.BufferAttribute(vCols, 3));
+      const nonIdxCard = plane.index ? plane.toNonIndexed() : plane;
+      if (nonIdxCard !== plane) plane.dispose();
+      cardPlanes.push(nonIdxCard);
+    }
+
+    const impostorGeo = mergeGeometries(cardPlanes, false);
+    for (const p of cardPlanes) p.dispose();
+    if (impostorGeo) {
+      impostorGeo.computeBoundingSphere();
+      const impostorMat = new THREE.MeshStandardMaterial({
+        color: '#FFFFFF',
+        vertexColors: true,
+        map: repFoliageMap,
+        alphaTest: repFoliageMap ? Math.max(0.32, repFoliageAlphaTest) : 0,
+        transparent: false,
+        side: THREE.DoubleSide,
+        roughness: 0.9,
+        metalness: 0,
+        envMapIntensity: 0.3,
+      });
+      const impostorInst = new THREE.InstancedMesh(impostorGeo, impostorMat, farPlacements.length);
+      impostorInst.castShadow = false;
+      impostorInst.receiveShadow = false;
+      impostorInst.frustumCulled = false;
+
+      for (let i = 0; i < farPlacements.length; i++) {
+        const p = farPlacements[i];
+        dummy.position.set(p.x, p.y, p.z);
+        dummy.rotation.set(0, p.rot, 0);
+        dummy.scale.setScalar(p.s * treeScaleMultiplier);
+        dummy.updateMatrix();
+        impostorInst.setMatrixAt(i, dummy.matrix);
+
+        const shade = 0.88 + ((i * 5) % 5) * 0.045;
+        instTint.setRGB(shade, shade, shade);
+        impostorInst.setColorAt(i, instTint);
+      }
+      impostorInst.instanceMatrix.needsUpdate = true;
+      if (impostorInst.instanceColor) impostorInst.instanceColor.needsUpdate = true;
+
+      applyBotwStyleToObject(
+        impostorInst,
+        style,
+        {
+          isFoliage: true,
+          rimStrengthScale: 0.65,
+          shadowLiftScale: 0.9,
+        },
+        botwCache
+      );
+      resultGroup.add(impostorInst);
+    }
   }
 
   return resultGroup;

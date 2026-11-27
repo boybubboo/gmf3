@@ -94,8 +94,8 @@ export const CameraModes: {
   title: string;
   blurb: string;
 }[] = [
-  { id: 'front', title: 'Front Always', blurb: 'Hero always faces forward & scene turns with you — drag to look around, auto-rights on move' },
-  { id: 'heroFront', title: 'Front View (Facing You)', blurb: 'Camera in front of your hero so you see them walk toward you with clear near foreground ahead' },
+  { id: 'front', title: 'Front', blurb: 'Close behind-the-hero view — hero stays right in front facing forward and the world turns with you' },
+  { id: 'heroFront', title: 'Face View (Facing You)', blurb: 'Camera in front of your hero so you see them walk toward you with clear near foreground ahead' },
   { id: 'chase', title: 'Adventure Chase', blurb: 'Free look over-the-shoulder camera (drag sky to turn)' },
   { id: 'firstPerson', title: 'Character POV', blurb: 'First-person eye-level view from your character — drag mouse to look around' },
   { id: 'cozy', title: 'Cozy Close', blurb: 'Closer warm view framing your hero' },
@@ -1263,6 +1263,28 @@ export const DefaultInventoryItems: InventoryItemDef[] = [
       rarity: 'common',
       weight: 0.25,
       properties: { botanical: 'Rubus Sylvestris', reagent: 'Sweet Base' },
+    },
+  },
+  {
+    id: 'orchard_apple',
+    name: 'Sunlit Orchard Fruit',
+    category: 'consumable',
+    colorHex: '#EF4444',
+    icon: 'apple',
+    description: 'Crisp fresh fruit picked right from a tree canopy (+2 HP, +35 Stamina).',
+    lore: 'Sun-ripened woodland orchard fruit harvested high among the branches.',
+    magicEffect: 'Restores 2 Hearts and 35% Stamina instantly.',
+    meshKind: 'berries',
+    healAmount: 2,
+    staminaAmount: 35,
+    metadata: {
+      power: 10,
+      durability: 1,
+      maxDurability: 1,
+      magic_effect: 'Crisp canopy fruit (+2 HP, +35% Stamina).',
+      rarity: 'common',
+      weight: 0.35,
+      properties: { harvestSource: 'Climbed Fruit Trees', freshness: 'Tree-Picked' },
     },
   },
   {

@@ -454,6 +454,115 @@ export const PostProcessingPanel: React.FC<{ store: MakerStore }> = ({ store }) 
             )}
           </div>
 
+          {/* 2c. Half-Res Ambient Occlusion (GTAO) */}
+          <div className="space-y-2 p-2.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/60 dark:border-white/[0.06]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-extrabold">
+                <Sparkles size={13} className="text-[#8B5CF6]" />
+                <span>Ambient Occlusion (GTAO)</span>
+              </div>
+              <ToggleSwitch
+                checked={cfg.gtaoEnabled ?? true}
+                onChange={(next) => patchPost({ gtaoEnabled: next }, true)}
+                accent="#8B5CF6"
+                ariaLabel="Toggle Ambient Occlusion"
+              />
+            </div>
+
+            {(cfg.gtaoEnabled ?? true) && (
+              <div className="space-y-2 pt-1">
+                <SliderControl
+                  label="Crevice Depth"
+                  value={cfg.gtaoIntensity ?? 0.72}
+                  min={0}
+                  max={1.6}
+                  step={0.02}
+                  display={`${Math.round((cfg.gtaoIntensity ?? 0.72) * 100)}%`}
+                  accent="#8B5CF6"
+                  onChange={(v) => patchPost({ gtaoIntensity: v })}
+                />
+                <SliderControl
+                  label="AO Radius"
+                  value={cfg.gtaoRadius ?? 0.85}
+                  min={0.2}
+                  max={2.4}
+                  step={0.05}
+                  display={`${(cfg.gtaoRadius ?? 0.85).toFixed(2)}m`}
+                  accent="#8B5CF6"
+                  onChange={(v) => patchPost({ gtaoRadius: v })}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* 2d. Volumetric Sun Shafts & Filmic Tone Mapper */}
+          <div className="space-y-2 p-2.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/60 dark:border-white/[0.06]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-extrabold">
+                <Sun size={13} className="text-[#F59E0B]" />
+                <span>Volumetric Sun Shafts</span>
+              </div>
+              <ToggleSwitch
+                checked={cfg.godRaysEnabled ?? true}
+                onChange={(next) => patchPost({ godRaysEnabled: next }, true)}
+                accent="#F59E0B"
+                ariaLabel="Toggle Volumetric Sun Shafts"
+              />
+            </div>
+
+            {(cfg.godRaysEnabled ?? true) && (
+              <div className="space-y-2 pt-1">
+                <SliderControl
+                  label="Shaft Intensity"
+                  value={cfg.godRaysIntensity ?? 0.52}
+                  min={0}
+                  max={1.4}
+                  step={0.02}
+                  display={`${Math.round((cfg.godRaysIntensity ?? 0.52) * 100)}%`}
+                  accent="#F59E0B"
+                  onChange={(v) => patchPost({ godRaysIntensity: v })}
+                />
+              </div>
+            )}
+
+            <div className="pt-2 border-t border-slate-200/60 dark:border-white/[0.06] flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-[#949BB0]">
+                Tone Mapper
+              </span>
+              <div className="inline-flex rounded-lg bg-slate-100 dark:bg-[#12151E] p-0.5">
+                {(['agx', 'aces'] as const).map((tm) => {
+                  const active = (cfg.toneMapping ?? 'agx') === tm;
+                  return (
+                    <button
+                      key={tm}
+                      type="button"
+                      onClick={() => patchPost({ toneMapping: tm }, true)}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase transition-colors ${
+                        active
+                          ? 'bg-[#7C5CFF] text-white'
+                          : 'text-slate-600 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      {tm === 'agx' ? 'AgX' : 'ACES'}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-200/60 dark:border-white/[0.06] flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-[#949BB0]">
+                Anti-Shimmer (TRAA)
+              </span>
+              <ToggleSwitch
+                checked={Boolean(cfg.traaEnabled)}
+                onChange={(next) => patchPost({ traaEnabled: next }, true)}
+                accent="#10B981"
+                ariaLabel="Toggle Temporal Anti-Aliasing (TRAA)"
+              />
+            </div>
+          </div>
+
           {/* 3. Color Grading Section */}
           <div className="space-y-2.5 p-2.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/60 dark:border-white/[0.06]">
             <div className="flex items-center justify-between gap-2">

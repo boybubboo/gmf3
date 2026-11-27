@@ -2,6 +2,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three';
 import type { WebGPURenderer } from 'three/webgpu';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
+import { attachSunCSM, type CsmShadowHandle } from '../../three/csmShadowSetup';
+import { CharacterFootIKController } from '../../three/characterFootIK';
+import { PlayNavMeshEngine } from '../../three/navMeshEngine';
+import { HybridRapierPhysicsWorld } from '../../three/rapierPhysicsWorld';
+import { WildlifeFlockingSystem } from '../../three/wildlifeFlockingSystem';
+import {
+  WorldInteractivitySystem,
+  type DebrisTheme,
+  type PushableStoneBlock,
+  type RockImpactEnemyTarget,
+  type WorldInteractivityCallbacks,
+} from '../../three/worldInteractivitySystem';
 import {
   Anvil,
   Backpack,
@@ -515,6 +527,16 @@ interface RuntimeEntity {
   entityScale?: number;
   npcWanderAngle?: number;
   npcWanderTimer?: number;
+  npcPauseTimer?: number;
+  chickenMode?: 'walk' | 'peck' | 'idle';
+  chickenTimer?: number;
+  chickenYaw?: number;
+  chickenSpeedVal?: number;
+  propHp?: number;
+  propMaxHp?: number;
+  propShakeTimer?: number;
+  propShakeDirX?: number;
+  propShakeDirZ?: number;
   baddieAI?: BaddieAIConfig;
   flightY: number;
   targetFlightY: number;
@@ -605,6 +627,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
   const [climbPrompt, setClimbPrompt] = useState<{
     label: string;
     active: boolean;
+  } | null>(null);
+  const [worldActionPrompt, setWorldActionPrompt] = useState<{
+    kind: 'rock' | 'boulder' | 'carryingRock' | 'carryingBoulder' | 'wallTorch' | 'treeFruit';
+    label: string;
+    hint?: string;
   } | null>(null);
   const [glidePrompt, setGlidePrompt] = useState<'ready' | 'readySecond' | 'gliding' | null>(null);
   const [fishingBanner, setFishingBanner] = useState<'none' | 'waiting' | 'bite'>('none');
@@ -1642,23 +1669,26 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
   const toggleCharacterPov = useCallback(() => {
     if (isDrivingMode || envType === 'sideScroller') return;
     setLiveCamMode((prev) => {
-      const behindMode: CameraMode =
-        baseCamMode === 'firstPerson' || baseCamMode === 'heroFront' || baseCamMode === 'close'
-          ? 'front'
-          : baseCamMode;
-      const next: CameraMode =
-        prev === 'close'
-          ? 'heroFront'
-          : prev === 'heroFront'
-          ? 'firstPerson'
-          : prev === 'firstPerson'
-          ? behindMode
-          : 'close';
+      const baseIsSpecial =
+        baseCamMode === 'front' ||
+        baseCamMode === 'close' ||
+        baseCamMode === 'heroFront' ||
+        baseCamMode === 'firstPerson';
+      const cycleOrder: CameraMode[] = baseIsSpecial
+        ? ['front', 'close', 'heroFront', 'firstPerson', 'isometric']
+        : [baseCamMode, 'front', 'close', 'heroFront', 'firstPerson'];
+      const curIdx = cycleOrder.indexOf(prev);
+      const next: CameraMode = cycleOrder[(curIdx + 1) % cycleOrder.length];
+
       inputRef.current.lookPitchOffset = 0;
       inputRef.current.lookYawOffset = 0;
       if (next === 'firstPerson') {
         const hy = liveHeroYawRef.current;
         inputRef.current.cameraYaw = Math.atan2(-Math.sin(hy), -Math.cos(hy));
+      } else if (next === 'front') {
+        // Lock right behind hero facing forward
+        inputRef.current.lookYawOffset = 0;
+        inputRef.current.lookPitchOffset = 0;
       } else if (next === 'close' && prev === 'front') {
         const hy = liveHeroYawRef.current;
         inputRef.current.cameraYaw = Math.atan2(-Math.sin(hy), -Math.cos(hy));
@@ -1673,11 +1703,13 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       showToastGlobal(
         next === 'firstPerson'
           ? 'Camera: Character POV (First-Person)'
+          : next === 'front'
+          ? 'Camera: Front View (Behind Hero)'
           : next === 'heroFront'
-          ? 'Camera: Front View (Walking Toward You)'
+          ? 'Camera: Face View (Facing You)'
           : next === 'close'
           ? 'Camera: Close View'
-          : `Camera: ${next === 'front' ? 'Behind Trail' : next === 'cozy' ? 'Cozy Behind' : next === 'isometric' ? 'Isometric' : 'Chase'} View`
+          : `Camera: ${next === 'cozy' ? 'Cozy Behind' : next === 'isometric' ? 'Isometric' : 'Chase'} View`
       );
       return next;
     });
@@ -2155,12 +2187,41 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     sun.shadow.needsUpdate = !isSoftwareGl;
     scene.add(sun);
     scene.add(sun.target);
+    let sunCsm: CsmShadowHandle | null = attachSunCSM(sun, {
+      isSoftwareGl,
+      cascades: 3,
+      maxFar: 185,
+      lightMargin: 85,
+      mapSize: 1024,
+    });
+    const heroFootIK = new CharacterFootIKController();
+    let prevHeroYawForIK = 0;
+    let wasAirborneForIK = false;
 
     const fpsTorchLight = new THREE.PointLight('#FFAA4C', 0, 14, 1.5);
     scene.add(fpsTorchLight);
 
     let envTex: THREE.Texture | null = null;
     let postPipeline: PostProcessingPipeline | null = null;
+    let wildlifeSystem: WildlifeFlockingSystem | null = null;
+    let worldInteract: WorldInteractivitySystem | null = null;
+    let navMeshEngine: PlayNavMeshEngine | null = null;
+    let rapierPhysics: HybridRapierPhysicsWorld | null = null;
+    const rapierTumblingIds = new Set<string>();
+    const _aimRaycaster = new THREE.Raycaster();
+    const _aimNdc = new THREE.Vector2();
+    const _aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const _aimHit = new THREE.Vector3();
+    let latestHeroYForAim = 0;
+    let caveEyeAdaptBlend = 0;
+    let basePlayExposure = renderer.toneMappingExposure || 1.05;
+    let baseHemiIntensity = hemi.intensity;
+    const baseHemiSkyColor = hemi.color.clone();
+    const baseHemiGroundColor = hemi.groundColor.clone();
+    const caveHemiSkyColor = new THREE.Color('#64748B');
+    const caveHemiGroundColor = new THREE.Color('#1E293B');
+    const caveFillLight = new THREE.PointLight('#93C5FD', 0, 14, 1.8);
+    scene.add(caveFillLight);
     const timer = new THREE.Timer();
 
     let frameId = 0;
@@ -2176,6 +2237,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
       postPipeline?.setSize(w, h);
+      sunCsm?.updateFrustums();
     };
 
     const onResize = () => {
@@ -2207,6 +2269,21 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       lastCamY = e.clientY;
     };
     const onPointerMove = (e: PointerEvent) => {
+      // When carrying a rock or boulder, moving the cursor smoothly guides the 3D orange aiming bullseye
+      if (worldInteract?.carriedRock && !draggingCam) {
+        const rect = dom.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          _aimNdc.set(
+            ((e.clientX - rect.left) / rect.width) * 2 - 1,
+            -((e.clientY - rect.top) / rect.height) * 2 + 1
+          );
+          _aimPlane.constant = -latestHeroYForAim;
+          _aimRaycaster.setFromCamera(_aimNdc, camera);
+          if (_aimRaycaster.ray.intersectPlane(_aimPlane, _aimHit)) {
+            worldInteract.setPointerAimWorldPoint(_aimHit.x, _aimHit.z);
+          }
+        }
+      }
       if (!draggingCam || !canOrbit) return;
       const dx = e.clientX - lastCamX;
       const dy = e.clientY - lastCamY;
@@ -2247,6 +2324,10 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       draggingCam = false;
     };
     const onWheel = (e: WheelEvent) => {
+      if (worldInteract?.carriedRock) {
+        worldInteract.adjustAimRange(-e.deltaY * 0.008);
+        return;
+      }
       const activeMode = resolvedCamModeRef.current;
       if (activeMode === 'sideScroll' || activeMode === 'firstPerson' || isDrivingLevel) return;
       inputRef.current.cameraDistance = THREE.MathUtils.clamp(
@@ -2483,6 +2564,19 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       });
       islandHandlesRef = islandHandles;
       scene.add(islandHandles.group);
+      // Capture post-atmosphere baseline exposure & hemisphere light for smooth cave eye adaptation
+      basePlayExposure = renderer.toneMappingExposure || 1.05;
+      baseHemiIntensity = hemi.intensity;
+      baseHemiSkyColor.copy(hemi.color);
+      baseHemiGroundColor.copy(hemi.groundColor);
+      if (!isSoftwareGl && env !== 'dungeon') {
+        wildlifeSystem = new WildlifeFlockingSystem(activeLevel, isIOS ? 0.6 : 1.0);
+        scene.add(wildlifeSystem.group);
+      }
+      if (!isSoftwareGl) {
+        navMeshEngine = new PlayNavMeshEngine();
+        void navMeshEngine.buildForLevel(activeLevel);
+      }
       // Yield one frame between terrain mesh construction and entity construction
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       if (disposed) return;
@@ -2652,6 +2746,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       let forestDenseHoldTimer = 0;
       let forestClearHoldTimer = 0;
       let wasCloseCamMode = resolvedCamModeRef.current === 'close';
+      let prevCamModeForSnap: CameraMode = resolvedCamModeRef.current;
       let lastAutoCloseToastAt = -10;
       let camBeforeAutoClose: CameraMode | null = null;
       let respawnX = startX;
@@ -3492,7 +3587,244 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         spawnCombatSparks(cx, cy + 0.85, cz, '#FACC15', 20, 6.2);
       };
 
+      const spawnSecretPuzzleChest = (rx: number, rz: number) => {
+        const chestId = `puzzle_secret_chest_${Math.round(performance.now())}_${Math.floor(Math.random() * 999)}`;
+        const chestName = 'Ancient Secret Chest';
+        const [cx, cz] = resolveHorizontalCollision(activeLevel, rx, rz, 0.85, false, collisionCtx);
+        const cy = sampleLevelHeight(activeLevel, cx, cz);
+        const tempChestEnt: LevelEntity = {
+          id: chestId,
+          name: chestName,
+          kind: 'treasure',
+          position: levelWorldToBoard(activeLevel, cx, cz),
+          scale: 1.18,
+          rotation: Math.round((Math.atan2(heroX - cx, heroZ - cz) * 180) / Math.PI),
+          speed: 0,
+          health: 1,
+          damage: 0,
+          brain: 'Guardian',
+          isBoss: false,
+          loot: 'treasure',
+          puzzleType: 'none',
+          dialogue: '',
+          platformPreset: 'stoneLift',
+          platformMotion: 'slide',
+          platformSpeed: 0,
+          platformWait: 0,
+          platformRunning: false,
+          conversation: [],
+          notes: '',
+          styleTint: '#38BDF8',
+          cards: [],
+        };
+        const chestMesh = buildEntityMesh(tempChestEnt);
+        if (style !== 'painterlyPBR') {
+          applyVisualStyleToObject(chestMesh, style);
+        }
+        chestMesh.position.set(cx, cy, cz);
+        chestMesh.rotation.y = Math.atan2(heroX - cx, heroZ - cz);
+        scene.add(chestMesh);
+
+        const chestAnim =
+          (chestMesh.userData.chestAnim as TreasureChestAnimRig | undefined) ?? null;
+        const entries: ChestLootEntry[] = [];
+        for (const itemId of ['healing_tonic', 'wild_berries', 'orchard_apple']) {
+          const def = itemByIdRef.current.get(itemId);
+          if (!def) continue;
+          const meta = resolveItemMetadata(def);
+          entries.push({
+            uid: `${chestId}_${itemId}`,
+            kind: 'item',
+            qty: itemId === 'healing_tonic' ? 1 : 2,
+            label: def.name,
+            subtitle: 'Ancient Stone Secret',
+            rarity: meta.rarity,
+            itemId: def.id,
+            itemDef: def,
+          });
+        }
+        entries.push({
+          uid: `${chestId}_coins`,
+          kind: 'coin',
+          qty: 25,
+          label: 'Ancient Gold Cache',
+          subtitle: 'Stone Switch Reward',
+          rarity: 'rare',
+        });
+        chestEntriesByEntityRef.current.set(chestId, entries);
+        runtimeEntities.push({
+          id: chestId,
+          kind: 'treasure',
+          name: chestName,
+          mesh: chestMesh,
+          customInst: null,
+          baddieRig: null,
+          quadrupedRig: null,
+          npcRig: null,
+          npcBaseBodyY: 0.72,
+          creatureHeroRig: null,
+          creatureBaseBodyY: 0.85,
+          customFlashMats: [],
+          hpBar: null,
+          x: cx,
+          z: cz,
+          startX: cx,
+          startZ: cz,
+          vx: 0,
+          vz: 0,
+          vy: 0,
+          yOffset: 0,
+          health: 1,
+          maxHealth: 1,
+          speed: 0,
+          isBoss: false,
+          brain: 'Guardian',
+          alive: true,
+          opened: false,
+          dialogue: '',
+          dialogueLines: [],
+          chatStyle: resolveChatBubbleStyle(undefined, 'treasure'),
+          lastProximityVoiceAt: -99999,
+          headHeight: 1.3,
+          aggroShouted: false,
+          lowHpShouted: false,
+          patrolDir: 1,
+          attackCooldown: 0,
+          aiState: 'patrol',
+          stateTimer: 0,
+          attackDirX: 0,
+          attackDirZ: 1,
+          strikeDidHit: false,
+          hitFlashTimer: 0,
+          recoilPitch: 0,
+          recoilRoll: 0,
+          walkPhase: 0,
+          defeatSpin: 0,
+          activeAttack: 'clawSlash',
+          attackCycleCount: 0,
+          regenTimer: 0,
+          pickupable: false,
+          pickupQty: 1,
+          giftGiven: false,
+          mechanisms: [],
+          mechController: null,
+          mechNearState: {},
+          mechFlagFired: {},
+          chestAnim,
+          chestLootEntries: entries,
+          chestOpening: false,
+          chestOpenTimer: 0,
+          fxRuntime: null,
+          isBuddy: false,
+          warmedUp: false,
+          critterCelebrateTimer: 0,
+          lastCritterReactAt: -99999,
+          recruited: false,
+          creatureRefs: null,
+          floatSpinMeshes: [],
+          cards: [],
+          propPreset: undefined,
+          entityYaw: chestMesh.rotation.y,
+          entityScale: 1.18,
+          flightY: 0,
+          targetFlightY: 0,
+          patrolAngle: 0,
+          lockedTargetX: cx,
+          lockedTargetZ: cz,
+          varietyCooldownMult: 1,
+          behaviorChaseOrdered: false,
+          behaviorFleeOrdered: false,
+          behaviorAttackQueue: null,
+          enraged: false,
+          dyingDuration: 1.0,
+          deathFinalized: false,
+          keyFillColor: '#38BDF8',
+          keyBorderColor: '#0284C7',
+          airAttacksSinceLand: 0,
+          postAirHoverTimer: 0,
+          groundedHoldTimer: 0,
+          mustLandBeforeAttack: false,
+          logicAnimName: null,
+          logicAnimTimer: 0,
+          logicAnimDuration: 1,
+          motionBlend: 0,
+          motionElapsed: 0,
+          motionKey: '',
+        });
+        spawnCombatSparks(cx, cy + 0.85, cz, '#38BDF8', 22, 6.4);
+      };
+
+      // Interactive World Physics: Organic throwable rocks & boulders, pushable distressed stone puzzle cubes,
+      // grabbable wall torches anywhere, and pooled 3D debris for destructible flora/props
+      if (!isDriving) {
+        worldInteract = new WorldInteractivitySystem(activeLevel, heroX, heroZ, scene, collisionCtx);
+        scene.add(worldInteract.group);
+        for (const rt of runtimeEntities) {
+          if (!rt.alive) continue;
+          const lname = rt.name.toLowerCase();
+          if (
+            rt.wallTorchLight ||
+            (rt.torchFlames && rt.torchFlames.length > 0) ||
+            (rt.kind === 'light' && (lname.includes('torch') || lname.includes('sconce'))) ||
+            (rt.kind === 'prop' && lname.includes('torch'))
+          ) {
+            const ty = sampleLevelHeight(activeLevel, rt.x, rt.z) + (rt.elevationY ?? 0) + 1.1;
+            worldInteract.registerEntityWallTorch(
+              `ent_torch_${rt.id}`,
+              rt.mesh,
+              rt.x,
+              ty,
+              rt.z,
+              rt.wallTorchLight ?? null
+            );
+          }
+        }
+      }
+
       const buddyEntities = runtimeEntities.filter((r) => r.isBuddy);
+
+      // Non-blocking Hybrid Rapier 3D WASM Physics for pushable/tumbleable props & melee blasts
+      if (!isSoftwareGl) {
+        rapierPhysics = new HybridRapierPhysicsWorld();
+        const physRef = rapierPhysics;
+        void physRef.initForLevel(activeLevel).then((ok) => {
+          if (!ok || disposed) return;
+          let registeredCount = 0;
+          for (const rt of runtimeEntities) {
+            if (registeredCount >= 32) break;
+            if (rt.kind !== 'prop' || !rt.alive || rt.buildingBlock || rt.doorConfig) continue;
+            const nm = rt.name.toLowerCase();
+            const pr = String(rt.propPreset ?? '').toLowerCase();
+            const isPushable =
+              pr === 'barrel' ||
+              pr === 'crate' ||
+              pr === 'boulder' ||
+              nm.includes('barrel') ||
+              nm.includes('crate') ||
+              nm.includes('keg') ||
+              nm.includes('pot') ||
+              nm.includes('urn') ||
+              nm.includes('boulder');
+            if (!isPushable) continue;
+            const isRound = nm.includes('boulder') || pr === 'boulder';
+            const isCyl =
+              nm.includes('barrel') ||
+              pr === 'barrel' ||
+              nm.includes('keg') ||
+              nm.includes('urn') ||
+              nm.includes('pot');
+            const sc = Math.max(0.45, Math.min(2.2, rt.entityScale || 1));
+            physRef.registerDynamicProp(rt.id, rt.mesh, {
+              radius: 0.48 * sc,
+              shape: isRound ? 'sphere' : isCyl ? 'cylinder' : 'box',
+              mass: isRound ? 2.4 : 1.2,
+              restitution: isRound ? 0.34 : 0.22,
+              baseYOffset: 0.45 * sc,
+            });
+            registeredCount++;
+          }
+        });
+      }
 
       // Baby Duckling companion (follows behind hero trail and peeps gently!)
       let ducklingMesh: THREE.Group | null = null;
@@ -3955,6 +4287,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       let heroKnockVX = 0;
       let heroKnockVZ = 0;
       let heroRecoilTimer = 0;
+      let heroHitPitchDir = -1;
+      let heroHitRollDir = 0;
       let heroCustomMotionBlend = 0;
       let heroCustomMotionElapsed = 0;
       let heroCustomMotionKey = '';
@@ -4413,7 +4747,10 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       let openingChestId: string | null = null;
       let lastSitPromptKey = '';
       let lastClimbPromptKey = '';
+      let lastWorldActionPromptKey = '';
       let lastGlidePromptKey: 'ready' | 'readySecond' | 'gliding' | '' = '';
+      const attackHitFlora = new Set<string>();
+      const rockTargetBuffer: RockImpactEnemyTarget[] = [];
       let lastNearCraftingBench = false;
       let armorBlockCounter = 0;
 
@@ -4503,6 +4840,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       };
       let isClimbing = false;
       let climbKind: 'entity' | 'tree' | 'mountain' = 'entity';
+      let climbingTree: (typeof islandHandles.choppableTrees)[number] | null = null;
       let climbAnchorX = 0;
       let climbAnchorZ = 0;
       let climbMaxY = 12;
@@ -4950,6 +5288,29 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             rt.defeatSpin = rt.quadrupedRig ? 0 : (Math.random() > 0.5 ? 1 : -1) * 7.5;
             hitStopTimer = 0;
             shakeTimer = Math.max(shakeTimer, rt.isBoss ? 0.36 : 0.2);
+            navMeshEngine?.removeAgent(rt.id);
+            if (rapierPhysics?.isReady()) {
+              rapierPhysics.applyRadialImpulse(
+                rt.x,
+                rt.mesh.position.y + 0.7,
+                rt.z,
+                4.5,
+                rt.isBoss ? 18 : 11,
+                0.55
+              );
+              if (!dyingPreset && !rt.isBoss && !rt.quadrupedRig) {
+                rapierPhysics.launchTumbleBody(
+                  rt.id,
+                  rt.mesh,
+                  knockX * 9.5,
+                  5.8,
+                  knockZ * 9.5,
+                  0.52 * Math.max(0.6, Math.min(1.6, rt.entityScale || 1)),
+                  rt.dyingDuration + 0.25
+                );
+                rapierTumblingIds.add(rt.id);
+              }
+            }
 
             if (rt.hpBar) {
               rt.hpBar.opacity = 0;
@@ -5570,6 +5931,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             energy > 0.5;
           isRunning = wantsRun && !staminaExhausted && stamina > 0.5 && effectiveMoveMag > 0.08;
           const shieldBraceSpeedMult = isShieldBlockingNow ? 0.72 : 1;
+          const carrySpeedMult =
+            worldInteract?.carriedRock?.kind === 'boulder'
+              ? 0.72
+              : worldInteract?.carriedRock?.kind === 'rock'
+              ? 0.94
+              : 1;
           const moveSpeed =
             (isSwimming
               ? isRunning
@@ -5579,7 +5946,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               ? 7.4 * (heroSkillSet.has('swiftFootwork') ? 1.14 : 1)
               : 3.6 * shieldBraceSpeedMult) *
             heroSpeedMult *
-            energySpeedMult;
+            energySpeedMult *
+            carrySpeedMult;
 
           // Detect climbable surfaces (tagged entities, live trees, steep openWorld mountain cliffs)
           let climbCandidate: {
@@ -5589,8 +5957,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             anchorZ: number;
             maxY: number;
             dist: number;
+            tree?: (typeof islandHandles.choppableTrees)[number];
           } | null = null;
-          if (!isSitting && !isSwimming && canWalk) {
+          if (!isSitting && !isSwimming && canWalk && !worldInteract?.carriedRock) {
             for (const rt of runtimeEntities) {
               if (!rt.alive) continue;
               if (!getEntityAttrs(rt).includes('climbVertical')) continue;
@@ -5619,11 +5988,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 if (d <= trunkReach && heroY >= tr.y - 0.4 && heroY <= crownY + 0.25) {
                   climbCandidate = {
                     kind: 'tree',
-                    label: 'Tree Trunk',
+                    label: tr.hasFruit && (tr.fruitCount ?? 0) > 0 ? 'Fruit Tree' : 'Tree Trunk',
                     anchorX: tr.x,
                     anchorZ: tr.z,
                     maxY: crownY,
                     dist: d,
+                    tree: tr,
                   };
                   break;
                 }
@@ -5703,6 +6073,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             if (env === 'sideScroller' && climbUpHeld) {
               isClimbing = true;
               climbKind = climbCandidate.kind;
+              climbingTree = climbCandidate.tree ?? null;
               climbAnchorX = climbCandidate.anchorX;
               climbAnchorZ = climbCandidate.anchorZ;
               climbMaxY = climbCandidate.maxY;
@@ -5717,6 +6088,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               if ((climbUpHeld && facingDot > 0.35) || (heroVelY > 1.2 && facingDot > 0.2)) {
                 isClimbing = true;
                 climbKind = climbCandidate.kind;
+                climbingTree = climbCandidate.tree ?? null;
                 climbAnchorX = climbCandidate.anchorX;
                 climbAnchorZ = climbCandidate.anchorZ;
                 climbMaxY = climbCandidate.maxY;
@@ -6005,12 +6377,18 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               const fwdX = Math.sin(heroYaw);
               const fwdZ = Math.cos(heroYaw);
               let fwdSpeedScale = 0;
-              if (moveZ > 0.25) {
+              if (moveZ > 0.2) {
                 // Pulling down backpedals gently while keeping character facing forward
-                fwdSpeedScale = -0.55 * Math.min(1, moveZ);
+                fwdSpeedScale = -0.58 * Math.min(1, moveZ);
+              } else if (moveZ < -0.1) {
+                // Forward push advances smoothly along facing vector (works seamlessly while steering)
+                fwdSpeedScale = Math.min(1, -moveZ);
+              } else if (camModeNow === 'heroFront') {
+                // In heroFront, side steering also nudges forward smoothly
+                fwdSpeedScale = Math.min(1, Math.abs(steerX) * 0.65);
               } else {
-                // Forward push or left/right steering advances smoothly along forward vector
-                fwdSpeedScale = Math.min(1, Math.hypot(steerX * 0.7, Math.max(0, -moveZ)));
+                // In Front view, pure Left/Right pivots hero & rotates the world in front of you without running sideways
+                fwdSpeedScale = 0;
               }
               worldDX = fwdX * fwdSpeedScale;
               worldDZ = fwdZ * fwdSpeedScale;
@@ -6089,6 +6467,50 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             heroKnockVZ = 0;
           }
           collisionCtx.actorY = undefined;
+
+          // Walk-to-push distressed stone puzzle cubes (hero simply walks into a stone face — no Use button required!)
+          if (worldInteract && !isDriving && !isSwimming && !isClimbing && !isSitting && !isGliding) {
+            const isWalkingNow = effectiveMoveMag > 0.08;
+            const pushIntentX = isWalkingNow && !worldInteract.carriedRock ? Math.sin(heroYaw) : 0;
+            const pushIntentZ = isWalkingNow && !worldInteract.carriedRock ? Math.cos(heroYaw) : 0;
+            const pushRes = worldInteract.updatePushableBlocks(
+              simDt,
+              heroX,
+              heroY,
+              heroZ,
+              0.52,
+              pushIntentX,
+              pushIntentZ,
+              {
+                onRockHitEnemy: () => {},
+                onRockImpactGround: () => {},
+                onStoneScrape: () => {
+                  AudioEngine.playSound('hit');
+                },
+                onPuzzleBlockSolved: (blk: PushableStoneBlock) => {
+                  AudioEngine.playSound('chime');
+                  AudioEngine.playSound(activeLevel.audio.door);
+                  shakeTimer = Math.max(shakeTimer, 0.26);
+                  if (blk.rewardKind === 'chest') {
+                    const revealX = blk.startX;
+                    const revealZ = blk.startZ;
+                    spawnSecretPuzzleChest(revealX, revealZ);
+                    showToast('Secret switch activated! A hidden Ancient Chest emerged!');
+                  } else {
+                    coins += 15;
+                    showToast('Ancient stone aligned! Uncovered +15 hidden Gold!');
+                  }
+                },
+              },
+              collisionCtx
+            );
+            heroX = pushRes.x;
+            heroZ = pushRes.z;
+            if (pushRes.pushing) {
+              heroYaw = pushRes.pushYaw;
+            }
+          }
+          latestHeroYForAim = heroY;
 
           // Ground, modular building surfaces & platforms
           const sideDropThrough =
@@ -6323,7 +6745,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
           const movingNow =
             !isGliding &&
-            (camModeNow === 'firstPerson' ? Math.abs(moveZ) > 0.08 : mag > 0.08) &&
+            (camModeNow === 'firstPerson' || camModeNow === 'front'
+              ? Math.abs(moveZ) > 0.08
+              : mag > 0.08) &&
             canWalk;
           const energyDrainRate = isGliding
             ? 0.08
@@ -6349,7 +6773,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             !isSitting &&
             !isClimbing &&
             !isGliding &&
-            (camModeNow === 'firstPerson' ? Math.abs(moveZ) > 0.08 : mag > 0.08) &&
+            (camModeNow === 'firstPerson' || camModeNow === 'front'
+              ? Math.abs(moveZ) > 0.08
+              : mag > 0.08) &&
             canWalk;
           const actualHorizSpeed =
             simDt > 0.0001 ? Math.hypot(heroX - prevHeroX, heroZ - prevHeroZ) / simDt : 0;
@@ -6530,8 +6956,47 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           heroRoot.position.set(heroX, heroY, heroZ);
           heroRoot.rotation.y = heroYaw;
 
-          const recoilTilt = heroRecoilTimer > 0 ? -Math.sin((heroRecoilTimer / 0.28) * Math.PI) * 0.44 : 0;
-          const targetTiltX = isSwimming ? (moving ? 0.92 : 0.16) : recoilTilt;
+          // Real-time 2-bone Foot-Planting IK, slope alignment, turn banking & breathing layer
+          const ikGroundedNow =
+            !isSwimming &&
+            !isSitting &&
+            !isClimbing &&
+            !isGliding &&
+            heroKnockdownPhase === 'none' &&
+            heroY <= floorY + 0.16;
+          if (wasAirborneForIK && ikGroundedNow) {
+            heroFootIK.triggerImpact(0.65);
+          }
+          wasAirborneForIK = !ikGroundedNow && !isSwimming && !isSitting && !isClimbing;
+          let yawDeltaForIK = heroYaw - prevHeroYawForIK;
+          if (yawDeltaForIK > Math.PI) yawDeltaForIK -= Math.PI * 2;
+          if (yawDeltaForIK < -Math.PI) yawDeltaForIK += Math.PI * 2;
+          prevHeroYawForIK = heroYaw;
+          const ikTurnRate = yawDeltaForIK / Math.max(0.008, dt);
+          const ikHorizSpeed = moving ? Math.hypot(moveX, moveZ) * 6.5 : 0;
+          const heroIKTargets = heroFootIK.evaluate({
+            rootX: heroX,
+            rootZ: heroZ,
+            centerGroundY: floorY,
+            facingYaw: heroYaw,
+            horizSpeed: ikHorizSpeed,
+            turnRate: ikTurnRate,
+            grounded: ikGroundedNow,
+            dt,
+            elapsedTime: gameElapsed,
+            impactImpulse: heroRecoilTimer > 0.2 ? 0.55 : 0,
+            sampleGroundY: (sx, sz) => sampleLevelHeight(activeLevel, sx, sz),
+          });
+
+          const recoilWave = heroRecoilTimer > 0 ? Math.sin((heroRecoilTimer / 0.28) * Math.PI) : 0;
+          const recoilTilt = recoilWave * 0.48 * heroHitPitchDir;
+          const targetTiltX = isSwimming
+            ? moving
+              ? 0.92
+              : 0.16
+            : worldInteract?.isPushingStone
+            ? 0.34
+            : recoilTilt;
           swimTiltX = THREE.MathUtils.damp(swimTiltX, targetTiltX, isSwimming ? 7.5 : 16, dt);
 
           // Update stylized hero sword/axe slash arc ribbon during the active inward swing window
@@ -6702,6 +7167,19 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 ? locoVelocityRatio
                 : 1);
             heroCustom.update(simDt, spd);
+            // Apply subtle pelvis slope drop, landing squash, breathing & turn banking to custom GLB rigs
+            if (heroKnockdownPhase === 'none' && !isSwimming && !isClimbing) {
+              heroCustom.group.position.y =
+                heroIKTargets.pelvisDropY + heroIKTargets.breathLift * 0.4;
+              heroCustom.group.rotation.z =
+                heroIKTargets.bankRollRad + heroIKTargets.slopeRollRad * 0.4;
+              if (heroCustom.group.children[0]) {
+                heroCustom.group.children[0].rotation.x += heroIKTargets.slopePitchRad * 0.45;
+              }
+            } else {
+              heroCustom.group.position.y = 0;
+              heroCustom.group.rotation.z = 0;
+            }
           } else if (heroRig) {
             heroRig.shadowDisc.visible = !isSwimming && !isClimbing;
             const heldTool = heldDefNow?.toolKind ?? null;
@@ -7007,10 +7485,36 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 targetArmLZ = 0.45;
                 targetHeadX = -0.2;
               } else if (heroRecoilTimer > 0) {
-                targetArmLX = -0.55;
-                targetArmRX = -0.55;
-                targetArmLZ = 0.45;
-                targetArmRZ = -0.45;
+                const stagger = Math.sin((heroRecoilTimer / 0.28) * Math.PI);
+                targetBodyRoll = heroHitRollDir * stagger * 0.46;
+                targetBodyYaw = heroHitRollDir * stagger * 0.35;
+                targetArmLX = -0.55 - heroHitPitchDir * 0.22;
+                targetArmRX = -0.55 - heroHitPitchDir * 0.22;
+                targetArmLZ = 0.48;
+                targetArmRZ = -0.48;
+              } else if (worldInteract?.isPushingStone) {
+                // Grounded two-handed pushing brace against the distressed stone cube
+                targetArmLX = -1.42;
+                targetArmRX = -1.42;
+                targetForearmLX = -0.22;
+                targetForearmRX = -0.22;
+                targetArmLZ = 0.12;
+                targetArmRZ = -0.12;
+                targetHeadX = 0.14;
+              } else if (worldInteract?.carriedRock?.kind === 'boulder') {
+                // Heavy two-handed overhead boulder carry!
+                targetArmLX = -2.68;
+                targetArmRX = -2.68;
+                targetArmLZ = 0.24;
+                targetArmRZ = -0.24;
+                targetForearmLX = -0.42;
+                targetForearmRX = -0.42;
+                targetHeadX = 0.08;
+              } else if (worldInteract?.carriedRock?.kind === 'rock') {
+                // One-handed organic stone poised in right hand to throw
+                targetArmRX = -1.16 + stride * 0.15;
+                targetArmRZ = -0.16;
+                targetForearmRX = -0.58;
               } else if (inp.emoteType === 'wave') {
                 targetArmRZ = -2.4 - Math.sin(gameElapsed * 12) * 0.4;
                 targetArmRX = 0;
@@ -7028,9 +7532,24 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               }
             }
 
-            heroRig.bodyPivot.position.y = dampJoint(heroRig.bodyPivot.position.y, 0.85 + targetBodyY, 14);
+            const ikPelvisOffset = ikGroundedNow
+              ? heroIKTargets.pelvisDropY + heroIKTargets.breathLift * 0.5
+              : 0;
+            const ikBodyPitch = ikGroundedNow ? heroIKTargets.slopePitchRad * 0.42 : 0;
+            const ikBodyRoll = ikGroundedNow
+              ? heroIKTargets.bankRollRad + heroIKTargets.slopeRollRad * 0.35
+              : 0;
+            const ikSpinePitch = ikGroundedNow
+              ? heroIKTargets.slopePitchRad * 0.32 + heroIKTargets.impactSquash * 0.12
+              : 0;
+
+            heroRig.bodyPivot.position.y = dampJoint(
+              heroRig.bodyPivot.position.y,
+              0.85 + targetBodyY + ikPelvisOffset,
+              14
+            );
             const desiredBodyPitch =
-              heroKnockdownPhase !== 'none'
+              (heroKnockdownPhase !== 'none'
                 ? targetBodyPitch
                 : isSitting
                 ? -0.05
@@ -7038,10 +7557,14 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 ? -0.1
                 : isGliding
                 ? 0.14
-                : swimTiltX;
+                : swimTiltX) + ikBodyPitch;
             heroRig.bodyPivot.rotation.x = dampJoint(heroRig.bodyPivot.rotation.x, desiredBodyPitch, 16);
             heroRig.bodyPivot.rotation.y = dampJoint(heroRig.bodyPivot.rotation.y, targetBodyYaw, 18);
-            heroRig.bodyPivot.rotation.z = dampJoint(heroRig.bodyPivot.rotation.z, targetBodyRoll, 10);
+            heroRig.bodyPivot.rotation.z = dampJoint(
+              heroRig.bodyPivot.rotation.z,
+              targetBodyRoll + ikBodyRoll,
+              10
+            );
             heroRig.head.rotation.x = dampJoint(heroRig.head.rotation.x, targetHeadX, 10);
             const armLambda = attackAnimTimer > 0 ? 30 : isShieldBlockingNow ? 22 : 13;
             heroRig.armL.rotation.x = dampJoint(heroRig.armL.rotation.x, targetArmLX, armLambda);
@@ -7058,13 +7581,25 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               heroRig.forearmR.rotation.x = dampJoint(heroRig.forearmR.rotation.x, targetForearmRX, armLambda);
               heroRig.forearmR.rotation.z = dampJoint(heroRig.forearmR.rotation.z, targetForearmRZ, armLambda);
             }
-            heroRig.legL.rotation.x = dampJoint(heroRig.legL.rotation.x, targetLegLX, 13);
-            heroRig.legR.rotation.x = dampJoint(heroRig.legR.rotation.x, targetLegRX, 13);
+            const ikLegLFlex = ikGroundedNow ? heroIKTargets.leftHipFlexRad : 0;
+            const ikLegRFlex = ikGroundedNow ? heroIKTargets.rightHipFlexRad : 0;
+            heroRig.legL.rotation.x = dampJoint(heroRig.legL.rotation.x, targetLegLX - ikLegLFlex, 13);
+            heroRig.legR.rotation.x = dampJoint(heroRig.legR.rotation.x, targetLegRX - ikLegRFlex, 13);
             if (heroRig.spinePivot) {
-              heroRig.spinePivot.rotation.x = dampJoint(heroRig.spinePivot.rotation.x, 0, 14);
+              heroRig.spinePivot.rotation.x = dampJoint(
+                heroRig.spinePivot.rotation.x,
+                ikSpinePitch,
+                14
+              );
               heroRig.spinePivot.rotation.y = dampJoint(heroRig.spinePivot.rotation.y, 0, 14);
               heroRig.spinePivot.rotation.z = dampJoint(heroRig.spinePivot.rotation.z, 0, 14);
             }
+            // Keep hip sockets strictly anchored to their pelvis rest Y (zero float/detachment)
+            heroFootIK.applyToProceduralHero(heroIKTargets, {
+              leftLeg: heroRig.legL,
+              rightLeg: heroRig.legR,
+              legLength: 0.72,
+            });
 
             // Universal Motion Studio preset overlay for Built-in Hero
             const isHeroAirborne =
@@ -7334,7 +7869,15 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           if (inp.attackQueued) {
             inp.attackQueued = false;
             shieldGuardTimer = 0;
-            if (heldDefNow?.toolKind === 'fishingPole') {
+            if (worldInteract?.carriedRock) {
+              const thrownKind = worldInteract.throwCarriedRock();
+              if (thrownKind) {
+                AudioEngine.playSound('whoosh');
+                heroYaw = Math.atan2(worldInteract.aimX - heroX, worldInteract.aimZ - heroZ);
+                attackAnimTimer = 0.24;
+                activeAttackDuration = 0.24;
+              }
+            } else if (heldDefNow?.toolKind === 'fishingPole') {
               triggerFishingAction();
             } else if (attackAnimTimer <= 0.06) {
               if (staminaExhausted || stamina < 15) {
@@ -7353,12 +7896,23 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 activeAttackDuration = isAxe ? CHOP_DURATION : ATTACK_DURATION;
                 attackAnimTimer = activeAttackDuration;
                 attackHitEnemies.clear();
+                attackHitFlora.clear();
                 chopDidStrike = false;
                 AudioEngine.playSound('whoosh');
                 // Small forward combat step so melee swings feel committed
                 if (!isSwimming) {
                   heroKnockVX += Math.sin(heroYaw) * (isAxe ? 1.4 : 2.2);
                   heroKnockVZ += Math.cos(heroYaw) * (isAxe ? 1.4 : 2.2);
+                }
+                if (rapierPhysics?.isReady()) {
+                  rapierPhysics.applyRadialImpulse(
+                    heroX + Math.sin(heroYaw) * 1.35,
+                    heroY + 0.85,
+                    heroZ + Math.cos(heroYaw) * 1.35,
+                    3.6,
+                    isAxe ? 13.5 : 10.5,
+                    0.52
+                  );
                 }
               }
             }
@@ -7562,6 +8116,139 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               }
             }
 
+            // Sliceable Flora (bushes, berry bushes, ferns, wildflowers, mushrooms) & Breakable Pots/Crates with 3D Debris + Occasional Loot!
+            if (p >= 0.26 && p <= 0.68) {
+              // 1. World flora scatter
+              for (let hi = 0; hi < islandHandles.harvestableScatter.length; hi++) {
+                const hs = islandHandles.harvestableScatter[hi];
+                if (hs.collected || hs.scatterKind === 'rock') continue;
+                if (attackHitFlora.has(hs.id)) continue;
+                const fdx = hs.x - heroX;
+                const fdz = hs.z - heroZ;
+                const fd = Math.hypot(fdx, fdz);
+                if (fd > 2.55 || Math.abs(hs.y - heroY) > 2.2) continue;
+                const fdot = fd > 0.01 ? (fdx / fd) * fwdX + (fdz / fd) * fwdZ : 1;
+                if (fd > 1.15 && fdot < -0.1) continue;
+
+                attackHitFlora.add(hs.id);
+                const maxHp =
+                  hs.maxHp ??
+                  (hs.scatterKind === 'bush' || hs.scatterKind === 'berryBush'
+                    ? 3
+                    : hs.scatterKind === 'fern' || hs.scatterKind === 'broadleaf'
+                    ? 2
+                    : 1);
+                hs.maxHp = maxHp;
+                hs.hp = (hs.hp ?? maxHp) - 1;
+
+                const theme: DebrisTheme =
+                  hs.scatterKind === 'berryBush'
+                    ? 'berry'
+                    : hs.scatterKind === 'flower'
+                    ? 'flower'
+                    : hs.scatterKind === 'fern' || hs.scatterKind === 'broadleaf'
+                    ? 'fern'
+                    : hs.scatterKind === 'mushroom'
+                    ? 'wood'
+                    : 'leaf';
+                worldInteract?.spawnDebrisBurst(
+                  hs.x,
+                  hs.y + 0.42,
+                  hs.z,
+                  theme,
+                  hs.hp <= 0 ? 12 : 6,
+                  hs.hp <= 0 ? 5.2 : 3.8
+                );
+                AudioEngine.playSound('chop');
+
+                if (hs.hp <= 0) {
+                  hs.collected = true;
+                  for (const be of hs.batchedEntries) {
+                    hideBatchEntry(be, hs.x, hs.y - 60, hs.z);
+                  }
+                  // Occasional hidden treasure or forage inside sliced bushes & flora!
+                  const lootRoll = Math.random();
+                  if (hs.scatterKind === 'berryBush' || lootRoll < 0.16) {
+                    const dropItem =
+                      hs.scatterKind === 'berryBush'
+                        ? 'wild_berries'
+                        : hs.scatterKind === 'mushroom'
+                        ? 'wild_mushroom'
+                        : 'forest_herbs';
+                    if (itemByIdRef.current.has(dropItem)) {
+                      spawnDroppedItem(dropItem, 1, hs.x, hs.y + 0.45, hs.z, (Math.random() - 0.5) * 2, 4.0, (Math.random() - 0.5) * 2);
+                    }
+                  } else if (lootRoll < 0.30) {
+                    coins += 2;
+                    AudioEngine.playSound(activeLevel.audio.coin);
+                    spawnCombatSparks(hs.x, hs.y + 0.5, hs.z, '#FACC15', 8, 4.6);
+                    showToast('Found +2 hidden Gold in the foliage!');
+                  }
+                }
+              }
+
+              // 2. Breakable placed props (pots, urns, vases, crates, barrels)
+              for (const rt of runtimeEntities) {
+                if (!rt.alive || rt.kind !== 'prop' || rt.buildingBlock || rt.doorConfig) continue;
+                if (attackHitFlora.has(rt.id)) continue;
+                const nm = rt.name.toLowerCase();
+                const pr = String(rt.propPreset ?? '').toLowerCase();
+                const isCeramic = nm.includes('pot') || nm.includes('vase') || nm.includes('urn') || nm.includes('jar');
+                const isWoodProp =
+                  pr === 'crate' ||
+                  pr === 'barrel' ||
+                  nm.includes('crate') ||
+                  nm.includes('barrel') ||
+                  nm.includes('box') ||
+                  nm.includes('keg');
+                if (!isCeramic && !isWoodProp) continue;
+
+                const pdx = rt.x - heroX;
+                const pdz = rt.z - heroZ;
+                const pd = Math.hypot(pdx, pdz);
+                if (pd > 2.65) continue;
+                const pdot = pd > 0.01 ? (pdx / pd) * fwdX + (pdz / pd) * fwdZ : 1;
+                if (pd > 1.2 && pdot < -0.1) continue;
+
+                attackHitFlora.add(rt.id);
+                const maxP = rt.propMaxHp ?? (isCeramic ? 2 : 3);
+                rt.propMaxHp = maxP;
+                rt.propHp = (rt.propHp ?? maxP) - 1;
+                rt.propShakeTimer = 0.22;
+                rt.propShakeDirX = pdx / Math.max(0.01, pd);
+                rt.propShakeDirZ = pdz / Math.max(0.01, pd);
+
+                const propY = sampleLevelHeight(activeLevel, rt.x, rt.z) + (rt.elevationY ?? 0);
+                worldInteract?.spawnDebrisBurst(
+                  rt.x,
+                  propY + 0.55,
+                  rt.z,
+                  isCeramic ? 'ceramic' : 'wood',
+                  rt.propHp <= 0 ? 14 : 7,
+                  rt.propHp <= 0 ? 5.8 : 4.1
+                );
+                AudioEngine.playSound(isCeramic ? 'hit' : 'chop');
+
+                if (rt.propHp <= 0) {
+                  rt.alive = false;
+                  rt.mesh.visible = false;
+                  const roll = Math.random();
+                  if (roll < 0.45) {
+                    const bonus = 3 + Math.floor(Math.random() * 4);
+                    coins += bonus;
+                    AudioEngine.playSound(activeLevel.audio.coin);
+                    spawnCombatSparks(rt.x, propY + 0.6, rt.z, '#FACC15', 10, 5.2);
+                    showToast(`Smashed ${rt.name}! Found +${bonus} Gold!`);
+                  } else if (roll < 0.7 && health < maxHealth) {
+                    health = Math.min(maxHealth, health + 1);
+                    AudioEngine.playSound('chime');
+                    spawnCombatSparks(rt.x, propY + 0.6, rt.z, '#FB7185', 10, 5.0);
+                    showToast(`Smashed ${rt.name}! Found a Heart (+1 HP)!`);
+                  }
+                }
+              }
+            }
+
             if (p >= 0.26 && p <= 0.70) {
               const rangeExtra = heldDefNow?.weaponRange ? Math.max(0, heldDefNow.weaponRange - 2.4) : 0;
               for (const rt of runtimeEntities) {
@@ -7614,19 +8301,42 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   showToast(`${meleeOut.matchupNote} (${meleeOut.damage} DMG)`);
                 }
 
-                // Physical bump-back impulse, upward hop, hit-flash & stagger recoil
+                // Directional physical knockback & hit-side stagger reaction (front vs flank vs rear!)
+                const bFwdX = Math.sin(rt.mesh.rotation.y);
+                const bFwdZ = Math.cos(rt.mesh.rotation.y);
+                const bRightX = Math.cos(rt.mesh.rotation.y);
+                const bRightZ = -Math.sin(rt.mesh.rotation.y);
+                const hitFrontDot = nx * bFwdX + nz * bFwdZ; // >0 means hit from behind pushing baddie forward
+                const hitSideDot = nx * bRightX + nz * bRightZ; // +/- means left/right flank impact
+                const isRearHit = hitFrontDot > 0.38;
+                const isFlankHit = Math.abs(hitSideDot) > 0.45 && !isRearHit;
+
                 const powerStrikeBonus = heroSkillSet.has('powerStrike') ? 1.25 : 1;
+                const directionalMult = isRearHit ? 1.24 : isFlankHit ? 1.12 : 1.0;
                 const knockSpeed =
-                  (rt.isBoss ? 7.6 : 12.6) *
+                  (rt.isBoss ? 8.2 : 14.2) *
                   powerStrikeBonus *
-                  (rt.monsterAbility === 'thickFat' ? 0.55 : 1);
-                rt.vx = nx * knockSpeed;
-                rt.vz = nz * knockSpeed;
-                rt.vy = (rt.isBoss ? 2.6 : 4.3) * (rt.monsterAbility === 'thickFat' ? 0.65 : 1);
-                rt.hitFlashTimer = 0.2;
-                rt.recoilPitch = -0.66;
-                rt.recoilRoll = (Math.random() > 0.5 ? 1 : -1) * 0.34;
-                rt.mesh.rotation.y = Math.atan2(-nx, -nz);
+                  directionalMult *
+                  (rt.monsterAbility === 'thickFat' ? 0.58 : 1);
+                rt.vx = nx * knockSpeed + (isFlankHit ? -bRightX * Math.sign(hitSideDot) * 2.2 : 0);
+                rt.vz = nz * knockSpeed + (isFlankHit ? -bRightZ * Math.sign(hitSideDot) * 2.2 : 0);
+                rt.vy = (rt.isBoss ? 2.9 : 4.8) * (rt.monsterAbility === 'thickFat' ? 0.68 : 1);
+                rt.hitFlashTimer = 0.22;
+                rt.recoilPitch = isRearHit ? 0.72 : -0.74;
+                rt.recoilRoll = isFlankHit
+                  ? (hitSideDot > 0 ? -0.68 : 0.68)
+                  : (hitSideDot >= 0 ? -0.28 : 0.28);
+                if (!isRearHit) {
+                  rt.mesh.rotation.y = Math.atan2(-nx, -nz) + (isFlankHit ? -hitSideDot * 0.45 : 0);
+                }
+                worldInteract?.spawnDebrisBurst(
+                  rt.x,
+                  sampleLevelHeight(activeLevel, rt.x, rt.z) + 0.35,
+                  rt.z,
+                  'dust',
+                  rt.isBoss ? 9 : 6,
+                  4.8
+                );
 
                 if (
                   rt.health > 0 &&
@@ -8683,6 +9393,176 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           inp.interactQueued = false;
           let interactConsumed = false;
 
+          // Update carried rock/boulder + orange bullseye, thrown rock flight & impact physics, and 3D debris
+          if (worldInteract && !isDriving) {
+            const isHeroMovingInput =
+              inp.keys.has('KeyW') ||
+              inp.keys.has('KeyA') ||
+              inp.keys.has('KeyS') ||
+              inp.keys.has('KeyD') ||
+              inp.keys.has('ArrowUp') ||
+              inp.keys.has('ArrowDown') ||
+              inp.keys.has('ArrowLeft') ||
+              inp.keys.has('ArrowRight') ||
+              Math.hypot(inp.joyX, inp.joyY) > 0.12;
+            if (worldInteract.carriedRock && !isHeroMovingInput) {
+              // Gently align hero facing toward where the orange bullseye is aimed
+              const aimYaw = Math.atan2(worldInteract.aimX - heroX, worldInteract.aimZ - heroZ);
+              const yawDiff = Math.atan2(Math.sin(aimYaw - heroYaw), Math.cos(aimYaw - heroYaw));
+              heroYaw += yawDiff * Math.min(1, dt * 8);
+            }
+            worldInteract.updateCarriedAndAim(dt, gameElapsed, heroX, heroY, heroZ, heroYaw);
+
+            // Populate zero-GC enemy target list for thrown rocks & boulders
+            rockTargetBuffer.length = 0;
+            for (const rt of runtimeEntities) {
+              if (!rt.alive || rt.kind !== 'baddie' || rt.aiState === 'dying') continue;
+              rockTargetBuffer.push({
+                id: rt.id,
+                x: rt.x,
+                y: sampleLevelHeight(activeLevel, rt.x, rt.z) + rt.yOffset + rt.flightY,
+                z: rt.z,
+                radius: rt.isBoss ? 1.15 : 0.72,
+                isBoss: rt.isBoss,
+              });
+            }
+
+            const throwCallbacks: WorldInteractivityCallbacks = {
+              onRockHitEnemy: (enemyId, kind, dirX, dirZ, impactX, impactY, impactZ) => {
+                const rt = runtimeEntities.find((e) => e.id === enemyId);
+                if (!rt || !rt.alive || rt.aiState === 'dying') return;
+                const dmg = kind === 'boulder' ? Math.max(3, heroAttackDamage + 2) : Math.max(2, heroAttackDamage);
+                rt.health -= dmg;
+                AudioEngine.playSound(activeLevel.audio.hit);
+
+                // Directional rock/boulder knockback!
+                const bFwdX = Math.sin(rt.mesh.rotation.y);
+                const bFwdZ = Math.cos(rt.mesh.rotation.y);
+                const bRightX = Math.cos(rt.mesh.rotation.y);
+                const bRightZ = -Math.sin(rt.mesh.rotation.y);
+                const hitFrontDot = dirX * bFwdX + dirZ * bFwdZ;
+                const hitSideDot = dirX * bRightX + dirZ * bRightZ;
+                const kbForce =
+                  (kind === 'boulder' ? (rt.isBoss ? 11.5 : 18.5) : rt.isBoss ? 7.0 : 12.2) *
+                  (rt.monsterAbility === 'thickFat' ? 0.65 : 1);
+                rt.vx = dirX * kbForce;
+                rt.vz = dirZ * kbForce;
+                rt.vy = kind === 'boulder' ? (rt.isBoss ? 4.2 : 6.4) : rt.isBoss ? 2.6 : 4.2;
+                rt.hitFlashTimer = 0.25;
+                rt.recoilPitch = hitFrontDot > 0.35 ? 0.85 : -0.85;
+                rt.recoilRoll = hitSideDot > 0 ? -0.62 : 0.62;
+                hitStopTimer = kind === 'boulder' ? 0.055 : 0.032;
+                shakeTimer = Math.max(shakeTimer, kind === 'boulder' ? 0.26 : 0.14);
+                spawnCombatSparks(impactX, impactY, impactZ, kind === 'boulder' ? '#FB923C' : '#FDE047', 12, 7.2);
+                spawnEvaporatingDamageNumber(
+                  scene,
+                  evaporatingDamages,
+                  rt.x,
+                  impactY + 1.2,
+                  rt.z,
+                  `-${dmg}`,
+                  kind === 'boulder' ? '#F97316' : '#FACC15',
+                  kind === 'boulder' ? 'BOULDER SMASH!' : 'STONE HIT!'
+                );
+                if (rt.health <= 0) {
+                  beginBaddieDeath(rt, dirX, dirZ);
+                } else if (!(rt.isBoss && rt.aiState === 'strike')) {
+                  rt.aiState = 'stagger';
+                  rt.stateTimer = kind === 'boulder' ? 0.85 : 0.52;
+                  rt.attackCooldown = Math.max(rt.attackCooldown, 0.75);
+                }
+              },
+              onRockImpactGround: (kind, ix, iy, iz) => {
+                AudioEngine.playSound(kind === 'boulder' ? 'hit' : 'step');
+                if (kind === 'boulder') {
+                  shakeTimer = Math.max(shakeTimer, 0.16);
+                }
+                // Shatter nearby flora on rock/boulder smash!
+                const smashR = kind === 'boulder' ? 1.85 : 1.05;
+                for (let hi = 0; hi < islandHandles.harvestableScatter.length; hi++) {
+                  const hs = islandHandles.harvestableScatter[hi];
+                  if (hs.collected || hs.scatterKind === 'rock') continue;
+                  if (Math.hypot(hs.x - ix, hs.z - iz) <= smashR) {
+                    hs.collected = true;
+                    for (const be of hs.batchedEntries) {
+                      hideBatchEntry(be, hs.x, hs.y - 60, hs.z);
+                    }
+                    const th: DebrisTheme =
+                      hs.scatterKind === 'berryBush'
+                        ? 'berry'
+                        : hs.scatterKind === 'flower'
+                        ? 'flower'
+                        : hs.scatterKind === 'fern' || hs.scatterKind === 'broadleaf'
+                        ? 'fern'
+                        : 'leaf';
+                    worldInteract?.spawnDebrisBurst(hs.x, hs.y + 0.35, hs.z, th, 9, 5.0);
+                  }
+                }
+              },
+              onStoneScrape: () => {},
+              onPuzzleBlockSolved: () => {},
+            };
+            worldInteract.updateThrownRocks(simDt, rockTargetBuffer, throwCallbacks, collisionCtx);
+            worldInteract.updateDebris(simDt);
+
+            // Priority 1: Throw carried rock/boulder when pressing Use (E)
+            if (didInteract && worldInteract.carriedRock) {
+              interactConsumed = true;
+              const thrown = worldInteract.throwCarriedRock();
+              if (thrown) {
+                AudioEngine.playSound('whoosh');
+                heroYaw = Math.atan2(worldInteract.aimX - heroX, worldInteract.aimZ - heroZ);
+                attackAnimTimer = 0.24;
+                activeAttackDuration = 0.24;
+              }
+            }
+          }
+
+          // Priority 2: Pick fruit directly from the tree canopy while climbing a fruit tree!
+          const canPickTreeFruitNow = Boolean(
+            isClimbing &&
+              climbKind === 'tree' &&
+              climbingTree &&
+              !climbingTree.chopped &&
+              climbingTree.hasFruit &&
+              (climbingTree.fruitCount ?? 0) > 0 &&
+              heroY >= climbingTree.y + 1.35
+          );
+          if (didInteract && !interactConsumed && canPickTreeFruitNow && climbingTree) {
+            interactConsumed = true;
+            climbingTree.fruitCount = Math.max(0, (climbingTree.fruitCount ?? 1) - 1);
+            addItemToBag('orchard_apple', 1, false);
+            AudioEngine.playSound('chime');
+            worldInteract?.spawnDebrisBurst(heroX, heroY + 1.0, heroZ, 'leaf', 8, 3.8);
+            worldInteract?.spawnDebrisBurst(heroX, heroY + 0.9, heroZ, 'berry', 4, 3.2);
+            const left = climbingTree.fruitCount;
+            showToast(
+              `Picked ${climbingTree.fruitLabel || 'Sunlit Orchard Fruit'}!${
+                left > 0 ? ` (${left} left in canopy)` : ' (Tree picked clean)'
+              }`
+            );
+          }
+
+          // Pre-check whether hero is right next to an unopened treasure chest or door so companions
+          // keep a safe distance and NEVER hijack the Use button!
+          let heroNearPriorityChestOrDoor = false;
+          let activeChestBlockX = 0;
+          let activeChestBlockZ = 0;
+          for (const rt of runtimeEntities) {
+            if (!rt.alive) continue;
+            if (rt.kind === 'treasure' && (!rt.opened || rt.chestLootEntries.length > 0)) {
+              if (Math.hypot(rt.x - heroX, rt.z - heroZ) < 3.4) {
+                heroNearPriorityChestOrDoor = true;
+                activeChestBlockX = rt.x;
+                activeChestBlockZ = rt.z;
+                break;
+              }
+            }
+            if ((rt.kind === 'door' || rt.mesh.userData?.walkInBuilding) && Math.hypot(rt.x - heroX, rt.z - heroZ) < 3.6) {
+              heroNearPriorityChestOrDoor = true;
+            }
+          }
+
           // Entity updates & collisions
           const baddiesRemaining = runtimeEntities.some((r) => r.kind === 'baddie' && r.alive);
           let nearestDoorPrompt: { label: string; isOpen: boolean; locked: boolean } | null = null;
@@ -8767,23 +9647,95 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             if (rt.kind === 'door' || rt.buildingBlock?.shape === 'trapdoor') {
               applyDoorOpenAnimation(rt.mesh, rt.opened, dt);
             }
-            if (rt.mesh.userData?.wanderingChicken) {
-              const phase = Number(rt.mesh.userData.chickenPhase) || 0;
-              const speed = Number(rt.mesh.userData.chickenSpeed) || 1.25;
-              const t = gameElapsed * speed + phase;
-              const wx = rt.startX + Math.sin(t * 0.72) * 1.35 + Math.cos(t * 1.45) * 0.35;
-              const wz = rt.startZ + Math.cos(t * 0.64) * 1.35 + Math.sin(t * 1.2) * 0.35;
-              const dxC = wx - rt.x;
-              const dzC = wz - rt.z;
-              rt.x = wx;
-              rt.z = wz;
-              const groundYC = sampleLevelHeight(activeLevel, rt.x, rt.z);
-              const hopC = Math.abs(Math.sin(t * 5.2)) * 0.05;
-              rt.mesh.position.set(rt.x, groundYC + hopC, rt.z);
-              if (Math.hypot(dxC, dzC) > 0.001) {
-                rt.mesh.rotation.y = Math.atan2(dxC, dzC);
+            if (rt.propShakeTimer && rt.propShakeTimer > 0) {
+              rt.propShakeTimer = Math.max(0, rt.propShakeTimer - dt);
+              const wf = rt.propShakeTimer / 0.22;
+              const wob = Math.sin(wf * Math.PI * 4) * wf * 0.16;
+              rt.mesh.rotation.x = (rt.propShakeDirZ ?? 0) * wob;
+              rt.mesh.rotation.z = -(rt.propShakeDirX ?? 0) * wob;
+              if (rt.propShakeTimer <= 0) {
+                rt.mesh.rotation.x = 0;
+                rt.mesh.rotation.z = 0;
               }
-              rt.mesh.rotation.x = Math.max(0, Math.sin(t * 3.8)) * 0.24;
+            }
+            if (rt.mesh.userData?.wanderingChicken) {
+              // Independent per-chicken autonomous AI (walk / peck / idle) with strict fence & world collision!
+              if (rt.chickenTimer === undefined || rt.chickenYaw === undefined || rt.chickenMode === undefined) {
+                let hash = 2166136261;
+                for (let ci = 0; ci < rt.id.length; ci++) {
+                  hash = Math.imul(hash ^ rt.id.charCodeAt(ci), 16777619);
+                }
+                const s1 = ((hash >>> 0) % 1000) / 1000;
+                const s2 = (((hash * 13) >>> 0) % 1000) / 1000;
+                rt.chickenMode = s1 < 0.45 ? 'walk' : s1 < 0.78 ? 'peck' : 'idle';
+                rt.chickenTimer = 0.6 + s2 * 2.4;
+                rt.chickenYaw = s1 * Math.PI * 2;
+                rt.chickenSpeedVal = 0.72 + s2 * 0.58;
+              }
+              rt.chickenTimer -= dt;
+              if (rt.chickenTimer <= 0) {
+                const homeDx = rt.startX - rt.x;
+                const homeDz = rt.startZ - rt.z;
+                const homeDist = Math.hypot(homeDx, homeDz);
+                const r = Math.random();
+                if (homeDist > 1.85) {
+                  rt.chickenMode = 'walk';
+                  rt.chickenYaw = Math.atan2(homeDx, homeDz) + (Math.random() - 0.5) * 0.85;
+                  rt.chickenTimer = 1.2 + Math.random() * 1.4;
+                } else if (r < 0.52) {
+                  rt.chickenMode = 'walk';
+                  rt.chickenYaw = rt.chickenYaw + (Math.random() - 0.5) * 2.8;
+                  rt.chickenTimer = 1.1 + Math.random() * 2.1;
+                } else if (r < 0.84) {
+                  rt.chickenMode = 'peck';
+                  rt.chickenTimer = 0.8 + Math.random() * 1.5;
+                } else {
+                  rt.chickenMode = 'idle';
+                  rt.chickenTimer = 0.7 + Math.random() * 1.4;
+                }
+              }
+
+              let hopC = 0;
+              let peckPitch = 0;
+              if (rt.chickenMode === 'walk') {
+                const spdC = rt.chickenSpeedVal ?? 0.95;
+                const stepC = spdC * dt;
+                const candX = rt.x + Math.sin(rt.chickenYaw) * stepC;
+                const candZ = rt.z + Math.cos(rt.chickenYaw) * stepC;
+                // Strictly respect fences, coops, buildings, water, and pen boundary!
+                const [colX, colZ] = resolveHorizontalCollision(
+                  activeLevel,
+                  candX,
+                  candZ,
+                  0.36,
+                  false,
+                  collisionCtx
+                );
+                const movedDist = Math.hypot(colX - rt.x, colZ - rt.z);
+                const distFromPen = Math.hypot(colX - rt.startX, colZ - rt.startZ);
+                if (movedDist < stepC * 0.45 || distFromPen > 2.25) {
+                  // Gently bounce/steer back inside fenced pen instead of clipping through!
+                  const inwardYaw = Math.atan2(rt.startX - rt.x, rt.startZ - rt.z);
+                  rt.chickenYaw = inwardYaw + (Math.random() - 0.5) * 1.35;
+                  rt.chickenTimer = 0.9 + Math.random() * 1.1;
+                } else {
+                  rt.x = colX;
+                  rt.z = colZ;
+                  rt.walkPhase += dt * (7.5 + spdC * 2.5);
+                  hopC = Math.abs(Math.sin(rt.walkPhase)) * 0.045;
+                }
+              } else if (rt.chickenMode === 'peck') {
+                rt.walkPhase += dt * 5.2;
+                peckPitch = Math.max(0, Math.sin(rt.walkPhase)) * 0.42;
+              }
+              const groundYC = sampleLevelHeight(activeLevel, rt.x, rt.z);
+              rt.mesh.position.set(rt.x, groundYC + hopC, rt.z);
+              const yawDiffC = Math.atan2(
+                Math.sin(rt.chickenYaw - rt.mesh.rotation.y),
+                Math.cos(rt.chickenYaw - rt.mesh.rotation.y)
+              );
+              rt.mesh.rotation.y += yawDiffC * Math.min(1, dt * 6.5);
+              rt.mesh.rotation.x = THREE.MathUtils.damp(rt.mesh.rotation.x, peckPitch, 12, dt);
             }
 
             // Animate Blacksmith hammering & flying sparks, Tavern patrons & bartender, Villager raking yard, and Tethered horses
@@ -9380,19 +10332,57 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   if (tavernCelebrated) {
                     const count = Math.max(1, recruitedBuddyIds.length);
                     const ringAng = gameElapsed * 0.55 + (slotIdx / count) * Math.PI * 2;
-                    targetX = heroX + Math.cos(ringAng) * 2.55;
-                    targetZ = heroZ + Math.sin(ringAng) * 2.55;
+                    targetX = heroX + Math.cos(ringAng) * 2.95;
+                    targetZ = heroZ + Math.sin(ringAng) * 2.95;
                   } else {
-                    const idxBack = Math.max(0, heroTrail.length - 1 - (slotIdx + 1) * 3);
-                    const trailNode = heroTrail[idxBack] ?? { x: heroX, z: heroZ };
+                    // Keep recruited companions at a respectful, comfortable trailing & flanking distance
+                    // so they never crowd the hero or get in the way of treasure chests & doors!
+                    const idxBack = Math.max(0, heroTrail.length - 1 - (slotIdx + 1) * 9);
+                    const trailNode = heroTrail[idxBack] ?? {
+                      x: heroX - Math.sin(heroYaw) * (3.5 + slotIdx * 1.2),
+                      z: heroZ - Math.cos(heroYaw) * (3.5 + slotIdx * 1.2),
+                    };
                     const sideSign = slotIdx % 2 === 0 ? -1 : 1;
-                    targetX = trailNode.x + Math.cos(heroYaw) * sideSign * 0.95;
-                    targetZ = trailNode.z - Math.sin(heroYaw) * sideSign * 0.95;
+                    const sideDist = 2.35 + Math.floor(slotIdx / 2) * 1.15;
+                    const backDist = heroNearPriorityChestOrDoor ? 2.6 : 1.35;
+                    targetX =
+                      trailNode.x +
+                      Math.cos(heroYaw) * sideSign * sideDist -
+                      Math.sin(heroYaw) * backDist;
+                    targetZ =
+                      trailNode.z -
+                      Math.sin(heroYaw) * sideSign * sideDist -
+                      Math.cos(heroYaw) * backDist;
+
+                    // Enforce personal-space clearance around the hero (and even wider around chests!)
+                    const minHeroClearance = heroNearPriorityChestOrDoor ? 4.2 : 3.35;
+                    const tdxH = targetX - heroX;
+                    const tdzH = targetZ - heroZ;
+                    const tdH = Math.hypot(tdxH, tdzH);
+                    if (tdH < minHeroClearance) {
+                      const pushAng =
+                        tdH > 0.05
+                          ? Math.atan2(tdxH, tdzH)
+                          : heroYaw + Math.PI + sideSign * 0.65;
+                      targetX = heroX + Math.sin(pushAng) * minHeroClearance;
+                      targetZ = heroZ + Math.cos(pushAng) * minHeroClearance;
+                    }
+                    if (heroNearPriorityChestOrDoor) {
+                      const tdxCh = targetX - activeChestBlockX;
+                      const tdzCh = targetZ - activeChestBlockZ;
+                      const tdCh = Math.hypot(tdxCh, tdzCh);
+                      if (tdCh < 4.1) {
+                        const awayAng =
+                          tdCh > 0.05 ? Math.atan2(tdxCh, tdzCh) : heroYaw + Math.PI;
+                        targetX = activeChestBlockX + Math.sin(awayAng) * 4.2;
+                        targetZ = activeChestBlockZ + Math.cos(awayAng) * 4.2;
+                      }
+                    }
                   }
                   const dxB = targetX - rt.x;
                   const dzB = targetZ - rt.z;
                   const dB = Math.hypot(dxB, dzB);
-                  if (dB > (tavernCelebrated ? 0.25 : 0.55)) {
+                  if (dB > (tavernCelebrated ? 0.25 : 0.72)) {
                     const stepSpd = tavernCelebrated ? 4.8 : Math.max(rt.speed, isRunning ? 8.8 : 6.2);
                     const step = Math.min(dB, stepSpd * dt);
                     const nxB = rt.x + (dxB / dB) * step;
@@ -9401,7 +10391,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                       activeLevel,
                       nxB,
                       nzB,
-                      0.45,
+                      0.48,
                       true,
                       collisionCtx
                     );
@@ -9411,7 +10401,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                     buddyMoving = true;
                   } else if (tavernCelebrated) {
                     rt.mesh.rotation.y = Math.atan2(heroX - rt.x, heroZ - rt.z);
-                  } else if (dist < 6) {
+                  } else if (dist < 6.5) {
                     rt.mesh.rotation.y = Math.atan2(heroX - rt.x, heroZ - rt.z);
                   }
                   const hopY = tavernCelebrated
@@ -9745,38 +10735,63 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   );
                   rt.mesh.rotation.y += yDiff * Math.min(1, dt * 6);
                 } else {
-                  rt.npcWanderTimer = (rt.npcWanderTimer ?? 0) - dt;
-                  if (rt.npcWanderTimer <= 0) {
-                    const homeDist = Math.hypot(rt.x - rt.startX, rt.z - rt.startZ);
-                    if (homeDist > 3.8) {
-                      rt.npcWanderAngle = Math.atan2(rt.startX - rt.x, rt.startZ - rt.z);
-                    } else {
-                      rt.npcWanderAngle = (rt.npcWanderAngle ?? Math.random() * Math.PI * 2) + (Math.random() - 0.5) * 2.2;
+                  // Desynchronized per-animal wandering + grazing pauses with strict fence/world collision
+                  if (rt.npcWanderTimer === undefined) {
+                    let hA = 2166136261;
+                    for (let ai = 0; ai < rt.id.length; ai++) {
+                      hA = Math.imul(hA ^ rt.id.charCodeAt(ai), 16777619);
                     }
-                    rt.npcWanderTimer = 2.0 + Math.random() * 2.8;
+                    const fracA = ((hA >>> 0) % 1000) / 1000;
+                    rt.npcWanderAngle = fracA * Math.PI * 2;
+                    rt.npcWanderTimer = 0.8 + fracA * 3.2;
+                    rt.npcPauseTimer = fracA > 0.5 ? 1.2 + fracA * 1.8 : 0;
                   }
-                  const ang = rt.npcWanderAngle ?? 0;
-                  const moveSpd = Math.max(1.2, Math.min(3.5, rt.speed * 0.55));
-                  const [wxN, wzN] = resolveHorizontalCollision(
-                    activeLevel,
-                    rt.x + Math.sin(ang) * moveSpd * dt,
-                    rt.z + Math.cos(ang) * moveSpd * dt,
-                    0.5,
-                    true,
-                    collisionCtx
-                  );
-                  if (Math.hypot(wxN - rt.x, wzN - rt.z) > 0.002) {
-                    rt.x = wxN;
-                    rt.z = wzN;
-                    npcWanderMoving = true;
+                  if ((rt.npcPauseTimer ?? 0) > 0) {
+                    rt.npcPauseTimer = (rt.npcPauseTimer ?? 0) - dt;
                   } else {
-                    rt.npcWanderTimer = 0;
+                    rt.npcWanderTimer -= dt;
+                    if (rt.npcWanderTimer <= 0) {
+                      if (Math.random() < 0.36) {
+                        rt.npcPauseTimer = 1.4 + Math.random() * 2.4;
+                      }
+                      const homeDist = Math.hypot(rt.x - rt.startX, rt.z - rt.startZ);
+                      if (homeDist > 3.6) {
+                        rt.npcWanderAngle =
+                          Math.atan2(rt.startX - rt.x, rt.startZ - rt.z) + (Math.random() - 0.5) * 0.9;
+                      } else {
+                        rt.npcWanderAngle =
+                          (rt.npcWanderAngle ?? Math.random() * Math.PI * 2) +
+                          (Math.random() - 0.5) * 2.6;
+                      }
+                      rt.npcWanderTimer = 1.8 + Math.random() * 3.1;
+                    }
+                    const ang = rt.npcWanderAngle ?? 0;
+                    const moveSpd = Math.max(1.05, Math.min(3.1, rt.speed * 0.48));
+                    const stepN = moveSpd * dt;
+                    const [wxN, wzN] = resolveHorizontalCollision(
+                      activeLevel,
+                      rt.x + Math.sin(ang) * stepN,
+                      rt.z + Math.cos(ang) * stepN,
+                      0.54,
+                      false,
+                      collisionCtx
+                    );
+                    if (Math.hypot(wxN - rt.x, wzN - rt.z) > stepN * 0.35) {
+                      rt.x = wxN;
+                      rt.z = wzN;
+                      npcWanderMoving = true;
+                    } else {
+                      // Blocked by fence or obstacle — pick a fresh inward/clear direction immediately
+                      rt.npcWanderAngle =
+                        Math.atan2(rt.startX - rt.x, rt.startZ - rt.z) + (Math.random() - 0.5) * 1.5;
+                      rt.npcWanderTimer = 1.2 + Math.random() * 1.6;
+                    }
+                    const yDiff = Math.atan2(
+                      Math.sin(ang - rt.mesh.rotation.y),
+                      Math.cos(ang - rt.mesh.rotation.y)
+                    );
+                    rt.mesh.rotation.y += yDiff * Math.min(1, dt * 4.5);
                   }
-                  const yDiff = Math.atan2(
-                    Math.sin(ang - rt.mesh.rotation.y),
-                    Math.cos(ang - rt.mesh.rotation.y)
-                  );
-                  rt.mesh.rotation.y += yDiff * Math.min(1, dt * 4.5);
                 }
                 rt.mesh.position.set(rt.x, sampleLevelHeight(activeLevel, rt.x, rt.z) + (rt.elevationY ?? 0), rt.z);
               }
@@ -10134,10 +11149,21 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               );
               const autoDist = rt.chatStyle.autoShowDistance;
 
-              if (dist < 2.8) {
+              const npcTalkRadius = rt.recruited ? 2.1 : 2.8;
+              const toNpcX = rt.x - heroX;
+              const toNpcZ = rt.z - heroZ;
+              const toNpcLen = Math.max(0.01, Math.hypot(toNpcX, toNpcZ));
+              const facingNpcDot =
+                (toNpcX / toNpcLen) * Math.sin(heroYaw) + (toNpcZ / toNpcLen) * Math.cos(heroYaw);
+              const canTalkToNpcNow =
+                dist < npcTalkRadius &&
+                !heroNearPriorityChestOrDoor &&
+                (!rt.recruited || facingNpcDot > 0.32);
+
+              if (canTalkToNpcNow) {
                 nearInteractableEntity = true;
               }
-              if (didInteract && dist < 2.8) {
+              if (didInteract && !interactConsumed && canTalkToNpcNow) {
                 interactConsumed = true;
                 if (rt.pickupable && rt.pickupItemId && !rt.giftGiven) {
                   rt.giftGiven = true;
@@ -10464,6 +11490,18 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   rt.hpBar.mesh.visible = false;
                 }
                 rt.stateTimer -= dt;
+                if (rapierTumblingIds.has(rt.id)) {
+                  const dyingScale = THREE.MathUtils.clamp(rt.stateTimer / 0.28, 0.01, 1);
+                  rt.mesh.scale.setScalar(dyingScale * Math.max(0.25, rt.entityScale || 1));
+                  if (rt.stateTimer <= 0) {
+                    rapierTumblingIds.delete(rt.id);
+                    rapierPhysics?.removeProp(rt.id);
+                    rt.deathFinalized = true;
+                    rt.alive = false;
+                    rt.mesh.visible = false;
+                  }
+                  continue;
+                }
                 if (canFly && rt.flightY > 0) {
                   rt.flightY = Math.max(0, rt.flightY - dt * 7.2);
                 }
@@ -10698,12 +11736,23 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                     const kbMag = shieldedBlock
                       ? actionDef.knockbackForce * 0.42
                       : incomingDmg > 0
-                      ? actionDef.knockbackForce
+                      ? Math.max(actionDef.knockbackForce, 6.2)
                       : 4.2;
-                    heroKnockVX = kbDirX * kbMag;
-                    heroKnockVZ = kbDirZ * kbMag;
+                    // Compute realistic directional hit reaction on Hero (front, rear, or left/right flank)
+                    const hFwdX = Math.sin(heroYaw);
+                    const hFwdZ = Math.cos(heroYaw);
+                    const hRightX = Math.cos(heroYaw);
+                    const hRightZ = -Math.sin(heroYaw);
+                    const hitFromBehindDot = kbDirX * hFwdX + kbDirZ * hFwdZ;
+                    const hitSideDot = kbDirX * hRightX + kbDirZ * hRightZ;
+                    heroHitPitchDir = hitFromBehindDot > 0.35 ? 1 : -1;
+                    heroHitRollDir = THREE.MathUtils.clamp(-hitSideDot * 1.25, -1, 1);
+
+                    const rearFlankMult = !shieldedBlock && hitFromBehindDot > 0.35 ? 1.18 : 1.0;
+                    heroKnockVX = kbDirX * kbMag * rearFlankMult;
+                    heroKnockVZ = kbDirZ * kbMag * rearFlankMult;
                     if (!shieldedBlock && !isSwimming && heroY <= floorY + 0.22 && incomingDmg > 0) {
-                      heroVelY = actionDef.heroEffect === 'knockdown' ? 3.2 : 2.6;
+                      heroVelY = actionDef.heroEffect === 'knockdown' ? 3.8 : 2.9;
                     }
                     heroRecoilTimer = shieldedBlock ? 0.14 : incomingDmg > 0 ? 0.28 : 0.12;
                     if (incomingDmg > 0 && !shieldedBlock) {
@@ -10715,6 +11764,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                         9,
                         6.5
                       );
+                      worldInteract?.spawnDebrisBurst(heroX, heroY + 0.45, heroZ, 'dust', 6, 4.4);
                     }
                     const isOgreThrow =
                       !shieldedBlock &&
@@ -10988,10 +12038,34 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                       : 1.45;
                   if (dist > idealStopDist) {
                     const flyChaseMult = canFly && rt.flightY > 0.35 ? 1.18 : 1.0;
+                    let steerX = dx;
+                    let steerZ = dz;
+                    if (!canFly && navMeshEngine?.isReady()) {
+                      const navPt = navMeshEngine.steerTowards(
+                        rt.id,
+                        rt.x,
+                        rt.mesh.position.y,
+                        rt.z,
+                        heroX,
+                        heroY,
+                        heroZ,
+                        gameElapsed
+                      );
+                      if (navPt.onNavMesh) {
+                        const ndx = navPt.x - rt.x;
+                        const ndz = navPt.z - rt.z;
+                        const nLen = Math.hypot(ndx, ndz);
+                        if (nLen > 0.08) {
+                          steerX = ndx / nLen;
+                          steerZ = ndz / nLen;
+                          rt.mesh.rotation.y = Math.atan2(steerX, steerZ);
+                        }
+                      }
+                    }
                     const [bx, bz] = resolveHorizontalCollision(
                       activeLevel,
-                      rt.x + dx * bSpeed * flyChaseMult * simDt,
-                      rt.z + dz * bSpeed * flyChaseMult * simDt,
+                      rt.x + steerX * bSpeed * flyChaseMult * simDt,
+                      rt.z + steerZ * bSpeed * flyChaseMult * simDt,
                       0.6,
                       false,
                       collisionCtx
@@ -11891,7 +12965,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           if (!isDriving && harvestRuleMap.size > 0 && islandHandles.harvestableScatter.length > 0) {
             for (let hi = 0; hi < islandHandles.harvestableScatter.length; hi++) {
               const hs = islandHandles.harvestableScatter[hi];
-              if (hs.collected) continue;
+              if (hs.collected || hs.scatterKind === 'bush') continue;
               const rule = harvestRuleMap.get(hs.scatterKind);
               if (!rule) continue;
               // Smooth River Stones use the Use button for sitting; gather them by hitting (Ctrl / F)
@@ -11905,9 +12979,91 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           }
 
+          // World interactivity Use-button priorities: Wall Torches anywhere -> Organic Rocks/Boulders -> Prompts
+          const nearestWallTorch =
+            !isDriving && !isSitting && !isClimbing && !worldInteract?.carriedRock
+              ? worldInteract?.findNearestWallTorch(heroX, heroY, heroZ) ?? null
+              : null;
+          if (didInteract && !interactConsumed && nearestWallTorch && worldInteract) {
+            interactConsumed = true;
+            worldInteract.grabWallTorch(nearestWallTorch);
+            addItemToBag('campfire_torch', 1, true);
+            handleHoldItem('campfire_torch');
+            AudioEngine.playSound('sparkle');
+            showToast('Grabbed lit Wall Torch! Equipped in hand.');
+          }
+
+          const nearestPickupRock =
+            !isDriving && !isSitting && !isClimbing && !worldInteract?.carriedRock && !nearestWallTorch
+              ? worldInteract?.findNearestPickupRock(heroX, heroY, heroZ) ?? null
+              : null;
+          if (didInteract && !interactConsumed && nearestPickupRock && worldInteract) {
+            interactConsumed = true;
+            worldInteract.pickUpRock(nearestPickupRock);
+            AudioEngine.playSound('step');
+            showToast(
+              nearestPickupRock.kind === 'boulder'
+                ? 'Lifted heavy Boulder (2-handed)! Aim the orange bullseye & press E to throw.'
+                : 'Picked up Rock (1-handed)! Aim the orange bullseye & press E to throw.'
+            );
+          }
+
+          // Sync compact World Action prompt banner (throttled via key cache)
+          let nextWorldPrompt: {
+            kind: 'rock' | 'boulder' | 'carryingRock' | 'carryingBoulder' | 'wallTorch' | 'treeFruit';
+            label: string;
+            hint?: string;
+          } | null = null;
+          if (worldInteract?.carriedRock) {
+            nextWorldPrompt =
+              worldInteract.carriedRock.kind === 'boulder'
+                ? {
+                    kind: 'carryingBoulder',
+                    label: 'Heavy Boulder',
+                    hint: 'Move mouse or turn to aim · Short heavy arc',
+                  }
+                : {
+                    kind: 'carryingRock',
+                    label: 'Field Rock',
+                    hint: 'Move mouse or turn to aim · Long fast throw',
+                  };
+          } else if (canPickTreeFruitNow && climbingTree) {
+            nextWorldPrompt = {
+              kind: 'treeFruit',
+              label: climbingTree.fruitLabel || 'Orchard Fruit',
+              hint: `${climbingTree.fruitCount ?? 1} remaining in canopy`,
+            };
+          } else if (nearestWallTorch) {
+            nextWorldPrompt = {
+              kind: 'wallTorch',
+              label: 'Wall Torch',
+              hint: 'Pull from sconce & equip lit',
+            };
+          } else if (nearestPickupRock && !nearestChestPrompt && !nearestDoorPrompt) {
+            nextWorldPrompt =
+              nearestPickupRock.kind === 'boulder'
+                ? {
+                    kind: 'boulder',
+                    label: 'Boulder (2-Handed)',
+                    hint: 'Lift & throw at enemies',
+                  }
+                : {
+                    kind: 'rock',
+                    label: 'Field Rock (1-Handed)',
+                    hint: 'Pick up & throw far',
+                  };
+          }
+          const worldPromptKey = nextWorldPrompt
+            ? `${nextWorldPrompt.kind}:${nextWorldPrompt.label}:${nextWorldPrompt.hint ?? ''}`
+            : '';
+          if (worldPromptKey !== lastWorldActionPromptKey) {
+            lastWorldActionPromptKey = worldPromptKey;
+            setWorldActionPrompt(nextWorldPrompt);
+          }
+
           if (nearestScatter && nearestScatterRule) {
             const scatterLabels: Record<
-              'mushroom' | 'berryBush' | 'fern' | 'broadleaf' | 'flower' | 'rock',
+              'mushroom' | 'berryBush' | 'fern' | 'broadleaf' | 'flower' | 'rock' | 'bush',
               string
             > = {
               mushroom: 'Wild Mushroom',
@@ -11916,6 +13072,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               broadleaf: 'Herbaceous Plant',
               flower: 'Wildflower',
               rock: 'Mossy Stone',
+              bush: 'Woodland Bush',
             };
             const fallbackLabel = scatterLabels[nearestScatter.scatterKind] ?? 'Collectible';
             const collectDef = itemByIdRef.current.get(nearestScatterRule.itemId);
@@ -12685,11 +13842,15 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         if (wantsAutoClose && !wasInsideAutoClose) {
           wasInsideAutoClose = true;
           autoCloseReason = insideInteriorOrCave ? 'interior' : 'forest';
-          if (!isDriving && envType !== 'sideScroller' && camModeNow !== 'firstPerson' && camModeNow !== 'close') {
+          if (
+            !isDriving &&
+            envType !== 'sideScroller' &&
+            camModeNow !== 'firstPerson' &&
+            camModeNow !== 'close' &&
+            camModeNow !== 'front'
+          ) {
             camBeforeAutoClose = camModeNow;
-            if (camModeNow === 'front') {
-              inp.cameraYaw = Math.atan2(-Math.sin(heroYaw), -Math.cos(heroYaw));
-            } else if (camModeNow === 'heroFront') {
+            if (camModeNow === 'heroFront') {
               inp.cameraYaw = heroYaw;
             }
             resolvedCamModeRef.current = 'close';
@@ -12837,9 +13998,17 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           }
         } else {
           const isRpgIsoNow = activeLevel.gameplayMode === 'rpg' && camModeNow === 'isometric';
+          if (camModeNow !== prevCamModeForSnap) {
+            if (camModeNow === 'front' || camModeNow === 'heroFront') {
+              smoothCamYaw = heroYaw;
+            }
+            prevCamModeForSnap = camModeNow;
+          }
           const targetFov =
             camModeNow === 'firstPerson'
               ? 68
+              : camModeNow === 'front'
+              ? 58
               : camModeNow === 'heroFront'
               ? 58
               : camModeNow === 'close'
@@ -12923,19 +14092,25 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               }
               _lookTarget.set(heroX, heroY + 1.18, heroZ);
             } else if (camModeNow === 'front') {
-              const openDist = Math.max(8.2, camDist);
-              const dist = THREE.MathUtils.lerp(openDist, 3.85, caveCamBlend);
+              // Front View: tight, eye-level just-behind chase camera (not isometric) keeping hero right in front & always looking forward
+              const openDist = THREE.MathUtils.clamp(
+                activeLevel.gameplayMode === 'rpg' ? 5.25 : Math.min(6.4, Math.max(4.4, camDist * 0.56)),
+                4.2,
+                6.8
+              );
+              const closeBlend = Math.max(caveCamBlend, interiorCamBlend);
+              const dist = THREE.MathUtils.lerp(openDist, 3.55, closeBlend);
               const camH = THREE.MathUtils.lerp(
-                4.6 + inp.lookPitchOffset,
-                1.95 + inp.lookPitchOffset * 0.25,
-                caveCamBlend
+                2.25 + inp.lookPitchOffset * 0.45,
+                1.75 + inp.lookPitchOffset * 0.22,
+                closeBlend
               );
               const desiredCamYaw = heroYaw + inp.lookYawOffset;
               const yawDiff = Math.atan2(
                 Math.sin(desiredCamYaw - smoothCamYaw),
                 Math.cos(desiredCamYaw - smoothCamYaw)
               );
-              smoothCamYaw += yawDiff * Math.min(1, dt * 11);
+              smoothCamYaw += yawDiff * Math.min(1, dt * 15);
 
               _targetCamPos.set(
                 heroX - Math.sin(smoothCamYaw) * dist + shakeX,
@@ -12951,10 +14126,17 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               if (heroInsideWalkInBuilding && insideBuildingCeilingY < 900) {
                 _targetCamPos.y = Math.min(_targetCamPos.y, insideBuildingCeilingY - 0.52);
               }
+              if (!heroInCave && !heroInsideWalkInBuilding) {
+                _targetCamPos.y = Math.max(
+                  _targetCamPos.y,
+                  sampleLevelHeight(activeLevel, _targetCamPos.x, _targetCamPos.z) + 0.95
+                );
+              }
+              const lookAheadDist = THREE.MathUtils.lerp(4.4, 2.2, closeBlend);
               _lookTarget.set(
-                heroX + Math.sin(smoothCamYaw) * THREE.MathUtils.lerp(1.8, 1.2, caveCamBlend),
-                heroY + 1.28,
-                heroZ + Math.cos(smoothCamYaw) * THREE.MathUtils.lerp(1.8, 1.2, caveCamBlend)
+                heroX + Math.sin(smoothCamYaw) * lookAheadDist,
+                heroY + 1.38,
+                heroZ + Math.cos(smoothCamYaw) * lookAheadDist
               );
             } else if (camModeNow === 'heroFront') {
               const openDist = Math.max(8.2, Math.min(15.5, camDist));
@@ -13213,6 +14395,34 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           heroRoot.position
         );
 
+        // Wave 2: Step Rapier dynamic props/tumbles, living wildlife flocks (hero-reactive fish!), and cave eye adaptation
+        if (!pausedNow && rapierPhysics?.isReady()) {
+          rapierPhysics.step(dt, heroX, heroY, heroZ);
+        }
+        wildlifeSystem?.update(dt, gameElapsed, heroRoot.position);
+        if (env !== 'dungeon') {
+          const inCaveNow = isInsideAnyCave(activeLevel.terrain, heroX, heroZ);
+          caveEyeAdaptBlend = THREE.MathUtils.damp(caveEyeAdaptBlend, inCaveNow ? 1 : 0, 2.6, dt);
+          if (caveEyeAdaptBlend > 0.002) {
+            renderer.toneMappingExposure = basePlayExposure * (1 + caveEyeAdaptBlend * 0.24);
+            hemi.color.copy(baseHemiSkyColor).lerp(caveHemiSkyColor, caveEyeAdaptBlend * 0.65);
+            hemi.groundColor
+              .copy(baseHemiGroundColor)
+              .lerp(caveHemiGroundColor, caveEyeAdaptBlend * 0.72);
+            hemi.intensity = baseHemiIntensity * (1 - caveEyeAdaptBlend * 0.34);
+            caveFillLight.position.set(heroX, heroY + 2.1, heroZ);
+            caveFillLight.intensity = caveEyeAdaptBlend * 1.45;
+          } else {
+            if (caveFillLight.intensity > 0) {
+              renderer.toneMappingExposure = basePlayExposure;
+              hemi.color.copy(baseHemiSkyColor);
+              hemi.groundColor.copy(baseHemiGroundColor);
+              hemi.intensity = baseHemiIntensity;
+              caveFillLight.intensity = 0;
+            }
+          }
+        }
+
         try {
           if (postPipeline) {
             postPipeline.render({
@@ -13387,6 +14597,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       setChestInteractPrompt(null);
       setSitPrompt(null);
       setClimbPrompt(null);
+      setWorldActionPrompt(null);
       setGlidePrompt(null);
       liveQualityTargetRef.current = null;
       cancelAnimationFrame(frameId);
@@ -13400,6 +14611,15 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       timer.dispose();
       islandHandlesRef?.grassSystem?.dispose();
       islandHandlesRef = null;
+      wildlifeSystem?.dispose();
+      wildlifeSystem = null;
+      worldInteract?.dispose();
+      worldInteract = null;
+      navMeshEngine?.dispose();
+      navMeshEngine = null;
+      rapierPhysics?.dispose();
+      rapierPhysics = null;
+      rapierTumblingIds.clear();
       for (const fx of activeFxRuntimes) {
         fx.dispose();
       }
@@ -13411,6 +14631,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       scentPuffGeo.dispose();
       sonarRingGeo.dispose();
       revealBeaconGeo.dispose();
+      sunCsm?.dispose();
+      sunCsm = null;
       postPipeline?.dispose();
       envTex?.dispose();
       disposeObject3D(scene);
@@ -13812,23 +15034,29 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               className={`px-3 h-9 rounded-xl border text-xs font-extrabold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap ${
                 resolvedCamMode === 'firstPerson'
                   ? 'bg-[#7C5CFF] border-[#7C5CFF] text-white'
+                  : resolvedCamMode === 'front'
+                  ? 'bg-[#10B981] border-[#10B981] text-white'
                   : resolvedCamMode === 'heroFront'
                   ? 'bg-[#0EA5E9] border-[#0EA5E9] text-white'
                   : resolvedCamMode === 'close'
                   ? 'bg-[#F59E0B] border-[#F59E0B] text-slate-950'
                   : 'bg-black/55 border-white/15 text-white hover:bg-black/75'
               }`}
-              title="Cycle Camera View: Behind / Close / Front View / POV (V)"
+              title="Cycle Camera View: Isometric / Front / Close / Face / POV (V)"
             >
               <Eye size={14} />
               <span>
                 {resolvedCamMode === 'firstPerson'
                   ? 'POV'
+                  : resolvedCamMode === 'front'
+                  ? 'Front'
                   : resolvedCamMode === 'heroFront'
-                  ? 'Front View'
+                  ? 'Face'
                   : resolvedCamMode === 'close'
                   ? 'Close'
-                  : 'Behind'}
+                  : resolvedCamMode === 'isometric'
+                  ? 'Isometric'
+                  : 'Chase'}
               </span>
               <span className="px-1.5 py-0.5 rounded bg-white/15 text-[10px] font-bold">V</span>
             </button>
@@ -13908,9 +15136,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         </div>
       )}
 
-      {/* Top-right Framerate Viewer */}
+      {/* Top-right Framerate Viewer (sits cleanly above Minimap HUD at z-[60]) */}
       {!showTitle && (
-        <div className="fixed top-4 right-4 z-20 flex flex-col items-end gap-1.5">
+        <div className="fixed top-4 right-4 z-[60] flex flex-col items-end gap-1.5">
           <button
             type="button"
             onClick={() =>
@@ -14287,6 +15515,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         sitPrompt={sitPrompt}
         climbPrompt={climbPrompt}
         glidePrompt={glidePrompt}
+        worldActionPrompt={worldActionPrompt}
         isRpgMode={isRpgMode}
       />
 
@@ -14410,7 +15639,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               ? `WASD move · Q use power · X switch power · E/Alt gather/talk · M map · ${formatKeyCodeLabel(inventoryConfig.toggleKey)} bag · V view`
               : resolvedCamMode === 'firstPerson'
               ? `W/S move · A/D turn · Space/Shift jump · F/Ctrl hit · E/Alt use · M map · ${formatKeyCodeLabel(inventoryConfig.toggleKey)} bag · V view`
-              : resolvedCamMode === 'front' || resolvedCamMode === 'heroFront'
+              : resolvedCamMode === 'front'
+              ? `W/S move · A/D turn world · Space/Shift jump · F/Ctrl hit · E/Alt use · M map · ${formatKeyCodeLabel(inventoryConfig.toggleKey)} bag · V view`
+              : resolvedCamMode === 'heroFront'
               ? `WASD or Stick move · Space/Shift jump · F/Ctrl hit · E/Alt use · M map · ${formatKeyCodeLabel(inventoryConfig.toggleKey)} bag · V view`
               : `WASD move · Space/Shift jump · F/Ctrl hit · E/Alt use · M map · ${formatKeyCodeLabel(inventoryConfig.toggleKey)} bag · V view`}
           </div>

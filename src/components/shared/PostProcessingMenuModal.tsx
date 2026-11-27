@@ -855,6 +855,124 @@ export const PostProcessingMenuModal: React.FC<{
           )}
         </section>
 
+        {/* 4c. Half-Res Ground-Truth Ambient Occlusion (GTAO) */}
+        <section className="p-3 rounded-2xl bg-slate-50 dark:bg-[#1C212E] border border-slate-200/70 dark:border-white/[0.06] space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-extrabold">
+              <Sparkles size={14} className="text-[#8B5CF6]" />
+              <span>Ambient Occlusion (GTAO)</span>
+            </div>
+            <SwitchToggle
+              checked={cfg.enabled && (cfg.gtaoEnabled ?? true)}
+              onChange={(next) =>
+                patchPost({ gtaoEnabled: next }, { recordUndo: true, autoEnable: next })
+              }
+              accent="#8B5CF6"
+              ariaLabel="Toggle Ground-Truth Ambient Occlusion"
+            />
+          </div>
+          {(cfg.gtaoEnabled ?? true) && (
+            <div className="space-y-2 pt-0.5">
+              <EffectSlider
+                label="Crevice Depth"
+                value={cfg.gtaoIntensity ?? 0.72}
+                min={0}
+                max={1.6}
+                step={0.02}
+                display={`${Math.round((cfg.gtaoIntensity ?? 0.72) * 100)}%`}
+                accent="#8B5CF6"
+                onChange={(v) => patchPost({ gtaoEnabled: true, gtaoIntensity: v })}
+              />
+              <EffectSlider
+                label="AO Radius"
+                value={cfg.gtaoRadius ?? 0.85}
+                min={0.2}
+                max={2.4}
+                step={0.05}
+                display={`${(cfg.gtaoRadius ?? 0.85).toFixed(2)}m`}
+                accent="#8B5CF6"
+                onChange={(v) => patchPost({ gtaoEnabled: true, gtaoRadius: v })}
+              />
+            </div>
+          )}
+        </section>
+
+        {/* 4d. Volumetric Sun Shafts (God Rays) & Tone Mapping */}
+        <section className="p-3 rounded-2xl bg-slate-50 dark:bg-[#1C212E] border border-slate-200/70 dark:border-white/[0.06] space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-extrabold">
+              <Sun size={14} className="text-[#F59E0B]" />
+              <span>Volumetric Sun Shafts</span>
+            </div>
+            <SwitchToggle
+              checked={cfg.enabled && (cfg.godRaysEnabled ?? true)}
+              onChange={(next) =>
+                patchPost({ godRaysEnabled: next }, { recordUndo: true, autoEnable: next })
+              }
+              accent="#F59E0B"
+              ariaLabel="Toggle Volumetric Sun Shafts"
+            />
+          </div>
+          {(cfg.godRaysEnabled ?? true) && (
+            <div className="space-y-2 pt-0.5">
+              <EffectSlider
+                label="Shaft Intensity"
+                value={cfg.godRaysIntensity ?? 0.52}
+                min={0}
+                max={1.4}
+                step={0.02}
+                display={`${Math.round((cfg.godRaysIntensity ?? 0.52) * 100)}%`}
+                accent="#F59E0B"
+                onChange={(v) => patchPost({ godRaysEnabled: true, godRaysIntensity: v })}
+              />
+            </div>
+          )}
+
+          <div className="pt-2 border-t border-slate-200/70 dark:border-white/[0.06] flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold text-slate-600 dark:text-[#A3ABBF]">
+              Filmic Tone Mapper
+            </span>
+            <div className="inline-flex rounded-lg bg-slate-200/70 dark:bg-[#141822] p-0.5">
+              {(['agx', 'aces'] as const).map((tm) => {
+                const active = (cfg.toneMapping ?? 'agx') === tm;
+                return (
+                  <button
+                    key={tm}
+                    type="button"
+                    onClick={() => patchPost({ toneMapping: tm }, { recordUndo: true })}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase transition-colors ${
+                      active
+                        ? 'bg-[#7C5CFF] text-white'
+                        : 'text-slate-600 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {tm === 'agx' ? 'AgX' : 'ACES'}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-200/70 dark:border-white/[0.06] flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[11px] font-bold text-slate-700 dark:text-[#C8D0E4]">
+                Anti-Shimmer (TRAA)
+              </div>
+              <div className="text-[10px] text-slate-500 dark:text-[#8E96AB]">
+                Temporal foliage &amp; edge smoothing
+              </div>
+            </div>
+            <SwitchToggle
+              checked={cfg.enabled && Boolean(cfg.traaEnabled)}
+              onChange={(next) =>
+                patchPost({ traaEnabled: next }, { recordUndo: true, autoEnable: next })
+              }
+              accent="#10B981"
+              ariaLabel="Toggle Temporal Anti-Aliasing (TRAA)"
+            />
+          </div>
+        </section>
+
         {/* 5. Live Renderer Quality */}
         <section className="p-3 rounded-2xl bg-slate-50 dark:bg-[#1C212E] border border-slate-200/70 dark:border-white/[0.06] space-y-2.5">
           <div className="flex items-center justify-between gap-2">
