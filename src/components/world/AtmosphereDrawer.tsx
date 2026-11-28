@@ -414,6 +414,273 @@ export const AtmosphereDrawer: React.FC<{ store: MakerStore }> = ({ store }) => 
             </div>
           </div>
 
+          {/* Volumetric Fog & Light Shafts (God Rays) */}
+          <div className="space-y-3 p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] border border-slate-200/70 dark:border-white/[0.06]">
+            <div className="flex items-center justify-between">
+              <FieldLabel text="Volumetric Atmosphere & God Rays" />
+              <Sun size={13} className="text-[#F59E0B]" />
+            </div>
+
+            {/* Volumetric Ground Fog Toggle */}
+            <div className="flex items-center justify-between gap-2 pt-0.5">
+              <span className="text-[11px] font-bold text-slate-700 dark:text-[#E2E8F0]">
+                Rolling Valley Mist
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={currentLevel.volumetricFogEnabled ?? true}
+                onClick={() =>
+                  store.updateLevel(
+                    'toggle volumetric fog',
+                    (lvl) => ({ ...lvl, volumetricFogEnabled: !(lvl.volumetricFogEnabled ?? true) }),
+                    true
+                  )
+                }
+                style={{ backgroundColor: (currentLevel.volumetricFogEnabled ?? true) ? '#38BDF8' : undefined }}
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                  (currentLevel.volumetricFogEnabled ?? true) ? '' : 'bg-slate-300 dark:bg-[#2C3346]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+                    (currentLevel.volumetricFogEnabled ?? true) ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {(currentLevel.volumetricFogEnabled ?? true) && (
+              <div className="space-y-2.5 pl-1 border-l-2 border-[#38BDF8]/30">
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[11px] font-semibold">
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Mist Density</span>
+                    <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
+                      {Math.round((currentLevel.volumetricFogDensity ?? 1.0) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={2.5}
+                    step={0.05}
+                    value={currentLevel.volumetricFogDensity ?? 1.0}
+                    onChange={(e) =>
+                      store.updateLevel(
+                        'adjust volumetric fog density',
+                        (lvl) => ({ ...lvl, volumetricFogDensity: Number(e.target.value) }),
+                        false
+                      )
+                    }
+                    className="w-full accent-[#38BDF8]"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[11px] font-semibold">
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Mist Elevation</span>
+                    <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
+                      {(currentLevel.volumetricFogHeight !== undefined ? currentLevel.volumetricFogHeight : 3.2).toFixed(1)}m
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-4}
+                    max={20}
+                    step={0.5}
+                    value={currentLevel.volumetricFogHeight !== undefined ? currentLevel.volumetricFogHeight : 3.2}
+                    onChange={(e) =>
+                      store.updateLevel(
+                        'adjust mist elevation',
+                        (lvl) => ({ ...lvl, volumetricFogHeight: Number(e.target.value) }),
+                        false
+                      )
+                    }
+                    className="w-full accent-[#38BDF8]"
+                  />
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <div className="flex justify-between text-[11px] font-semibold">
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Edge Softness (Thickness)</span>
+                    <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
+                      {(currentLevel.volumetricFogSoftness ?? 8.0).toFixed(1)}m
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={25}
+                    step={0.5}
+                    value={currentLevel.volumetricFogSoftness ?? 8.0}
+                    onChange={(e) =>
+                      store.updateLevel(
+                        'adjust fog softness',
+                        (lvl) => ({ ...lvl, volumetricFogSoftness: Number(e.target.value) }),
+                        false
+                      )
+                    }
+                    className="w-full accent-[#38BDF8]"
+                  />
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <div className="flex justify-between text-[11px] font-semibold">
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Boundary Noise &amp; Undulation</span>
+                    <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
+                      {Math.round((currentLevel.volumetricFogNoise ?? 0.85) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={2.0}
+                    step={0.05}
+                    value={currentLevel.volumetricFogNoise ?? 0.85}
+                    onChange={(e) =>
+                      store.updateLevel(
+                        'adjust fog noise',
+                        (lvl) => ({ ...lvl, volumetricFogNoise: Number(e.target.value) }),
+                        false
+                      )
+                    }
+                    className="w-full accent-[#38BDF8]"
+                  />
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <div className="flex justify-between text-[11px] font-semibold">
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Patch Separation (Fog Banks)</span>
+                    <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
+                      {Math.round((currentLevel.volumetricFogPatchiness ?? 0.45) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1.0}
+                    step={0.05}
+                    value={currentLevel.volumetricFogPatchiness ?? 0.45}
+                    onChange={(e) =>
+                      store.updateLevel(
+                        'adjust fog patchiness',
+                        (lvl) => ({ ...lvl, volumetricFogPatchiness: Number(e.target.value) }),
+                        false
+                      )
+                    }
+                    className="w-full accent-[#38BDF8]"
+                  />
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <div className="flex justify-between text-[11px] font-semibold">
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Drift &amp; Movement Speed</span>
+                    <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
+                      {Math.round((currentLevel.volumetricFogSpeed ?? 0.75) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={3.0}
+                    step={0.05}
+                    value={currentLevel.volumetricFogSpeed ?? 0.75}
+                    onChange={(e) =>
+                      store.updateLevel(
+                        'adjust fog speed',
+                        (lvl) => ({ ...lvl, volumetricFogSpeed: Number(e.target.value) }),
+                        false
+                      )
+                    }
+                    className="w-full accent-[#38BDF8]"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Volumetric Light Shafts (God Rays) Toggle */}
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/60 dark:border-white/[0.06]">
+              <span className="text-[11px] font-bold text-slate-700 dark:text-[#E2E8F0]">
+                3D Volumetric Light Shafts
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={currentLevel.godRaysEnabled ?? true}
+                onClick={() =>
+                  store.updateLevel(
+                    'toggle volumetric god rays',
+                    (lvl) => ({ ...lvl, godRaysEnabled: !(lvl.godRaysEnabled ?? true) }),
+                    true
+                  )
+                }
+                style={{ backgroundColor: (currentLevel.godRaysEnabled ?? true) ? '#F59E0B' : undefined }}
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                  (currentLevel.godRaysEnabled ?? true) ? '' : 'bg-slate-300 dark:bg-[#2C3346]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+                    (currentLevel.godRaysEnabled ?? true) ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {(currentLevel.godRaysEnabled ?? true) && (
+              <div className="space-y-2.5 pl-1 border-l-2 border-[#F59E0B]/30">
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[11px] font-semibold">
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Shafts Intensity</span>
+                    <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
+                      {Math.round((currentLevel.godRaysIntensity ?? 0.75) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1.8}
+                    step={0.05}
+                    value={currentLevel.godRaysIntensity ?? 0.75}
+                    onChange={(e) =>
+                      store.updateLevel(
+                        'adjust god rays intensity',
+                        (lvl) => ({ ...lvl, godRaysIntensity: Number(e.target.value) }),
+                        false
+                      )
+                    }
+                    className="w-full accent-[#F59E0B]"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Ambient Sunbeam Dust Motes Slider */}
+            <div className="space-y-1 pt-1 border-t border-slate-200/60 dark:border-white/[0.06]">
+              <div className="flex justify-between text-[11px] font-semibold">
+                <span className="text-slate-600 dark:text-[#C8D0E4]">Sunbeam Dust Motes</span>
+                <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
+                  {Math.round((currentLevel.atmosphericDust ?? 0.5) * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={currentLevel.atmosphericDust ?? 0.5}
+                onChange={(e) =>
+                  store.updateLevel(
+                    'adjust atmospheric dust motes',
+                    (lvl) => ({ ...lvl, atmosphericDust: Number(e.target.value) }),
+                    false
+                  )
+                }
+                className="w-full accent-[#F59E0B]"
+              />
+            </div>
+          </div>
+
           {/* Distant Vista */}
           {(envType === 'openWorld' || envType === 'castle') && (
             <div className="space-y-2.5 p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] border border-slate-200/70 dark:border-white/[0.06]">

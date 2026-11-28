@@ -508,21 +508,43 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
                     </div>
 
                     {isSelected && (
-                      <div className="flex flex-wrap items-center gap-1 pt-0.5">
-                        {LAND_REGION_PALETTE.map((hex) => (
+                      <div className="space-y-1.5 pt-0.5">
+                        <div className="flex flex-wrap items-center gap-1">
+                          {LAND_REGION_PALETTE.map((hex) => (
+                            <button
+                              key={hex}
+                              type="button"
+                              onClick={() => store.updateWorldLandRegion(reg.id, { colorHex: hex })}
+                              className={`w-4 h-4 rounded-md border ${
+                                reg.colorHex.toUpperCase() === hex.toUpperCase()
+                                  ? 'border-slate-900 dark:border-white scale-110'
+                                  : 'border-black/20 opacity-80 hover:opacity-100'
+                              }`}
+                              style={{ backgroundColor: hex }}
+                              title={`Color ${hex}`}
+                            />
+                          ))}
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-white/[0.06] text-[10px]">
+                          <span className="font-semibold text-slate-500 dark:text-[#949BB0]">
+                            Playable Area Scope
+                          </span>
                           <button
-                            key={hex}
                             type="button"
-                            onClick={() => store.updateWorldLandRegion(reg.id, { colorHex: hex })}
-                            className={`w-4 h-4 rounded-md border ${
-                              reg.colorHex.toUpperCase() === hex.toUpperCase()
-                                ? 'border-slate-900 dark:border-white scale-110'
-                                : 'border-black/20 opacity-80 hover:opacity-100'
+                            onClick={() => {
+                              const nextR = reg.worldRadius === 640 ? undefined : 640;
+                              store.updateWorldLandRegion(reg.id, { worldRadius: nextR });
+                            }}
+                            className={`px-2 py-0.5 rounded-md font-extrabold text-[10px] transition-colors ${
+                              reg.worldRadius === 640
+                                ? 'bg-[#20B46A] text-white shadow-xs'
+                                : 'bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-white/15'
                             }`}
-                            style={{ backgroundColor: hex }}
-                            title={`Color ${hex}`}
-                          />
-                        ))}
+                            title="Toggle between standard land and full 1280m x 1280m world map area"
+                          >
+                            {reg.worldRadius === 640 ? 'Full World (1280m)' : 'Auto / Standard'}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

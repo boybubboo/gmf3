@@ -2143,20 +2143,41 @@ export function useMakerStore() {
   );
 
   const updateWorldLandRegion = useCallback(
-    (regionId: string, patch: Partial<Pick<WorldLandRegion, 'name' | 'colorHex'>>) => {
+    (
+      regionId: string,
+      patch: Partial<Pick<WorldLandRegion, 'name' | 'colorHex' | 'worldRadius'>>
+    ) => {
       if (!currentProject) return;
       updateProject('update land region', (proj) => {
         const wm = proj.worldMap ?? ensureWorldMapForProject(proj);
         let linkedLevelId: string | null = null;
+        let linkedRegionCode: number | undefined;
+        let linkedRegionOrigin: [number, number] | undefined;
         const nextRegions = wm.regions.map((r) => {
           if (r.id !== regionId) return r;
           linkedLevelId = r.levelId;
+          linkedRegionCode = r.code;
+          linkedRegionOrigin = r.origin;
           return { ...r, ...patch };
         });
-        const nextLevels =
-          patch.name !== undefined && linkedLevelId
-            ? proj.levels.map((l) => (l.id === linkedLevelId ? { ...l, name: patch.name! } : l))
-            : proj.levels;
+        const nextLevels = proj.levels.map((l) => {
+          if (l.id !== linkedLevelId) return l;
+          const nextTerrain =
+            patch.worldRadius !== undefined
+              ? syncLevelTerrainWithWorldMap(
+                  l.terrain,
+                  { ...wm, regions: nextRegions },
+                  linkedRegionCode,
+                  linkedRegionOrigin
+                )
+              : l.terrain;
+          return {
+            ...l,
+            ...(patch.name !== undefined ? { name: patch.name } : {}),
+            ...(patch.worldRadius !== undefined ? { worldRadius: patch.worldRadius } : {}),
+            terrain: nextTerrain,
+          };
+        });
         return {
           ...proj,
           worldMap: {
@@ -2168,7 +2189,7 @@ export function useMakerStore() {
         };
       });
     },
-    [currentProject, updateProject]
+    [currentProject, ensureWorldMapForProject, updateProject]
   );
 
   const deleteWorldLandRegion = useCallback(

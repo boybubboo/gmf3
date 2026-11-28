@@ -522,6 +522,16 @@ export const PostProcessingPanel: React.FC<{ store: MakerStore }> = ({ store }) 
                   accent="#F59E0B"
                   onChange={(v) => patchPost({ godRaysIntensity: v })}
                 />
+                <SliderControl
+                  label="Atmospheric Dust"
+                  value={cfg.atmosphericDust ?? 0.5}
+                  min={0}
+                  max={1.0}
+                  step={0.05}
+                  display={`${Math.round((cfg.atmosphericDust ?? 0.5) * 100)}%`}
+                  accent="#F59E0B"
+                  onChange={(v) => patchPost({ atmosphericDust: v })}
+                />
               </div>
             )}
 

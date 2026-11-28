@@ -697,6 +697,7 @@ export function getLevelWorldRadius(level?: Partial<GameLevel> | null): number {
   if (env === 'dungeon') return 42;
   if (env === 'castle') return 46;
   if (env === 'sideScroller') return 56;
+  if (level?.worldRadius && level.worldRadius > 0) return level.worldRadius;
   return getTerrainRadius(level?.terrain);
 }
 
@@ -720,7 +721,7 @@ export function levelBoardToWorld(level: Partial<GameLevel> | null | undefined, 
       (point.y - 0.5) * 84,
     ];
   }
-  const r = getTerrainRadius(level?.terrain);
+  const r = getLevelWorldRadius(level);
   return [(point.x - 0.5) * 2 * r, (point.y - 0.5) * 2 * r];
 }
 
@@ -744,7 +745,7 @@ export function levelWorldToBoard(level: Partial<GameLevel> | null | undefined, 
       y: Math.min(0.95, Math.max(0.05, z / 84 + 0.5)),
     };
   }
-  const r = getTerrainRadius(level?.terrain);
+  const r = getLevelWorldRadius(level);
   return {
     x: Math.min(0.95, Math.max(0.05, x / (2 * r) + 0.5)),
     y: Math.min(0.95, Math.max(0.05, z / (2 * r) + 0.5)),
@@ -1885,14 +1886,28 @@ export function resolveHorizontalCollision(
   const obstacleGrid = getLevelColliderGrid(level);
 
   if (env === 'openWorld') {
-    const dist = Math.hypot(nx, nz);
-    const maxR =
-      allowOffshore && level.canSwim !== false
-        ? IslandTerrain.shoreRadius + 16
-        : IslandTerrain.radius * 0.97;
-    if (dist > maxR && dist > 0.001) {
-      nx = (nx / dist) * maxR;
-      nz = (nz / dist) * maxR;
+    const worldRadius = getLevelWorldRadius(level);
+    const isFreeform = Boolean(level.terrain?.freeformWorld);
+    if (isFreeform) {
+      // Freeform or rectangular world map: bounded across the full terrain extent
+      const maxExt =
+        allowOffshore && level.canSwim !== false
+          ? worldRadius * 1.05 + 24
+          : worldRadius * 0.985;
+      nx = Math.max(-maxExt, Math.min(maxExt, nx));
+      nz = Math.max(-maxExt, Math.min(maxExt, nz));
+    } else {
+      // Circular island: radial distance bound dynamically scaled to actual worldRadius / shoreRadius
+      const shoreRadius = getTerrainShoreRadius(level.terrain ?? { worldRadius });
+      const maxR =
+        allowOffshore && level.canSwim !== false
+          ? shoreRadius + 24
+          : worldRadius * 0.985;
+      const dist = Math.hypot(nx, nz);
+      if (dist > maxR && dist > 0.001) {
+        nx = (nx / dist) * maxR;
+        nz = (nz / dist) * maxR;
+      }
     }
 
     // Multi-room MountainCave interior & entrance pillar collision (only when terrain actually contains the main MountainCave)
@@ -2734,12 +2749,12 @@ export function sampleTerrainHeight(terrain: TerrainData | undefined, x: number,
   const r = getTerrainRadius(terrain);
   const sr = getTerrainShoreRadius(terrain);
   if (!terrain?.freeformWorld && dist > sr) return IslandTerrain.seaFloor;
-  if (terrain?.freeformWorld && (Math.abs(x) > r || Math.abs(z) > r)) {
+  if (terrain?.freeformWorld && (Math.abs(x) > sr || Math.abs(z) > sr)) {
     return IslandTerrain.seaFloor;
   }
   if (
     !terrain ||
-    terrain.size !== IslandTerrain.gridSize ||
+    !terrain.size ||
     terrain.heights.length !== (terrain.size + 1) * (terrain.size + 1)
   ) {
     return IslandTerrain.heightAt(x, z);

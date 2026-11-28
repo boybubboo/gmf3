@@ -350,12 +350,12 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
       ctx.lineWidth = 1.5;
       for (const rMul of [1.02, 1.12, 1.24]) {
         ctx.beginPath();
-        ctx.arc(cx, cy, IslandTerrain.shoreRadius * scaleM * rMul, 0, Math.PI * 2);
+        ctx.arc(cx, cy, landShoreRadius * scaleM * rMul, 0, Math.PI * 2);
         ctx.stroke();
       }
       ctx.fillStyle = '#18364A';
       ctx.beginPath();
-      ctx.arc(cx, cy, IslandTerrain.shoreRadius * scaleM, 0, Math.PI * 2);
+      ctx.arc(cx, cy, landShoreRadius * scaleM, 0, Math.PI * 2);
       ctx.fill();
     } else {
       // Subtle navigable world grid over open ocean

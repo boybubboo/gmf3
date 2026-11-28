@@ -401,27 +401,27 @@ export class PostProcessingPipeline {
         col.addAssign(min(ssrPass.rgb, vec3(1.6)).mul(surfMask));
       }
 
-      // 0c. Lightweight Depth-Occluded Volumetric Sun Shafts (8-tap radial scatter toward sun)
+      // 0c. Depth-Occluded Volumetric Sun Shafts (14-tap dithered radial scatter toward sun)
       If(uGodRaysEnabled.greaterThan(0.5).and(uGodRaysIntensity.greaterThan(0.001)).and(uSunVisibility.greaterThan(0.005)), () => {
         const toSun = uSunScreenPos.sub(uvCoord);
         const aspectVec = vec2(uAspect, 1.0);
         const sunDist = length(toSun.mul(aspectVec));
         // Screen-space interleaved dither eliminates radial stepping bands
-        const jitter = fract(dot(uvCoord.mul(vec2(128.4, 217.9)), vec2(12.9898, 78.233))).mul(0.12);
+        const jitter = fract(dot(uvCoord.mul(vec2(128.4, 217.9)), vec2(12.9898, 78.233))).mul(0.09);
         const shaftAccum = float(0.0).toVar();
         const decay = float(1.0).toVar();
-        Loop({ start: int(0), end: int(8), type: 'int', condition: '<' }, ({ i }) => {
-          const t = float(i).add(0.5).add(jitter).div(8.0).mul(0.68);
+        Loop({ start: int(0), end: int(14), type: 'int', condition: '<' }, ({ i }) => {
+          const t = float(i).add(0.5).add(jitter).div(14.0).mul(0.82);
           const sampleUv = clamp(uvCoord.add(toSun.mul(t)), vec2(0.002), vec2(0.998));
           const dSample = sceneDepthTex.sample(sampleUv).r;
           // Far sky pixels pass sunlight through gaps in trees, peaks, and cave mouths
           const skyMask = smoothstep(0.993, 0.9992, dSample);
           shaftAccum.addAssign(skyMask.mul(decay));
-          decay.mulAssign(0.84);
+          decay.mulAssign(0.88);
         });
-        const radialFalloff = exp(sunDist.mul(-2.15)).mul(float(1.0).sub(smoothstep(0.75, 1.35, sunDist)));
-        const godRayEnergy = shaftAccum.div(4.6).mul(radialFalloff).mul(uSunVisibility).mul(uGodRaysIntensity);
-        col.addAssign(uSunColor.mul(godRayEnergy).mul(0.55));
+        const radialFalloff = exp(sunDist.mul(-1.85)).mul(float(1.0).sub(smoothstep(0.82, 1.45, sunDist)));
+        const godRayEnergy = shaftAccum.div(6.2).mul(radialFalloff).mul(uSunVisibility).mul(uGodRaysIntensity);
+        col.addAssign(uSunColor.mul(godRayEnergy).mul(0.58));
       });
 
       // Add optional Bloom contribution in linear HDR space

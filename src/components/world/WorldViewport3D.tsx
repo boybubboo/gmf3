@@ -62,6 +62,7 @@ import {
   applyLiveRendererQuality,
   buildIslandMesh,
   buildWeatherParticles,
+  computeAtmosphereState,
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
@@ -2294,6 +2295,16 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         if (refs?.wildlifeSystem && refs.islandContainer.visible) {
           refs.wildlifeSystem.update(dt, t);
         }
+        if (refs?.islandHandles?.volumetricAtmosphere) {
+          const atmo = computeAtmosphereState(curLevel);
+          refs.islandHandles.volumetricAtmosphere.update(
+            refs.camera,
+            dt,
+            t,
+            atmo,
+            refs.controls.target
+          );
+        }
         syncSkyDomeToCamera(scene, camera.position);
         try {
           if (postPipeline) {
@@ -2578,6 +2589,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         sceneRefs.current.rendererInitialized = false;
         sceneRefs.current.islandHandles?.chunkedTerrain?.dispose();
         sceneRefs.current.islandHandles?.grassSystem?.dispose();
+        sceneRefs.current.islandHandles?.volumetricAtmosphere?.dispose();
         sceneRefs.current.wildlifeSystem?.dispose();
         sceneRefs.current.wildlifeSystem = null;
         sceneRefs.current.islandHandles = null;
@@ -2731,6 +2743,12 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     level.ambientIntensityScale,
     level.atmosphereWarmth,
     level.starIntensity,
+    level.volumetricFogEnabled,
+    level.volumetricFogDensity,
+    level.volumetricFogHeight,
+    level.godRaysEnabled,
+    level.godRaysIntensity,
+    level.atmosphericDust,
     worldEditorScope,
     worldMap,
   ]);
@@ -3040,6 +3058,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
     refs.islandHandles?.chunkedTerrain?.dispose();
     refs.islandHandles?.grassSystem?.dispose();
+    refs.islandHandles?.volumetricAtmosphere?.dispose();
     if (refs.wildlifeSystem) {
       refs.islandContainer.remove(refs.wildlifeSystem.group);
       refs.wildlifeSystem.dispose();
@@ -3053,15 +3072,21 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       worldMapContext,
       terrainQuality: propsRef.current.terrainQuality ?? 'balanced',
       onDeferredBatchReady: async (obj) => {
-        if (abortController.signal.aborted) return;
-        await refs.precompileObject(obj);
         if (!abortController.signal.aborted) {
-          refs.markShadowDirty();
+          await refs.precompileObject(obj);
+          if (!abortController.signal.aborted) {
+            refs.markShadowDirty();
+          }
         }
       },
     });
     refs.islandHandles = handles;
     refs.islandContainer.add(handles.group);
+    if (handles.volumetricAtmosphere) {
+      refs.scene.userData.volumetricAtmosphere = handles.volumetricAtmosphere;
+      const atmo = computeAtmosphereState(level);
+      handles.volumetricAtmosphere.syncAtmosphere(atmo, level);
+    }
     if (!refs.isSoftwareGl && getEnvironmentType(level) !== 'dungeon') {
       const wildlife = new WildlifeFlockingSystem(level, 0.85);
       refs.wildlifeSystem = wildlife;

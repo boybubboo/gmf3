@@ -22,6 +22,7 @@ import {
   BuddiesLandmarks,
   DrivingWaypoints,
   getEnvironmentType,
+  getLevelWorldRadius,
   getTerrainRadius,
   IslandRiver,
   IslandTerrain,
@@ -40,19 +41,19 @@ import {
   subscribeExploration,
 } from '../../utils/worldMapFog';
 
-function w2svg(wx: number, wz: number): [number, number] {
-  const x = (wx / (2 * IslandTerrain.radius) + 0.5) * 100;
-  const y = (wz / (2 * IslandTerrain.radius) + 0.5) * 100;
+function w2svg(wx: number, wz: number, worldRadius = IslandTerrain.radius): [number, number] {
+  const x = (wx / (2 * worldRadius) + 0.5) * 100;
+  const y = (wz / (2 * worldRadius) + 0.5) * 100;
   return [
     Math.min(98, Math.max(2, x)),
     Math.min(98, Math.max(2, y)),
   ];
 }
 
-function toPolylinePoints(coords: [number, number][]): string {
+function toPolylinePoints(coords: [number, number][], worldRadius = IslandTerrain.radius): string {
   return coords
     .map(([wx, wz]) => {
-      const [sx, sy] = w2svg(wx, wz);
+      const [sx, sy] = w2svg(wx, wz, worldRadius);
       return `${sx.toFixed(1)},${sy.toFixed(1)}`;
     })
     .join(' ');
@@ -277,16 +278,19 @@ export const TemplateMinimapSVG: React.FC<{
   const recruitedSet = new Set(telemetry?.recruitedBuddyIds ?? []);
   const nextCheckpointId = checkpoints.find((c) => !clearedCpSet.has(c.id))?.id ?? null;
 
-  const [caveSvgX, caveSvgY] = w2svg(MountainCave.x, MountainCave.z);
-  const [lakeSvgX, lakeSvgY] = w2svg(
+  const levelWorldRadius = getLevelWorldRadius(level);
+  const toSvg = (wx: number, wz: number) => w2svg(wx, wz, levelWorldRadius);
+
+  const [caveSvgX, caveSvgY] = toSvg(MountainCave.x, MountainCave.z);
+  const [lakeSvgX, lakeSvgY] = toSvg(
     BuddiesLandmarks.lakeCenterWorld[0],
     BuddiesLandmarks.lakeCenterWorld[1]
   );
-  const [tavernSvgX, tavernSvgY] = w2svg(
+  const [tavernSvgX, tavernSvgY] = toSvg(
     BuddiesLandmarks.tavernWorld[0],
     BuddiesLandmarks.tavernWorld[1]
   );
-  const [homeSvgX, homeSvgY] = w2svg(
+  const [homeSvgX, homeSvgY] = toSvg(
     BuddiesLandmarks.homeClearingWorld[0],
     BuddiesLandmarks.homeClearingWorld[1]
   );
@@ -339,9 +343,9 @@ export const TemplateMinimapSVG: React.FC<{
           {level.terrain?.freeformWorld ? (
             <>
               {(level.terrain.waterBodies ?? []).map((wb) => {
-                const [wx, wy] = w2svg(wb.center[0], wb.center[1]);
-                const rx = Math.max(1.5, (wb.radiusX / (2 * IslandTerrain.radius)) * 100);
-                const ry = Math.max(1.5, (wb.radiusZ / (2 * IslandTerrain.radius)) * 100);
+                const [wx, wy] = toSvg(wb.center[0], wb.center[1]);
+                const rx = Math.max(1.5, (wb.radiusX / (2 * levelWorldRadius)) * 100);
+                const ry = Math.max(1.5, (wb.radiusZ / (2 * levelWorldRadius)) * 100);
                 return (
                   <ellipse
                     key={wb.id}
@@ -360,17 +364,17 @@ export const TemplateMinimapSVG: React.FC<{
                 rd.points && rd.points.length >= 2 ? (
                   <polyline
                     key={rd.id}
-                    points={toPolylinePoints(rd.points)}
+                    points={toPolylinePoints(rd.points, levelWorldRadius)}
                     fill="none"
                     stroke="#C9A26B"
-                    strokeWidth={Math.max(1.2, (rd.width / (2 * IslandTerrain.radius)) * 100)}
+                    strokeWidth={Math.max(1.2, (rd.width / (2 * levelWorldRadius)) * 100)}
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
                 ) : null
               )}
               {(level.terrain.caves ?? []).map((c) => {
-                const [cx, cy] = w2svg(c.x, c.z);
+                const [cx, cy] = toSvg(c.x, c.z);
                 return (
                   <g key={c.id}>
                     <circle cx={cx} cy={cy} r="2.8" fill="#334155" stroke="#94A3B8" strokeWidth="0.7" />

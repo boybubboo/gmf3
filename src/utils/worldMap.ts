@@ -502,24 +502,38 @@ export function applyWorldMapStroke(
 export function computeRegionWindowRadius(
   worldMap: WorldMapData,
   activeRegionCode?: number,
-  regionOrigin?: [number, number]
+  regionOrigin?: [number, number],
+  explicitRadius?: number
 ): number {
-  if (!activeRegionCode || activeRegionCode <= 0) {
-    return IslandTerrain.radius;
+  const maxAllowed = getWorldMapRadius(worldMap);
+  if (explicitRadius && explicitRadius > 0) {
+    return Math.max(IslandTerrain.radius, Math.min(maxAllowed, explicitRadius));
   }
-  const bounds = computeRegionBounds(worldMap, activeRegionCode);
+  const reg = activeRegionCode ? worldMap.regions?.find((r) => r.code === activeRegionCode) : undefined;
+  if (reg?.worldRadius && reg.worldRadius > 0) {
+    return Math.max(IslandTerrain.radius, Math.min(maxAllowed, reg.worldRadius));
+  }
+  const isSingleLevel = !worldMap.regions || worldMap.regions.length <= 1;
+  const regionBounds =
+    activeRegionCode && activeRegionCode > 0
+      ? computeRegionBounds(worldMap, activeRegionCode)
+      : null;
+  const bounds =
+    isSingleLevel || !regionBounds
+      ? computeWorldMapLandBounds(worldMap) ?? regionBounds
+      : regionBounds;
+
   if (!bounds || bounds.cellCount === 0) {
     return IslandTerrain.radius;
   }
-  const ox = regionOrigin?.[0] ?? bounds.centerX;
-  const oz = regionOrigin?.[1] ?? bounds.centerZ;
+  const ox = regionOrigin?.[0] ?? (isSingleLevel ? 0 : bounds.centerX);
+  const oz = regionOrigin?.[1] ?? (isSingleLevel ? 0 : bounds.centerZ);
   const halfExtent = Math.max(
     Math.abs(bounds.maxX - ox),
     Math.abs(bounds.minX - ox),
     Math.abs(bounds.maxZ - oz),
     Math.abs(bounds.minZ - oz)
   );
-  const maxAllowed = getWorldMapRadius(worldMap);
   const rounded = Math.ceil((halfExtent + 16) / 10) * 10;
   return Math.max(IslandTerrain.radius, Math.min(maxAllowed, rounded));
 }
@@ -549,7 +563,12 @@ export function syncLevelTerrainWithWorldMap(
   activeRegionCode?: number,
   regionOrigin?: [number, number]
 ): TerrainData {
-  const localRadius = computeRegionWindowRadius(worldMap, activeRegionCode, regionOrigin);
+  const localRadius = computeRegionWindowRadius(
+    worldMap,
+    activeRegionCode,
+    regionOrigin,
+    rawTerrain?.worldRadius
+  );
   const oldRadius = getTerrainRadius(rawTerrain);
   const scaleChanged = Math.abs(oldRadius - localRadius) > 0.5;
   const hasValidRaw = Boolean(rawTerrain && rawTerrain.size === IslandTerrain.gridSize);
@@ -669,8 +688,10 @@ export function syncLevelTerrainWithWorldMap(
         localLandMask[row * width + (col + 1)] === 0;
 
       const isOtherLand =
+        worldMap.regions.length > 1 &&
         activeRegionCode !== undefined &&
         activeRegionCode > 0 &&
+        cellCode > 0 &&
         cellCode !== activeRegionCode;
 
       if (isOtherLand) {
@@ -743,6 +764,51 @@ export function computeRegionBounds(
       const idx = rowOff + col;
       if (worldMap.landMask[idx] !== 1) continue;
       if ((worldMap.regionGrid[idx] ?? 0) !== regionCode) continue;
+      const vx = -r + col * step;
+      if (vx < minX) minX = vx;
+      if (vx > maxX) maxX = vx;
+      if (vz < minZ) minZ = vz;
+      if (vz > maxZ) maxZ = vz;
+      sx += vx;
+      sz += vz;
+      count += 1;
+    }
+  }
+
+  if (count === 0) return null;
+  return {
+    minX,
+    maxX,
+    minZ,
+    maxZ,
+    centerX: (minX + maxX) * 0.5,
+    centerZ: (minZ + maxZ) * 0.5,
+    centroidX: sx / count,
+    centroidZ: sz / count,
+    cellCount: count,
+  };
+}
+
+export function computeWorldMapLandBounds(worldMap: WorldMapData): RegionBoundsResult | null {
+  const size = worldMap.gridSize;
+  const width = size + 1;
+  const r = getWorldMapRadius(worldMap);
+  const step = (2 * r) / size;
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let sx = 0;
+  let sz = 0;
+  let count = 0;
+
+  for (let row = 0; row <= size; row++) {
+    const vz = -r + row * step;
+    const rowOff = row * width;
+    for (let col = 0; col <= size; col++) {
+      const idx = rowOff + col;
+      if (worldMap.landMask[idx] !== 1) continue;
       const vx = -r + col * step;
       if (vx < minX) minX = vx;
       if (vx > maxX) maxX = vx;

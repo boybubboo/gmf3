@@ -3,6 +3,7 @@ import type { TerrainData, TerrainQualityTier, WorldMapData } from '../types/mak
 import { getWorldMapRadius, sampleWorldMapInto, WORLD_TERRAIN_YELLOW, type WorldMapSample } from '../utils/worldMap';
 import {
   getTerrainRadius,
+  getTerrainShoreRadius,
   IslandTerrain,
   sampleTerrainHeight,
   sampleTerrainWeathering,
@@ -195,7 +196,8 @@ export class ChunkedTerrainSystem {
 
     const chunkWorldSpan = (2 * worldRadius) / TERRAIN_CHUNK_GRID;
     const isWorldMap = worldMapContext?.mode === 'worldMap' && Boolean(worldMapContext.worldMap);
-    const shorePadSq = Math.pow(IslandTerrain.shoreRadius + chunkWorldSpan * 0.85, 2);
+    const shoreRadius = getTerrainShoreRadius(terrain);
+    const shorePadSq = Math.pow(shoreRadius + chunkWorldSpan * 0.85, 2);
 
     for (let cz = 0; cz < TERRAIN_CHUNK_GRID; cz++) {
       const minZ = -worldRadius + cz * chunkWorldSpan;

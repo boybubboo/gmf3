@@ -207,6 +207,7 @@ import {
   updateCaveInteractiveAnimations,
   updateRiverFishAnimations,
   updateSkyClouds,
+  type ComputedAtmosphere,
   type IslandSceneHandles,
 } from '../../three/islandScene';
 import { hideBatchEntry, setBatchEntryMatrix } from '../../three/batchedScatterBuilder';
@@ -2360,6 +2361,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     const revealBeaconGeo = new THREE.CylinderGeometry(0.18, 0.42, 11, 10, 1, true);
     let islandAbort: AbortController | null = null;
     let islandHandlesRef: IslandSceneHandles | null = null;
+    let currentAtmoRef: ComputedAtmosphere | null = null;
 
     const bootAndRun = async () => {
       if (isIOS) {
@@ -2535,7 +2537,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       }
       if (disposed) return;
 
-      applyAtmosphere(scene, sun, hemi, activeLevel, renderer);
+      currentAtmoRef = applyAtmosphere(scene, sun, hemi, activeLevel, renderer);
       applyAtmosphereQualityToScene(scene, liveQualityValuesRef.current.terrainQuality);
       islandAbort = new AbortController();
       const islandHandles = buildIslandMesh(activeLevel, activeAssets, isSoftwareGl, {
@@ -2564,6 +2566,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       });
       islandHandlesRef = islandHandles;
       scene.add(islandHandles.group);
+      if (islandHandles.volumetricAtmosphere) {
+        scene.userData.volumetricAtmosphere = islandHandles.volumetricAtmosphere;
+        if (currentAtmoRef) {
+          islandHandles.volumetricAtmosphere.syncAtmosphere(currentAtmoRef, activeLevel);
+        }
+      }
       // Capture post-atmosphere baseline exposure & hemisphere light for smooth cave eye adaptation
       basePlayExposure = renderer.toneMappingExposure || 1.05;
       baseHemiIntensity = hemi.intensity;
@@ -4995,7 +5003,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             atmoSyncTimer += dt;
             if (atmoSyncTimer >= 0.2) {
               atmoSyncTimer = 0;
-              applyAtmosphere(scene, sun, hemi, activeLevel, renderer, liveHour);
+              currentAtmoRef = applyAtmosphere(scene, sun, hemi, activeLevel, renderer, liveHour);
               _sunOffset.copy(sun.position);
               if (Number.isFinite(lastShadowSnapX) && Number.isFinite(lastShadowSnapZ)) {
                 sun.position.set(
@@ -14451,6 +14459,16 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           heroRoot.position
         );
 
+        if (islandHandles.volumetricAtmosphere && currentAtmoRef) {
+          islandHandles.volumetricAtmosphere.update(
+            camera,
+            dt,
+            gameElapsed,
+            currentAtmoRef,
+            heroRoot.position
+          );
+        }
+
         // Wave 2: Step Rapier dynamic props/tumbles, living wildlife flocks (hero-reactive fish!), and cave eye adaptation
         if (!pausedNow && rapierPhysics?.isReady()) {
           rapierPhysics.step(dt, heroX, heroY, heroZ);
@@ -14665,6 +14683,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       window.removeEventListener('pointercancel', onPointerUp);
       dom.removeEventListener('wheel', onWheel);
       timer.dispose();
+      islandHandlesRef?.volumetricAtmosphere?.dispose();
       islandHandlesRef?.grassSystem?.dispose();
       islandHandlesRef = null;
       wildlifeSystem?.dispose();

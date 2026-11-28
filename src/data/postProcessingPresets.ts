@@ -223,6 +223,14 @@ export function createDefaultPostProcessingConfig(): PostProcessingConfig {
     gtaoRadius: 0.85,
     godRaysEnabled: true,
     godRaysIntensity: 0.52,
+    volumetricFogEnabled: true,
+    volumetricFogDensity: 1.0,
+    volumetricFogHeight: 3.2,
+    volumetricFogSoftness: 8.0,
+    volumetricFogNoise: 0.85,
+    volumetricFogPatchiness: 0.45,
+    volumetricFogSpeed: 0.75,
+    atmosphericDust: 0.5,
     traaEnabled: false,
   };
 }
@@ -268,6 +276,30 @@ export function resolvePostProcessingConfig(
   }
   if (cfg.godRaysIntensity === undefined) {
     merged.godRaysIntensity = 0.52;
+  }
+  if (cfg.volumetricFogEnabled === undefined) {
+    merged.volumetricFogEnabled = true;
+  }
+  if (cfg.volumetricFogDensity === undefined) {
+    merged.volumetricFogDensity = 1.0;
+  }
+  if (cfg.volumetricFogHeight === undefined) {
+    merged.volumetricFogHeight = 3.2;
+  }
+  if (cfg.volumetricFogSoftness === undefined) {
+    merged.volumetricFogSoftness = 8.0;
+  }
+  if (cfg.volumetricFogNoise === undefined) {
+    merged.volumetricFogNoise = 0.85;
+  }
+  if (cfg.volumetricFogPatchiness === undefined) {
+    merged.volumetricFogPatchiness = 0.45;
+  }
+  if (cfg.volumetricFogSpeed === undefined) {
+    merged.volumetricFogSpeed = 0.75;
+  }
+  if (cfg.atmosphericDust === undefined) {
+    merged.atmosphericDust = 0.5;
   }
   if (cfg.traaEnabled === undefined) {
     merged.traaEnabled = false;

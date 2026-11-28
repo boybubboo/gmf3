@@ -1664,6 +1664,8 @@ export interface WorldLandRegion {
   levelId: string;
   /** World-space [originX, originZ] center of this Land's local map inside the 4x World Map */
   origin?: [number, number];
+  /** Custom or full-world half-extent in meters (e.g. 640m for entire world map) */
+  worldRadius?: number;
 }
 
 export interface WorldMapData {
@@ -2244,6 +2246,8 @@ export interface GameLevel {
   id: string;
   name: string;
   style: LevelStyle;
+  /** Custom or full-world half-extent in meters (e.g. 640m for entire world map) */
+  worldRadius?: number;
   environmentType?: EnvironmentType;
   visualStyle?: VisualStyleId;
   biome: BiomeId;
@@ -2276,6 +2280,16 @@ export interface GameLevel {
   vistaDistance?: number;
   vistaTreeScale?: number;
   vistaHeightFog?: number;
+  volumetricFogEnabled?: boolean;
+  volumetricFogDensity?: number; // 0..2.0 (default 1.0)
+  volumetricFogHeight?: number; // -10..40 (elevation offset)
+  volumetricFogSoftness?: number; // Transition thickness / edge softness in meters (1..25, default 8.0)
+  volumetricFogNoise?: number; // Boundary noise amplitude (0..2.0, default 0.85)
+  volumetricFogPatchiness?: number; // Fog separation into patches / banks (0..1.0, default 0.45)
+  volumetricFogSpeed?: number; // Fog movement & drift speed (0.1..3.0, default 0.75)
+  godRaysEnabled?: boolean;
+  godRaysIntensity?: number; // 0..1.5 (default 0.75)
+  atmosphericDust?: number; // 0..1.0 (default 0.5)
   vistaItems?: VistaPropItem[];
   canopyEngine?: StylizedCanopyConfig;
   sceneryTextures?: Partial<Record<SceneryTextureSlot, SurfaceTextureSettings>>;
@@ -2355,6 +2369,15 @@ export interface PostProcessingConfig {
   // Screen-Space Volumetric Sun Shafts (God Rays)
   godRaysEnabled?: boolean;
   godRaysIntensity?: number; // 0..1.5
+  // Volumetric Fog & Atmospheric Mist
+  volumetricFogEnabled?: boolean;
+  volumetricFogDensity?: number; // 0..2.0
+  volumetricFogHeight?: number; // -10..40
+  volumetricFogSoftness?: number; // 1..25m
+  volumetricFogNoise?: number; // 0..2.0
+  volumetricFogPatchiness?: number; // 0..1.0
+  volumetricFogSpeed?: number; // 0.1..3.0
+  atmosphericDust?: number; // 0..1.0
   // Opt-In Temporal Reprojection Anti-Aliasing (r187 TRAANode, OFF by default)
   traaEnabled?: boolean;
 }

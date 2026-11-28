@@ -131,6 +131,7 @@ import {
   getSideScrollerConfig,
   getSideScrollerSegments,
   getTerrainRadius,
+  getTerrainShoreRadius,
   IslandTerrain,
   MOUNTAIN_CAVE_ROOMS,
   MountainCave,
@@ -184,6 +185,7 @@ import {
   runDeferredSteps,
   type DeferredStep,
 } from '../utils/deferredLoader';
+import { VolumetricAtmosphereSystem } from './volumetricAtmosphereSystem';
 
 export interface TorchLightHandle {
   light: THREE.PointLight;
@@ -316,6 +318,7 @@ export interface IslandSceneHandles {
   updateWaterBodiesUniforms?: (bodies?: WaterBodyConfig[], selectedWaterBodyId?: string | null) => void;
   updateWorldMapUniforms?: (ctx?: WorldMapRenderContext) => void;
   updateTallGrassColor?: (hex?: string) => void;
+  volumetricAtmosphere?: VolumetricAtmosphereSystem;
 }
 
 export interface BuildIslandMeshOptions {
@@ -503,7 +506,7 @@ export function applyLiveRendererQuality(
   }
 }
 
-interface ComputedAtmosphere {
+export interface ComputedAtmosphere {
   zenithColor: THREE.Color;
   midColor: THREE.Color;
   horizonColor: THREE.Color;
@@ -755,7 +758,17 @@ export function applyAtmosphere(
     cloudDensity,
     level.sky,
     IslandTerrain.waterLevel,
-    level.vistaHeightFog ?? 1
+    level.vistaHeightFog ?? 1,
+    {
+      heightFogLevel:
+        level.volumetricFogHeight !== undefined
+          ? level.volumetricFogHeight
+          : IslandTerrain.waterLevel + 3.4,
+      softness: level.volumetricFogSoftness ?? 8.0,
+      noise: level.volumetricFogNoise ?? 0.85,
+      patchiness: level.volumetricFogPatchiness ?? 0.45,
+      wind: level.wind ?? 0.45,
+    }
   );
   if (isWmMode) {
     if (scene.fog instanceof THREE.FogExp2) {
@@ -883,12 +896,22 @@ export function applyAtmosphere(
     }
   }
 
+  const volAtmo = scene.userData.volumetricAtmosphere as VolumetricAtmosphereSystem | undefined;
+  if (volAtmo) {
+    volAtmo.applyConfig(level);
+    volAtmo.syncAtmosphere(atmo, level);
+  }
+
   return atmo;
 }
 
 export function applyAtmosphereQualityToScene(scene: THREE.Scene, tier: TerrainQualityTier): void {
   syncTerrainAtmosphereQuality(tier);
   scene.userData.__makerTerrainQuality = tier;
+  const volAtmo = scene.userData.volumetricAtmosphere as VolumetricAtmosphereSystem | undefined;
+  if (volAtmo) {
+    volAtmo.setQuality(tier);
+  }
   const clouds =
     (scene.userData.__makerClouds as THREE.Group | undefined) ??
     (scene.getObjectByName('maker-clouds') as THREE.Group | undefined);
@@ -948,7 +971,7 @@ function createFacetedCloudMesh(mat: THREE.Material, variant = 0): THREE.Group {
 }
 
 export function updateSkyClouds(scene: THREE.Scene, elapsed: number, wind = 0.3) {
-  syncBotwTime(elapsed);
+  syncBotwTime(elapsed, scene);
   let skyDome = scene.userData.__makerSkyDome as THREE.Mesh | undefined;
   if (!skyDome) {
     skyDome = scene.getObjectByName('maker-skydome') as THREE.Mesh | undefined;
@@ -3520,7 +3543,7 @@ export function buildIslandMesh(
   const isFreeform = Boolean(terrain.freeformWorld || worldMapContext?.worldMap);
   const worldRadius = isWorldMapMode
     ? getWorldMapRadius(worldMapContext?.worldMap)
-    : getTerrainRadius(terrain);
+    : (level.worldRadius && level.worldRadius > 0 ? level.worldRadius : getTerrainRadius(terrain));
 
   const renderSize = TERRAIN_RENDER_SIZE;
   const waterDepthTexSize = 256;
@@ -3563,7 +3586,8 @@ export function buildIslandMesh(
 
   if (!isFreeform) {
     // Island cliff underbelly for classic circular island levels
-    const bellyGeo = new THREE.ConeGeometry(IslandTerrain.shoreRadius * 0.94, 48, 36);
+    const shoreRadius = getTerrainShoreRadius(terrain);
+    const bellyGeo = new THREE.ConeGeometry(shoreRadius * 0.94, 48, 36);
     const bellyMat = enableDiffuseRoughnessEon(
       new THREE.MeshStandardMaterial({
         color: new THREE.Color(biome.detail).multiplyScalar(0.52),
@@ -3795,7 +3819,8 @@ export function buildIslandMesh(
   const instancedGroup = new THREE.Group();
   const customScatterGroups = new THREE.Group();
   const vistaContainer = new THREE.Group();
-  islandGroup.add(grassContainer, instancedGroup, customScatterGroups, vistaContainer);
+  const volumetricAtmosphere = new VolumetricAtmosphereSystem(level, isSoftwareGl);
+  islandGroup.add(grassContainer, instancedGroup, customScatterGroups, vistaContainer, volumetricAtmosphere.group);
 
   // Cohesive BotW soft-painterly rim & cool shadow lift across core island terrain, water, bridges & caves
   applyBotwStyleToObject(islandGroup, style, { rimStrengthScale: 0.82, shadowLiftScale: 0.85 });
@@ -3993,6 +4018,7 @@ export function buildIslandMesh(
     updateTallGrassColor: (hex) => {
       terrainMatBundle.updateTallGrassColor(hex);
     },
+    volumetricAtmosphere,
   };
 
   const scatterPlan = createScatterBuildPlan(
@@ -5174,7 +5200,7 @@ function buildDirtPebblesGroup(
       if ((layer === 6 || layer === 8 || layer === 1) && h > IslandTerrain.waterLevel + 0.08) {
         const wx = -terrainRadius + col * step;
         const wz = -terrainRadius + row * step;
-        if (terrain.freeformWorld || Math.hypot(wx, wz) < IslandTerrain.shoreRadius - 4) {
+        if (terrain.freeformWorld || Math.hypot(wx, wz) < getTerrainShoreRadius(terrain) - 4) {
           dirtCells.push([wx, wz]);
         }
       }

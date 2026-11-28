@@ -75,6 +75,11 @@ function createBotwFogUniformBundle(
     uFogDensity: uniform(fogDensity),
     uHeightFogDensity: uniform(0.0018),
     uHeightFogLevel: uniform(waterLevel + 3.4),
+    uHeightFogSoftness: uniform(8.0),
+    uHeightFogNoiseAmp: uniform(4.0),
+    uHeightFogPatchiness: uniform(0.45),
+    uTime: uniform(0.0),
+    uWind: uniform(new THREE.Vector2(0.35, 0.15)),
     uSunDir: uniform(new THREE.Vector3(0.55, 0.48, 0.45).normalize()),
     uSunInscatterColor: uniform(new THREE.Color('#FFD29D')),
     uSunInscatterStrength: uniform(0.45),
@@ -101,8 +106,14 @@ const _tmpRimCol = new THREE.Color();
 const _tmpCoolCol = new THREE.Color();
 const _tmpWarmFog = new THREE.Color();
 
-export function syncBotwTime(elapsed: number): void {
+export function syncBotwTime(elapsed: number, scene?: THREE.Scene): void {
   getSharedBotwUniforms().uTime.value = elapsed;
+  if (scene) {
+    const fogU = scene.userData.botwFogUniforms as BotwFogUniformBundle | undefined;
+    if (fogU) {
+      fogU.uTime.value = elapsed;
+    }
+  }
 }
 
 export function syncTerrainAtmosphereQuality(tier: TerrainQualityTier): void {
@@ -187,7 +198,14 @@ export function syncBotwSceneFog(
   cloudDensity: number,
   skyId: string,
   waterLevel = -1.65,
-  vistaHeightFog = 1.0
+  vistaHeightFog = 1.0,
+  options?: {
+    heightFogLevel?: number;
+    softness?: number;
+    noise?: number;
+    patchiness?: number;
+    wind?: number;
+  }
 ): number {
   const baseFog = env === 'dungeon' ? 0.015 : skyId === 'golden' ? 0.00135 : 0.00072;
   const fogDensity = baseFog + fogSlider * 0.0052;
@@ -200,10 +218,35 @@ export function syncBotwSceneFog(
 
     const u = fogU;
     const distFactor = densityFogFactor(u.uFogDensity) as unknown as ReturnType<typeof float>;
-    const heightFactor = exponentialHeightFogFactor(
-      u.uHeightFogDensity,
-      u.uHeightFogLevel
-    ) as unknown as ReturnType<typeof float>;
+
+    // Organic animated noise waves for rolling undulating fog ceiling (eliminates flat horizontal line)
+    const posW = positionWorld;
+    const hWave1 = sin(posW.x.mul(0.014).add(u.uTime.mul(u.uWind.x).mul(0.55)))
+      .mul(cos(posW.z.mul(0.014).add(u.uTime.mul(u.uWind.y).mul(0.55))));
+    const hWave2 = sin(posW.x.add(posW.z).mul(0.032).sub(u.uTime.mul(0.22)))
+      .mul(0.48);
+    const boundaryOffset = hWave1.add(hWave2).mul(u.uHeightFogNoiseAmp);
+
+    // Dynamic undulating ceiling
+    const dynamicCeiling = u.uHeightFogLevel.add(boundaryOffset);
+
+    // Soft gradient transition across uHeightFogSoftness (adjustable thickness)
+    const deltaY = posW.y.sub(dynamicCeiling);
+    const vertGradient = float(1.0).sub(
+      smoothstep(float(0.0), max(float(1.0), u.uHeightFogSoftness), max(float(0.0), deltaY))
+    );
+
+    // Patchiness / fog separation: breaks up into drifting rolling patches/banks with clear gaps
+    const patchNoise = sin(posW.x.mul(0.007).add(u.uTime.mul(u.uWind.x).mul(0.28)))
+      .mul(cos(posW.z.mul(0.007).add(u.uTime.mul(u.uWind.y).mul(0.28))))
+      .mul(0.5).add(0.5);
+    const patchMask = smoothstep(u.uHeightFogPatchiness.mul(0.68), float(1.0), patchNoise);
+
+    // Organic height fog factor: smooth gradient and patch separation
+    const heightFactor = vertGradient
+      .mul(patchMask)
+      .mul(clamp(u.uHeightFogDensity.mul(180.0), float(0.0), float(1.0)));
+
     const combinedFactor = clamp(
       float(1.0).sub(float(1.0).sub(distFactor).mul(float(1.0).sub(heightFactor))),
       0.0,
@@ -232,6 +275,16 @@ export function syncBotwSceneFog(
   fogU.uSunDir.value.copy(_tmpSunDir);
   fogU.uSunInscatterColor.value.copy(_tmpWarmFog);
 
+  if (options) {
+    if (options.softness !== undefined) fogU.uHeightFogSoftness.value = options.softness;
+    if (options.noise !== undefined) fogU.uHeightFogNoiseAmp.value = options.noise * 4.6;
+    if (options.patchiness !== undefined) fogU.uHeightFogPatchiness.value = options.patchiness;
+    if (options.wind !== undefined) {
+      const spd = THREE.MathUtils.clamp(options.wind, 0.05, 2.0);
+      fogU.uWind.value.set(spd * 0.35, spd * 0.15);
+    }
+  }
+
   const mistScale = THREE.MathUtils.clamp(vistaHeightFog, 0, 2.5);
   const isOutdoor = env === 'openWorld' || env === 'castle' || env === 'sideScroller';
   if (!isOutdoor) {
@@ -242,7 +295,10 @@ export function syncBotwSceneFog(
     const valleyBase = (0.00055 + fogSlider * 0.0018 + cloudDensity * 0.0004) * mistScale;
     fogU.uHeightFogDensity.value =
       env === 'openWorld' ? valleyBase * mistBoost * (1.0 - atmo.nightFactor * 0.4) : valleyBase * 0.35;
-    fogU.uHeightFogLevel.value = waterLevel + 3.6 + fogSlider * 2.2 + Math.max(0, mistScale - 1) * 4.5;
+    const baseLvl = options?.heightFogLevel !== undefined
+      ? options.heightFogLevel
+      : waterLevel + 3.6 + fogSlider * 2.2 + Math.max(0, mistScale - 1) * 4.5;
+    fogU.uHeightFogLevel.value = baseLvl;
     fogU.uSunInscatterStrength.value =
       (0.32 + atmo.warmGlow * 0.38) * (1.0 - atmo.nightFactor * 0.85);
   }
