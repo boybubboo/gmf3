@@ -3,6 +3,14 @@ import {
   createDefaultSpeciesConfig,
 } from '../data/canopyEnginePresets';
 import {
+  resolveChatBubbleStyle,
+  resolveChatDisplaySettings,
+} from '../data/chatBubblePresets';
+import {
+  applyHudThemeToWidgets,
+  HUD_THEME_PRESETS,
+} from '../data/hudStylePresets';
+import {
   BehaviorVocabulary,
   createBlankLevel,
   createEntity,
@@ -50,6 +58,7 @@ import {
   MONSTER_ATTACK_CATALOG,
 } from '../three/monsterAttackVfx';
 import type {
+  ActionButtonBinding,
   AssetCategory,
   BaddieWindupClueStyle,
   BehaviorCard,
@@ -84,6 +93,13 @@ import type {
   CharacterSurfaceCoatMode,
   CharacterTailStyle,
   CharacterWingStyle,
+  ChatBubbleShadow,
+  ChatBubbleShape,
+  ChatBubbleStyle,
+  ChatBubbleTailStyle,
+  ChatDisplayMode,
+  ChatFontId,
+  ChatPanelThemeId,
   CompleteCondition,
   ConiferShapeStyle,
   CreatureExpressionMood,
@@ -96,6 +112,13 @@ import type {
   FruitDistributionMode,
   GameLevel,
   HUDWidget,
+  HudBarStyle,
+  HudBorderStyle,
+  HudButtonStyle,
+  HudJoystickStyle,
+  HudSurfaceTexture,
+  HudThemePresetId,
+  HudWidgetShape,
   LeafSeasonPresetId,
   LevelEntity,
   MechanismKind,
@@ -5319,7 +5342,7 @@ export function applyLogicMultiLevelToStore(
 }
 
 // ---------------------------------------------------------------------------
-// 9. INTERFACE / HUD APPLIER
+// 9. INTERFACE / HUD / CONTROLS / SPEECH BUBBLE APPLIER
 // ---------------------------------------------------------------------------
 export function applyInterfacePlanToStore(
   store: MakerStore,
@@ -5329,8 +5352,10 @@ export function applyInterfacePlanToStore(
   const proj = store.currentProject;
   if (!proj) throw new Error('No active project open.');
 
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
   const modifyExisting = Boolean(options?.modifyExisting);
   const rawWidgets = Array.isArray(raw.widgets) ? raw.widgets : [];
+
   const validKinds: WidgetKind[] = [
     'bar',
     'counter',
@@ -5352,51 +5377,644 @@ export function applyInterfacePlanToStore(
     'bottomLeading',
     'bottom',
     'bottomTrailing',
+    'center',
+  ];
+  const validActions: ActionButtonBinding[] = [
+    'jump',
+    'attack',
+    'interact',
+    'magicBolt',
+    'heal',
+  ];
+  const validTextures: HudSurfaceTexture[] = [
+    'smooth',
+    'parchment',
+    'wood',
+    'brushedMetal',
+    'forgedIron',
+    'stone',
+    'leather',
+    'holoGlass',
+    'circuitTech',
+    'arcadePlastic',
+    'comicHalftone',
+    'fabricCanvas',
+  ];
+  const validShapes: HudWidgetShape[] = [
+    'circle',
+    'rounded',
+    'sharp',
+    'chamfer',
+    'hex',
+    'diamond',
+    'shield',
+    'scroll',
+    'arch',
+    'slant',
+    'cloud',
+    'tornOrganic',
+  ];
+  const validBorderStyles: HudBorderStyle[] = [
+    'solid',
+    'double',
+    'dashed',
+    'etched',
+    'ornate',
+    'glowing',
+    'none',
+  ];
+  const validButtonStyles: HudButtonStyle[] = [
+    'flat',
+    'arcadeDome',
+    'gamepad3d',
+    'woodCarved',
+    'sciFiHolokey',
+    'waxSeal',
+    'comicPop',
+    'bevel3d',
+  ];
+  const validJoystickStyles: HudJoystickStyle[] = [
+    'modern',
+    '3dThumbstick',
+    'metalMachined',
+    'woodenLever',
+    'arcadeBall',
+    'sciFiHolo',
+    'stoneRune',
+  ];
+  const validBarStyles: HudBarStyle[] = [
+    'smooth',
+    'segmented',
+    'beveled',
+    'neon',
+    'ornate',
+  ];
+  const validFonts: ChatFontId[] = [
+    'sans',
+    'display',
+    'serif',
+    'cartoon',
+    'comic',
+    'handwritten',
+    'pixel',
+    'mono',
+    'cinzel',
+    'gothic',
+    'orbitron',
+    'arcade',
+    'garamond',
+    'tactical',
+  ];
+  const validBubbleShapes: ChatBubbleShape[] = [
+    'rounded',
+    'pill',
+    'comic',
+    'sharp',
+    'thought',
+    'shout',
+    'scroll',
+    'graphicNovel',
+    'glass3d',
+    'parchmentTorn',
+    'sciFiHolo',
+    'woodenPlaque',
+  ];
+  const validTails: ChatBubbleTailStyle[] = ['pointer', 'curved', 'dots', 'none'];
+  const validShadows: ChatBubbleShadow[] = ['none', 'soft', 'hard', 'glow'];
+  const validPanelThemes: ChatPanelThemeId[] = [
+    'classic',
+    'parchment',
+    'retro',
+    'light',
+    'sciFi',
+    'comic',
+    'wood',
+  ];
+  const validPresetIds: HudThemePresetId[] = [
+    'medievalParchment',
+    'sciFiHolo',
+    'arcadeCabinet',
+    'consoleGamepad',
+    'comicGraphic',
+    'ancientStone',
+    'steampunkBrass',
+    'ghostMinimal',
   ];
 
-  const nextWidgets: HUDWidget[] = rawWidgets
-    .slice(0, 12)
-    .map((entry) => {
-      const w = (entry && typeof entry === 'object'
-        ? entry
-        : {}) as Record<string, unknown>;
-      return makeWidget(
-        oneOf(w.kind, validKinds, 'bar'),
-        oneOf(w.anchor, validAnchors, 'topLeading'),
-        str(w.binding, 'health'),
-        hexColor(w.fillHex, '#20B46A'),
-        str(w.label, 'Health')
-      );
-    });
+  const matchedPresetId =
+    typeof raw.presetId === 'string' &&
+    (validPresetIds as string[]).includes(raw.presetId)
+      ? (raw.presetId as HudThemePresetId)
+      : undefined;
+  const matchedPreset = matchedPresetId
+    ? HUD_THEME_PRESETS.find((p) => p.id === matchedPresetId)
+    : undefined;
 
-  if (nextWidgets.length === 0 && !modifyExisting) {
-    return 'No widget changes supplied.';
+  const defaultFont =
+    typeof raw.defaultFontFamily === 'string' &&
+    (validFonts as string[]).includes(raw.defaultFontFamily)
+      ? (raw.defaultFontFamily as ChatFontId)
+      : typeof raw.fontFamily === 'string' && (validFonts as string[]).includes(raw.fontFamily)
+      ? (raw.fontFamily as ChatFontId)
+      : matchedPreset?.fontFamily;
+
+  const defaultTexture =
+    typeof raw.defaultTexture === 'string' &&
+    (validTextures as string[]).includes(raw.defaultTexture)
+      ? (raw.defaultTexture as HudSurfaceTexture)
+      : typeof raw.surfaceTexture === 'string' &&
+        (validTextures as string[]).includes(raw.surfaceTexture)
+      ? (raw.surfaceTexture as HudSurfaceTexture)
+      : matchedPreset?.surfaceTexture;
+
+  const defaultOpacity =
+    typeof raw.defaultOpacity === 'number' && Number.isFinite(raw.defaultOpacity)
+      ? clamp(raw.defaultOpacity, 0.08, 1)
+      : typeof raw.opacity === 'number' && Number.isFinite(raw.opacity)
+      ? clamp(raw.opacity, 0.08, 1)
+      : matchedPreset?.opacity;
+
+  const topBgHex =
+    typeof raw.bgHex === 'string' ? hexColor(raw.bgHex, matchedPreset?.bgHex ?? '#121822') : matchedPreset?.bgHex;
+  const topBorderHex =
+    typeof raw.borderHex === 'string'
+      ? hexColor(raw.borderHex, matchedPreset?.borderHex ?? '#94A3B8')
+      : matchedPreset?.borderHex;
+  const topTextHex =
+    typeof raw.textHex === 'string'
+      ? hexColor(raw.textHex, matchedPreset?.textHex ?? '#FFFFFF')
+      : matchedPreset?.textHex;
+  const topGlowHex =
+    typeof raw.glowHex === 'string'
+      ? hexColor(raw.glowHex, matchedPreset?.glowHex ?? '#38BDF8')
+      : matchedPreset?.glowHex;
+  const topPanelShape =
+    typeof raw.panelShape === 'string' && (validShapes as string[]).includes(raw.panelShape)
+      ? (raw.panelShape as HudWidgetShape)
+      : typeof raw.shape === 'string' && (validShapes as string[]).includes(raw.shape)
+      ? (raw.shape as HudWidgetShape)
+      : matchedPreset?.panelShape;
+  const topButtonShape =
+    typeof raw.buttonShape === 'string' && (validShapes as string[]).includes(raw.buttonShape)
+      ? (raw.buttonShape as HudWidgetShape)
+      : matchedPreset?.buttonShape;
+  const topJoystickShape =
+    typeof raw.joystickShape === 'string' && (validShapes as string[]).includes(raw.joystickShape)
+      ? (raw.joystickShape as HudWidgetShape)
+      : matchedPreset?.joystickShape;
+  const topBorderStyle =
+    typeof raw.borderStyle === 'string' &&
+    (validBorderStyles as string[]).includes(raw.borderStyle)
+      ? (raw.borderStyle as HudBorderStyle)
+      : matchedPreset?.borderStyle;
+  const topBorderWidth =
+    typeof raw.borderWidth === 'number' && Number.isFinite(raw.borderWidth)
+      ? clamp(raw.borderWidth, 0, 6)
+      : matchedPreset?.borderWidth;
+  const topCornerRadius =
+    typeof raw.cornerRadius === 'number' && Number.isFinite(raw.cornerRadius)
+      ? Math.round(clamp(raw.cornerRadius, 0, 48))
+      : matchedPreset?.cornerRadius;
+  const topEdgeWear =
+    typeof raw.edgeWear === 'number' && Number.isFinite(raw.edgeWear)
+      ? clamp(raw.edgeWear, 0, 1)
+      : matchedPreset?.edgeWear;
+  const topBurnedEdges =
+    typeof raw.burnedEdges === 'number' && Number.isFinite(raw.burnedEdges)
+      ? clamp(raw.burnedEdges, 0, 1)
+      : matchedPreset?.burnedEdges;
+  const topPaperTears =
+    typeof raw.paperTears === 'number' && Number.isFinite(raw.paperTears)
+      ? clamp(raw.paperTears, 0, 1)
+      : matchedPreset?.paperTears;
+  const topOrganicWobble =
+    typeof raw.organicWobble === 'number' && Number.isFinite(raw.organicWobble)
+      ? clamp(raw.organicWobble, 0, 1)
+      : matchedPreset?.organicWobble;
+  const topGlowIntensity =
+    typeof raw.glowIntensity === 'number' && Number.isFinite(raw.glowIntensity)
+      ? clamp(raw.glowIntensity, 0, 1)
+      : matchedPreset?.glowIntensity;
+  const topShadowDepth =
+    typeof raw.shadowDepth === 'number' && Number.isFinite(raw.shadowDepth)
+      ? clamp(raw.shadowDepth, 0, 1)
+      : matchedPreset?.shadowDepth;
+  const topButtonStyle =
+    typeof raw.buttonStyle === 'string' &&
+    (validButtonStyles as string[]).includes(raw.buttonStyle)
+      ? (raw.buttonStyle as HudButtonStyle)
+      : matchedPreset?.buttonStyle;
+  const topJoystickStyle =
+    typeof raw.joystickStyle === 'string' &&
+    (validJoystickStyles as string[]).includes(raw.joystickStyle)
+      ? (raw.joystickStyle as HudJoystickStyle)
+      : matchedPreset?.joystickStyle;
+  const topBarStyle =
+    typeof raw.barStyle === 'string' && (validBarStyles as string[]).includes(raw.barStyle)
+      ? (raw.barStyle as HudBarStyle)
+      : matchedPreset?.barStyle;
+
+  const hasTopLevelThemeOverrides = Boolean(
+    matchedPreset ||
+      defaultFont ||
+      defaultTexture ||
+      defaultOpacity !== undefined ||
+      topBgHex ||
+      topBorderHex ||
+      topTextHex ||
+      topPanelShape ||
+      topButtonShape ||
+      topJoystickShape ||
+      topBorderStyle ||
+      topEdgeWear !== undefined ||
+      topBurnedEdges !== undefined ||
+      topPaperTears !== undefined ||
+      topButtonStyle ||
+      topJoystickStyle ||
+      topBarStyle
+  );
+
+  const applyTopLevelThemeToExistingWidgets = (widgets: HUDWidget[]): HUDWidget[] => {
+    const baseStyled = matchedPreset ? applyHudThemeToWidgets(widgets, matchedPreset) : [...widgets];
+    return baseStyled.map((ew) => {
+      const isBtn = ew.kind === 'actionButton' || ew.kind === 'pauseButton';
+      const isStick = ew.kind === 'joystick';
+      const isBar = ew.kind === 'bar' || ew.kind === 'bossBar';
+      return {
+        ...ew,
+        shape:
+          (isBtn ? topButtonShape : isStick ? topJoystickShape : topPanelShape) ?? ew.shape,
+        surfaceTexture: defaultTexture ?? ew.surfaceTexture,
+        bgHex: topBgHex ?? ew.bgHex,
+        borderHex: topBorderHex ?? ew.borderHex,
+        textHex: topTextHex ?? ew.textHex,
+        glowHex: topGlowHex ?? ew.glowHex,
+        borderStyle: topBorderStyle ?? ew.borderStyle,
+        borderWidth: topBorderWidth ?? ew.borderWidth,
+        cornerRadius: topCornerRadius ?? ew.cornerRadius,
+        edgeWear: topEdgeWear ?? ew.edgeWear,
+        burnedEdges: topBurnedEdges ?? ew.burnedEdges,
+        paperTears: isBtn || isStick ? 0 : topPaperTears ?? ew.paperTears,
+        organicWobble: topOrganicWobble ?? ew.organicWobble,
+        glowIntensity: topGlowIntensity ?? ew.glowIntensity,
+        shadowDepth: topShadowDepth ?? ew.shadowDepth,
+        opacity: defaultOpacity ?? ew.opacity,
+        fontFamily: defaultFont ?? ew.fontFamily,
+        buttonStyle: isBtn ? topButtonStyle ?? ew.buttonStyle : ew.buttonStyle,
+        joystickStyle: isStick ? topJoystickStyle ?? ew.joystickStyle : ew.joystickStyle,
+        barStyle: isBar ? topBarStyle ?? ew.barStyle : ew.barStyle,
+      };
+    });
+  };
+
+  const nextWidgets: HUDWidget[] = rawWidgets.slice(0, 14).map((entry) => {
+    const w = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+    const kind = oneOf(w.kind, validKinds, 'bar');
+    const anchor = oneOf(w.anchor, validAnchors, 'topLeading');
+    const binding = str(w.binding, kind === 'joystick' || kind === 'actionButton' ? '' : 'health');
+    const fillHex = hexColor(w.fillHex, matchedPreset?.fillHex ?? '#20B46A');
+    const label = str(w.label, kind === 'joystick' ? 'Move' : 'Health');
+    const base = makeWidget(kind, anchor, binding, fillHex, label);
+
+    const isBtn = kind === 'actionButton' || kind === 'pauseButton';
+    const isStick = kind === 'joystick';
+    const isBar = kind === 'bar' || kind === 'bossBar';
+
+    return {
+      ...base,
+      actionId:
+        kind === 'actionButton'
+          ? oneOf(w.actionId, validActions, base.actionId ?? 'jump')
+          : base.actionId,
+      offsetX:
+        typeof w.offsetX === 'number' && Number.isFinite(w.offsetX)
+          ? Math.round(clamp(w.offsetX, -280, 280))
+          : base.offsetX,
+      offsetY:
+        typeof w.offsetY === 'number' && Number.isFinite(w.offsetY)
+          ? Math.round(clamp(w.offsetY, -200, 200))
+          : base.offsetY,
+      width:
+        typeof w.width === 'number' && Number.isFinite(w.width)
+          ? Math.round(clamp(w.width, 28, 420))
+          : base.width,
+      height:
+        typeof w.height === 'number' && Number.isFinite(w.height)
+          ? Math.round(clamp(w.height, 16, 240))
+          : base.height,
+      shape:
+        typeof w.shape === 'string' && (validShapes as string[]).includes(w.shape)
+          ? (w.shape as HudWidgetShape)
+          : (isBtn ? topButtonShape : isStick ? topJoystickShape : topPanelShape) ?? base.shape,
+      surfaceTexture:
+        typeof w.surfaceTexture === 'string' &&
+        (validTextures as string[]).includes(w.surfaceTexture)
+          ? (w.surfaceTexture as HudSurfaceTexture)
+          : defaultTexture,
+      bgHex: typeof w.bgHex === 'string' ? hexColor(w.bgHex, topBgHex ?? '#121822') : topBgHex,
+      borderHex:
+        typeof w.borderHex === 'string'
+          ? hexColor(w.borderHex, topBorderHex ?? '#94A3B8')
+          : topBorderHex,
+      textHex:
+        typeof w.textHex === 'string'
+          ? hexColor(w.textHex, topTextHex ?? '#FFFFFF')
+          : topTextHex,
+      glowHex:
+        typeof w.glowHex === 'string'
+          ? hexColor(w.glowHex, topGlowHex ?? fillHex)
+          : topGlowHex,
+      knobColorHex:
+        typeof w.knobColorHex === 'string'
+          ? hexColor(w.knobColorHex, '#FFFFFF')
+          : isStick
+          ? matchedPreset?.knobColorHex ?? base.knobColorHex
+          : undefined,
+      borderStyle:
+        typeof w.borderStyle === 'string' &&
+        (validBorderStyles as string[]).includes(w.borderStyle)
+          ? (w.borderStyle as HudBorderStyle)
+          : topBorderStyle,
+      borderWidth:
+        typeof w.borderWidth === 'number' && Number.isFinite(w.borderWidth)
+          ? clamp(w.borderWidth, 0, 6)
+          : topBorderWidth,
+      cornerRadius:
+        typeof w.cornerRadius === 'number' && Number.isFinite(w.cornerRadius)
+          ? Math.round(clamp(w.cornerRadius, 0, 48))
+          : topCornerRadius,
+      edgeWear:
+        typeof w.edgeWear === 'number' && Number.isFinite(w.edgeWear)
+          ? clamp(w.edgeWear, 0, 1)
+          : topEdgeWear,
+      burnedEdges:
+        typeof w.burnedEdges === 'number' && Number.isFinite(w.burnedEdges)
+          ? clamp(w.burnedEdges, 0, 1)
+          : topBurnedEdges,
+      paperTears:
+        typeof w.paperTears === 'number' && Number.isFinite(w.paperTears)
+          ? clamp(w.paperTears, 0, 1)
+          : isBtn || isStick
+          ? 0
+          : topPaperTears,
+      organicWobble:
+        typeof w.organicWobble === 'number' && Number.isFinite(w.organicWobble)
+          ? clamp(w.organicWobble, 0, 1)
+          : topOrganicWobble,
+      glowIntensity:
+        typeof w.glowIntensity === 'number' && Number.isFinite(w.glowIntensity)
+          ? clamp(w.glowIntensity, 0, 1)
+          : topGlowIntensity,
+      shadowDepth:
+        typeof w.shadowDepth === 'number' && Number.isFinite(w.shadowDepth)
+          ? clamp(w.shadowDepth, 0, 1)
+          : topShadowDepth,
+      rotationDeg:
+        typeof w.rotationDeg === 'number' && Number.isFinite(w.rotationDeg)
+          ? Math.round(clamp(w.rotationDeg, -25, 25))
+          : undefined,
+      opacity:
+        typeof w.opacity === 'number' && Number.isFinite(w.opacity)
+          ? clamp(w.opacity, 0.08, 1)
+          : defaultOpacity ?? base.opacity,
+      fontFamily:
+        typeof w.fontFamily === 'string' && (validFonts as string[]).includes(w.fontFamily)
+          ? (w.fontFamily as ChatFontId)
+          : defaultFont,
+      uppercase: typeof w.uppercase === 'boolean' ? w.uppercase : matchedPreset?.uppercase,
+      textGlow: typeof w.textGlow === 'boolean' ? w.textGlow : matchedPreset?.textGlow,
+      buttonStyle:
+        isBtn &&
+        typeof w.buttonStyle === 'string' &&
+        (validButtonStyles as string[]).includes(w.buttonStyle)
+          ? (w.buttonStyle as HudButtonStyle)
+          : isBtn
+          ? topButtonStyle
+          : undefined,
+      joystickStyle:
+        isStick &&
+        typeof w.joystickStyle === 'string' &&
+        (validJoystickStyles as string[]).includes(w.joystickStyle)
+          ? (w.joystickStyle as HudJoystickStyle)
+          : isStick
+          ? topJoystickStyle
+          : undefined,
+      knobSizePct:
+        isStick && typeof w.knobSizePct === 'number' && Number.isFinite(w.knobSizePct)
+          ? Math.round(clamp(w.knobSizePct, 25, 65))
+          : undefined,
+      barStyle:
+        isBar &&
+        typeof w.barStyle === 'string' &&
+        (validBarStyles as string[]).includes(w.barStyle)
+          ? (w.barStyle as HudBarStyle)
+          : isBar
+          ? topBarStyle
+          : undefined,
+    };
+  });
+
+  // Parse optional AI speech bubble styling
+  const rawBubble =
+    raw.chatBubbleStyle && typeof raw.chatBubbleStyle === 'object'
+      ? (raw.chatBubbleStyle as Record<string, unknown>)
+      : null;
+  const bubblePatch: Partial<ChatBubbleStyle> | null = rawBubble
+    ? {
+        ...(typeof rawBubble.shape === 'string' &&
+        (validBubbleShapes as string[]).includes(rawBubble.shape)
+          ? { shape: rawBubble.shape as ChatBubbleShape }
+          : {}),
+        ...(typeof rawBubble.tailStyle === 'string' &&
+        (validTails as string[]).includes(rawBubble.tailStyle)
+          ? { tailStyle: rawBubble.tailStyle as ChatBubbleTailStyle }
+          : {}),
+        ...(typeof rawBubble.bgColor === 'string'
+          ? { bgColor: hexColor(rawBubble.bgColor, '#FFFDF7') }
+          : {}),
+        ...(typeof rawBubble.textColor === 'string'
+          ? { textColor: hexColor(rawBubble.textColor, '#1E2430') }
+          : {}),
+        ...(typeof rawBubble.borderColor === 'string'
+          ? { borderColor: hexColor(rawBubble.borderColor, '#6B3E1B') }
+          : {}),
+        ...(typeof rawBubble.speakerColor === 'string'
+          ? { speakerColor: hexColor(rawBubble.speakerColor, '#7C5CFF') }
+          : {}),
+        ...(typeof rawBubble.opacity === 'number' && Number.isFinite(rawBubble.opacity)
+          ? { opacity: clamp(rawBubble.opacity, 0.1, 1) }
+          : {}),
+        ...(typeof rawBubble.borderWidth === 'number' && Number.isFinite(rawBubble.borderWidth)
+          ? { borderWidth: clamp(rawBubble.borderWidth, 0, 6) }
+          : {}),
+        ...(typeof rawBubble.borderRadius === 'number' && Number.isFinite(rawBubble.borderRadius)
+          ? { borderRadius: Math.round(clamp(rawBubble.borderRadius, 0, 32)) }
+          : {}),
+        ...(typeof rawBubble.shadowStyle === 'string' &&
+        (validShadows as string[]).includes(rawBubble.shadowStyle)
+          ? { shadowStyle: rawBubble.shadowStyle as ChatBubbleShadow }
+          : {}),
+        ...(typeof rawBubble.fontFamily === 'string' &&
+        (validFonts as string[]).includes(rawBubble.fontFamily)
+          ? { fontFamily: rawBubble.fontFamily as ChatFontId }
+          : {}),
+        ...(typeof rawBubble.surfaceTexture === 'string' &&
+        (validTextures as string[]).includes(rawBubble.surfaceTexture)
+          ? { surfaceTexture: rawBubble.surfaceTexture as HudSurfaceTexture }
+          : {}),
+        ...(typeof rawBubble.edgeWear === 'number' && Number.isFinite(rawBubble.edgeWear)
+          ? { edgeWear: clamp(rawBubble.edgeWear, 0, 1) }
+          : {}),
+        ...(typeof rawBubble.burnedEdges === 'number' && Number.isFinite(rawBubble.burnedEdges)
+          ? { burnedEdges: clamp(rawBubble.burnedEdges, 0, 1) }
+          : {}),
+        ...(typeof rawBubble.paperTears === 'number' && Number.isFinite(rawBubble.paperTears)
+          ? { paperTears: clamp(rawBubble.paperTears, 0, 1) }
+          : {}),
+        ...(typeof rawBubble.depth3d === 'number' && Number.isFinite(rawBubble.depth3d)
+          ? { depth3d: clamp(rawBubble.depth3d, 0, 1) }
+          : {}),
+        ...(typeof rawBubble.glowColor === 'string'
+          ? { glowColor: hexColor(rawBubble.glowColor, '#22D3EE') }
+          : {}),
+        ...(typeof rawBubble.rotationDeg === 'number' && Number.isFinite(rawBubble.rotationDeg)
+          ? { rotationDeg: clamp(rawBubble.rotationDeg, -8, 8) }
+          : {}),
+      }
+    : matchedPreset?.chatBubbleStyle ?? null;
+
+  // Parse optional AI bottom chat panel styling
+  const rawPanel =
+    raw.chatPanelSettings && typeof raw.chatPanelSettings === 'object'
+      ? (raw.chatPanelSettings as Record<string, unknown>)
+      : null;
+
+  if (
+    nextWidgets.length === 0 &&
+    !hasTopLevelThemeOverrides &&
+    !bubblePatch &&
+    !rawPanel &&
+    !modifyExisting
+  ) {
+    return 'No interface changes supplied.';
   }
 
   store.updateProject(
-    modifyExisting ? 'AI modify HUD layout' : 'AI update HUD layout',
+    modifyExisting ? 'AI restyle interface & controls' : 'AI build custom interface & controls',
     (prev) => {
-      let mergedWidgets = nextWidgets;
-      if (modifyExisting) {
-        mergedWidgets = [...prev.hud.widgets];
+      let mergedWidgets: HUDWidget[];
+      if (nextWidgets.length === 0) {
+        mergedWidgets = applyTopLevelThemeToExistingWidgets(prev.hud.widgets);
+      } else if (modifyExisting || nextWidgets.length < 4) {
+        mergedWidgets = applyTopLevelThemeToExistingWidgets(prev.hud.widgets);
         nextWidgets.forEach((nw) => {
           const idx = mergedWidgets.findIndex(
-            (ew) => ew.kind === nw.kind && ew.binding === nw.binding
+            (ew) =>
+              ew.kind === nw.kind &&
+              (nw.kind === 'actionButton'
+                ? ew.actionId === nw.actionId
+                : ew.binding === nw.binding)
           );
           if (idx >= 0) {
-            mergedWidgets[idx] = { ...nw, id: mergedWidgets[idx].id };
+            mergedWidgets[idx] = { ...mergedWidgets[idx], ...nw, id: mergedWidgets[idx].id };
           } else {
             mergedWidgets.push(nw);
           }
         });
+      } else {
+        mergedWidgets = nextWidgets;
       }
+
+      const prevChat = resolveChatDisplaySettings(prev.chatSettings);
+      const nextChatSettings = {
+        ...prevChat,
+        ...(matchedPreset?.chatPanelSettings ?? {}),
+        ...(rawPanel
+          ? {
+              ...(rawPanel.displayMode === 'bubbles' || rawPanel.displayMode === 'bottomPanel'
+                ? { displayMode: rawPanel.displayMode as ChatDisplayMode }
+                : {}),
+              ...(typeof rawPanel.panelTheme === 'string' &&
+              (validPanelThemes as string[]).includes(rawPanel.panelTheme)
+                ? { panelTheme: rawPanel.panelTheme as ChatPanelThemeId }
+                : {}),
+              ...(typeof rawPanel.panelBgColor === 'string'
+                ? { panelBgColor: hexColor(rawPanel.panelBgColor, prevChat.panelBgColor) }
+                : {}),
+              ...(typeof rawPanel.panelBorderColor === 'string'
+                ? { panelBorderColor: hexColor(rawPanel.panelBorderColor, prevChat.panelBorderColor) }
+                : {}),
+              ...(typeof rawPanel.panelTextColor === 'string'
+                ? { panelTextColor: hexColor(rawPanel.panelTextColor, prevChat.panelTextColor) }
+                : {}),
+              ...(typeof rawPanel.panelOpacity === 'number' && Number.isFinite(rawPanel.panelOpacity)
+                ? { panelOpacity: clamp(rawPanel.panelOpacity, 0.15, 1) }
+                : {}),
+              ...(typeof rawPanel.panelTexture === 'string' &&
+              (validTextures as string[]).includes(rawPanel.panelTexture)
+                ? { panelTexture: rawPanel.panelTexture as HudSurfaceTexture }
+                : {}),
+              ...(typeof rawPanel.panelShape === 'string' &&
+              (validShapes as string[]).includes(rawPanel.panelShape)
+                ? { panelShape: rawPanel.panelShape as HudWidgetShape }
+                : {}),
+              ...(typeof rawPanel.panelEdgeWear === 'number' && Number.isFinite(rawPanel.panelEdgeWear)
+                ? { panelEdgeWear: clamp(rawPanel.panelEdgeWear, 0, 1) }
+                : {}),
+              ...(typeof rawPanel.panelBurnedEdges === 'number' &&
+              Number.isFinite(rawPanel.panelBurnedEdges)
+                ? { panelBurnedEdges: clamp(rawPanel.panelBurnedEdges, 0, 1) }
+                : {}),
+              ...(typeof rawPanel.panelPaperTears === 'number' &&
+              Number.isFinite(rawPanel.panelPaperTears)
+                ? { panelPaperTears: clamp(rawPanel.panelPaperTears, 0, 1) }
+                : {}),
+              ...(typeof rawPanel.panelFontFamily === 'string' &&
+              (validFonts as string[]).includes(rawPanel.panelFontFamily)
+                ? { panelFontFamily: rawPanel.panelFontFamily as ChatFontId }
+                : {}),
+            }
+          : {}),
+      };
+
+      const nextHeroBubble = bubblePatch
+        ? {
+            ...resolveChatBubbleStyle(prev.heroChatBubble, 'hero'),
+            ...bubblePatch,
+          }
+        : prev.heroChatBubble;
+
+      const nextLevels = bubblePatch
+        ? prev.levels.map((lvl) => ({
+            ...lvl,
+            entities: lvl.entities.map((ent) =>
+              ent.kind === 'npc' || ent.kind === 'sign' || ent.kind === 'baddie'
+                ? {
+                    ...ent,
+                    chatBubble: {
+                      ...resolveChatBubbleStyle(ent.chatBubble, ent.kind),
+                      ...bubblePatch,
+                    },
+                  }
+                : ent
+            ),
+          }))
+        : prev.levels;
+
       return {
         ...prev,
         hud: {
           ...prev.hud,
-          themeName: str(raw.themeName, prev.hud.themeName),
+          themeName: str(raw.themeName, matchedPreset?.name ?? prev.hud.themeName),
+          presetId: matchedPresetId ?? prev.hud.presetId,
+          defaultFontFamily: defaultFont ?? prev.hud.defaultFontFamily,
+          defaultTexture: defaultTexture ?? prev.hud.defaultTexture,
+          defaultOpacity: defaultOpacity ?? prev.hud.defaultOpacity,
           widgets: mergedWidgets,
         },
+        heroChatBubble: nextHeroBubble,
+        chatSettings: nextChatSettings,
+        levels: nextLevels,
         storybook: {
           enabled:
             typeof raw.storybookEnabled === 'boolean'
@@ -5414,6 +6032,9 @@ export function applyInterfacePlanToStore(
 
   return str(
     raw.summary,
-    `${modifyExisting ? 'Updated' : 'Applied'} ${nextWidgets.length} HUD widgets.`
+    `${modifyExisting ? 'Restyled' : 'Built'} custom "${str(
+      raw.themeName,
+      matchedPreset?.name ?? 'Custom'
+    )}" interface with ${nextWidgets.length || proj.hud.widgets.length} elements & matching dialogue.`
   );
 }

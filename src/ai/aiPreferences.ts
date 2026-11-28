@@ -177,6 +177,61 @@ export async function fetchAiProviderStatus(): Promise<AiProviderServerStatus> {
   return (await res.json()) as AiProviderServerStatus;
 }
 
+function repairTruncatedJsonClient(raw: string): string {
+  const firstBrace = raw.indexOf('{');
+  if (firstBrace < 0) return raw;
+  let text = raw.slice(firstBrace).trim();
+
+  const stack: ('{' | '[')[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{' || ch === '[') {
+      stack.push(ch);
+    } else if (ch === '}') {
+      if (stack.length > 0 && stack[stack.length - 1] === '{') stack.pop();
+    } else if (ch === ']') {
+      if (stack.length > 0 && stack[stack.length - 1] === '[') stack.pop();
+    }
+  }
+
+  if (inString) {
+    if (escaped) text = text.slice(0, -1);
+    text += '"';
+  }
+
+  text = text.replace(/,\s*$/, '');
+  text = text.replace(/,\s*"[^"]*"\s*:\s*$/, '');
+  text = text.replace(/\{\s*"[^"]*"\s*:\s*$/, '{');
+  text = text.replace(/,\s*"[^"]*"\s*$/, '');
+  text = text.replace(/\{\s*"[^"]*"\s*$/, '{');
+  text = text.replace(/:\s*[+-]?(?:\d+\.?\d*|\.\d+)?\s*$/, ': 0');
+  text = text.replace(/:\s*(?:tru|tr|t|fals|fal|fa|f|nul|nu|n)\s*$/, ': null');
+  text = text.replace(/,\s*$/, '');
+
+  while (stack.length > 0) {
+    const open = stack.pop();
+    text += open === '{' ? '}' : ']';
+  }
+
+  text = text.replace(/,\s*([}\]])/g, '$1');
+  return text;
+}
+
 export function extractJsonObjectFromText(raw: string): Record<string, unknown> {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -187,7 +242,28 @@ export function extractJsonObjectFromText(raw: string): Record<string, unknown> 
     firstBrace >= 0 && lastBrace > firstBrace
       ? candidate.slice(firstBrace, lastBrace + 1)
       : candidate;
-  const parsed = JSON.parse(slice) as unknown;
+
+  try {
+    const parsed = JSON.parse(slice) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Fallback to trailing-comma & truncated JSON repair
+  }
+
+  const cleanedSlice = slice.replace(/,\s*([}\]])/g, '$1');
+  try {
+    const parsed = JSON.parse(cleanedSlice) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Fallback to full bracket closure repair
+  }
+
+  const repaired = repairTruncatedJsonClient(candidate);
+  const parsed = JSON.parse(repaired) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('AI response did not contain a valid JSON object.');
   }
@@ -289,17 +365,38 @@ export async function runContextualAiGeneration(params: {
     }),
   });
 
-  const payload = (await endpointRes.json().catch(() => null)) as
-    | {
-        error?: string;
-        data?: Record<string, unknown>;
-        rawText?: string;
-        model?: string;
-      }
-    | null;
+  const rawBody = await endpointRes.text().catch(() => '');
+  let payload: {
+    error?: string;
+    data?: Record<string, unknown>;
+    rawText?: string;
+    model?: string;
+  } | null = null;
+
+  if (rawBody) {
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!payload?.data && payload?.rawText) {
+    try {
+      payload.data = extractJsonObjectFromText(payload.rawText);
+    } catch {
+      // Keep original error handling below
+    }
+  }
 
   if (!endpointRes.ok || !payload?.data) {
-    throw new Error(payload?.error || `AI request failed (${endpointRes.status}).`);
+    if (!payload && rawBody.trim().startsWith('<')) {
+      throw new Error('AI server connection timed out or is warming up. Please try again.');
+    }
+    throw new Error(
+      payload?.error ||
+        `AI request failed${endpointRes.status && endpointRes.status !== 200 ? ` (${endpointRes.status})` : ': invalid response payload'}.`
+    );
   }
 
   return {

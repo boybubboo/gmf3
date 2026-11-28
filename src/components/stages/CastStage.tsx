@@ -243,19 +243,21 @@ export const CastStage: React.FC<{ store: MakerStore }> = ({ store }) => {
             </div>
           </div>
 
-          <CastScaleViewport3D
-            project={currentProject}
-            level={currentLevel}
-            customAssets={store.customAssets}
-            focusedTarget={focusedTarget}
-            selectedEntity={currentEntity}
-            onSelectTarget={(next) => {
-              setFocusedTarget(next);
-              if (next === 'hero') {
-                store.setSelectedEntityID(null);
-              }
-            }}
-          />
+          {!store.isPlaying && (
+            <CastScaleViewport3D
+              project={currentProject}
+              level={currentLevel}
+              customAssets={store.customAssets}
+              focusedTarget={focusedTarget}
+              selectedEntity={currentEntity}
+              onSelectTarget={(next) => {
+                setFocusedTarget(next);
+                if (next === 'hero') {
+                  store.setSelectedEntityID(null);
+                }
+              }}
+            />
+          )}
 
           {/* Quick World Scale Control linked directly to focused 3D character */}
           {(() => {

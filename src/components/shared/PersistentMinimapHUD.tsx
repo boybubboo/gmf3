@@ -654,21 +654,20 @@ export const TemplateMinimapSVG: React.FC<{
       {fogRevealPath !== null ? (
         <>
           <defs>
-            <filter id={`${fogMaskId}-blur`}>
-              <feGaussianBlur stdDeviation="1.4" />
-            </filter>
             <mask id={fogMaskId}>
               <rect width="100" height="100" fill="black" />
               {fogRevealPath && (
                 <path
                   d={fogRevealPath}
                   fill="white"
-                  filter={`url(#${fogMaskId}-blur)`}
+                  stroke="white"
+                  strokeWidth="1.2"
+                  strokeLinejoin="round"
                 />
               )}
             </mask>
           </defs>
-          <g style={{ filter: 'grayscale(1) brightness(0.42)' }}>
+          <g opacity={0.34}>
             {renderTerrainScene()}
           </g>
           <g mask={`url(#${fogMaskId})`}>

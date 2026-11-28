@@ -1067,7 +1067,7 @@ export const WorldLeftCreationPanel: React.FC<WorldLeftCreationPanelProps> = ({
               );
             })}
 
-            {currentLevel && (
+            {currentLevel && !store.isPlaying && (
               <div className="pt-1.5">
                 <AtmospherePreviewViewport
                   level={currentLevel}

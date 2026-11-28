@@ -394,12 +394,61 @@ export class PlatformerWorldController {
   }
 
   public dispose(): void {
-    for (const p of this.projectiles) this.scene.remove(p.mesh);
-    for (const d of this.cannonArcDots) this.scene.remove(d);
-    if (this.grappleLine) this.scene.remove(this.grappleLine);
-    if (this.bashArrowGroup) this.scene.remove(this.bashArrowGroup);
-    if (this.ghostMesh) this.scene.remove(this.ghostMesh);
-    if (this.risingTideMesh) this.scene.remove(this.risingTideMesh);
+    const disposedGeos = new Set<THREE.BufferGeometry>();
+    const disposedMats = new Set<THREE.Material>();
+    const disposeTree = (root: THREE.Object3D) => {
+      root.traverse((obj) => {
+        const renderable = obj as THREE.Mesh | THREE.Line;
+        if (renderable.geometry && !disposedGeos.has(renderable.geometry)) {
+          disposedGeos.add(renderable.geometry);
+          renderable.geometry.dispose();
+        }
+        const mat = renderable.material;
+        if (Array.isArray(mat)) {
+          for (const m of mat) {
+            if (m && !disposedMats.has(m)) {
+              disposedMats.add(m);
+              m.dispose();
+            }
+          }
+        } else if (mat && !disposedMats.has(mat)) {
+          disposedMats.add(mat);
+          mat.dispose();
+        }
+      });
+    };
+
+    for (const p of this.projectiles) {
+      disposeTree(p.mesh);
+      this.scene.remove(p.mesh);
+    }
+    this.projectiles.length = 0;
+    for (const d of this.cannonArcDots) {
+      disposeTree(d);
+      this.scene.remove(d);
+    }
+    this.cannonArcDots.length = 0;
+    if (this.grappleLine) {
+      disposeTree(this.grappleLine);
+      this.scene.remove(this.grappleLine);
+      this.grappleLine = null;
+    }
+    if (this.bashArrowGroup) {
+      disposeTree(this.bashArrowGroup);
+      this.scene.remove(this.bashArrowGroup);
+      this.bashArrowGroup = null;
+    }
+    if (this.ghostMesh) {
+      disposeTree(this.ghostMesh);
+      this.scene.remove(this.ghostMesh);
+      this.ghostMesh = null;
+    }
+    if (this.risingTideMesh) {
+      disposeTree(this.risingTideMesh);
+      this.scene.remove(this.risingTideMesh);
+      this.risingTideMesh = null;
+    }
+    this.nodes.length = 0;
   }
 
   public isCustomHeroBlocked(heroX: number, heroY: number, heroZ: number, radius: number): boolean {

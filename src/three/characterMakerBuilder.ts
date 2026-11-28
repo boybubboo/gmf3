@@ -3260,6 +3260,7 @@ function createSurfaceCoatTextures(coat: CharacterSurfaceCoatConfig): {
     tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(repeat, repeat);
     tex.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    tex.userData.ownedByMaterial = true;
     tex.needsUpdate = true;
     return tex;
   };
@@ -6994,7 +6995,7 @@ export function buildCharacterRigAndMesh(
     // Uniform scaling preserves strict containment for any eye size, aspect, or flatness.
     const eyeball = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), mats.scleraMat);
     eyeball.name = `CharEyeSclera_${idx}`;
-    eyeball.castShadow = true;
+    eyeball.castShadow = false;
     scaledEyeFrame.add(eyeball);
 
     const irisRadius = THREE.MathUtils.clamp(sideCfg.pupilSize * 1.28, 0.24, 0.88);
@@ -7073,7 +7074,7 @@ export function buildCharacterRigAndMesh(
         new THREE.SphereGeometry(1.088, 32, 20, 0, Math.PI * 2, 0, Math.PI * 0.5),
         mats.topLidMat
       );
-      topLidShell.castShadow = true;
+      topLidShell.castShadow = false;
       topLidPivot.add(topLidShell);
       scaledEyeFrame.add(topLidPivot);
       eyelidsOut.push({

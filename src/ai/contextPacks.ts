@@ -164,13 +164,16 @@ export const AI_CONTEXT_META: Record<AiStudioContextId, AiContextMeta> = {
   },
   interface: {
     id: 'interface',
-    title: 'HUD & Storybook AI',
-    tagline: 'Designs HUD widgets (health, stamina, boss bar, objectives, minimap) and storybook framing.',
+    title: 'Interface & Controls Stylist AI',
+    tagline: 'Crafts complete custom HUDs, 3D arcade/gamepad/wooden controls, textured & worn panels, arbitrary shapes, typography, ghost opacity, and matching speech bubbles.',
     accentHex: '#F59E0B',
-    saveAreaLabel: 'Apply HUD Setup',
+    saveAreaLabel: 'Apply Interface Style',
     starterPrompts: [
-      'Cozy adventure HUD with health bar, stamina bar for ground pound, objective tracker, minimap and boss bar',
-      'Minimalist storybook HUD with clean corner hearts, quest banner and bottom action buttons',
+      'Medieval fantasy interface with distressed sepia parchment panels, burned edges, paper tears, carved oak buttons, wooden lever joystick, Cinzel lettering, and burned scroll speech bubbles',
+      'Futuristic sci-fi HUD with dark metallic circuit panels, chamfered glowing cyan holokeys, holographic reticle joystick, Orbitron font, ghosted transparency, and sci-fi hologram bubbles',
+      'Classic 3D arcade cabinet controls with glossy dome plunger buttons, candy red ball-top joystick, segmented neon health bar, and 3D gloss speech bubbles',
+      'Modern graphic novel UI with halftone slanted panels, comic pop action buttons, bold ink outlines, Bangers lettering, and graphic novel speech bubbles',
+      'Ultra-minimal ghosted glass HUD at 35% opacity with subtle rounded 3D thumbstick and sleek translucent dialogue',
     ],
   },
 };
@@ -1254,20 +1257,99 @@ Valid BehaviorCard action keys: "chase" | "patrol" | "flyPattern" | "flee" | "at
 }`;
 
     case 'interface':
-      return `TARGET SCHEMA (HUD & Storybook Interface):
+      return `CREATIVE ART DIRECTION FOR INTERFACE & CONTROLS:
+You are an imaginative senior game UI/UX artist. NEVER just tweak a couple of colors and sizes!
+Materialize the user's complete visual vision across EVERY element: panel surface textures, organic edge wear, scorched/burned edges, torn paper bites, arbitrary shapes, 3D button hardware (arcade dome plungers, 3D gamepad keys, carved wood buttons, wax seals, sci-fi holokeys, comic pop buttons), custom joystick hardware (3D thumbstick, machined metal, carved wooden lever, arcade ball-top, sci-fi holo reticle, carved stone rune dial), typography, ghost-back opacity (0.08..1.0), AND matching speech bubbles & bottom chat panel!
+- For medieval/fantasy/pirate/parchment themes: use "parchment" texture with burnedEdges (0.5..0.85), paperTears (0.35..0.7), edgeWear (0.4..0.7), "tornOrganic" or "scroll" or "shield" panelShape, "woodCarved" or "waxSeal" buttonStyle, "woodenLever" joystickStyle, "cinzel" / "gothic" / "garamond" defaultFontFamily, and "parchmentTorn" or "woodenPlaque" chatBubbleStyle.
+- For sci-fi/cyber/futuristic/mecha themes: use "circuitTech" or "holoGlass" or "brushedMetal" texture, "chamfer" or "hex" panelShape, "glowing" borderStyle, high glowIntensity (0.5..0.9), "sciFiHolokey" buttonStyle, "sciFiHolo" or "metalMachined" joystickStyle, "neon" barStyle, "orbitron" or "tactical" defaultFontFamily, and "sciFiHolo" chatBubbleStyle.
+- For arcade/retro/console controller themes: use "arcadeDome" or "gamepad3d" buttonStyle, "arcadeBall" or "3dThumbstick" joystickStyle, "arcadePlastic" or "brushedMetal" texture, high shadowDepth (0.6..0.9), "segmented" or "beveled" barStyle, and "glass3d" speech bubbles.
+- For comic/graphic novel themes: use "comicHalftone" texture, "slant" or "diamond" shapes, "comicPop" buttonStyle, organicWobble (0.3..0.6), "comic" defaultFontFamily, and "graphicNovel" or "comic" speech bubbles.
+- For ghosted/minimal/stealth/immersive HUDs: lower defaultOpacity to 0.2..0.55 so the 3D world shines through.
+- IMPORTANT TOKEN EFFICIENCY RULE: Define shared theme styling ONCE at the top level (defaultTexture, defaultFontFamily, defaultOpacity, bgHex, borderHex, textHex, glowHex, panelShape, buttonShape, joystickShape, borderStyle, borderWidth, cornerRadius, edgeWear, burnedEdges, paperTears, organicWobble, glowIntensity, shadowDepth, buttonStyle, joystickStyle, barStyle). All widgets automatically inherit those top-level theme properties! In the "widgets" array, include at most 6-9 widgets and ONLY specify widget-specific fields (kind, label, anchor, binding/actionId, offsetX, offsetY, width, height, fillHex) plus any per-widget overrides (e.g. "wood" surfaceTexture on actionButton when panels are "parchment").
+
+TARGET SCHEMA (Unrestricted Game Interface, Controls & Speech Bubbles):
 {
   "summary": string,
   "themeName": string,
+  "presetId": null | "medievalParchment" | "sciFiHolo" | "arcadeCabinet" | "consoleGamepad" | "comicGraphic" | "ancientStone" | "steampunkBrass" | "ghostMinimal",
   "storybookEnabled": boolean,
   "storybookTheme": "woodland" | "goldenMeadow" | "moonlitFable",
   "accentColor": "#RRGGBB",
+  "defaultFontFamily": "sans" | "display" | "serif" | "cartoon" | "comic" | "handwritten" | "pixel" | "mono" | "cinzel" | "gothic" | "garamond" | "orbitron" | "tactical" | "arcade",
+  "defaultTexture": "smooth" | "parchment" | "wood" | "brushedMetal" | "forgedIron" | "stone" | "leather" | "holoGlass" | "circuitTech" | "arcadePlastic" | "comicHalftone" | "fabricCanvas",
+  "defaultOpacity": number (0.08..1.0),
+  "bgHex": "#RRGGBB",
+  "borderHex": "#RRGGBB",
+  "textHex": "#RRGGBB",
+  "glowHex": "#RRGGBB",
+  "panelShape": "circle" | "rounded" | "sharp" | "chamfer" | "hex" | "diamond" | "shield" | "scroll" | "arch" | "slant" | "cloud" | "tornOrganic",
+  "buttonShape": "circle" | "rounded" | "sharp" | "chamfer" | "hex" | "diamond" | "shield" | "scroll" | "arch" | "slant" | "cloud" | "tornOrganic",
+  "joystickShape": "circle" | "rounded" | "sharp" | "chamfer" | "hex" | "diamond" | "shield" | "scroll" | "arch" | "slant" | "cloud" | "tornOrganic",
+  "borderStyle": "solid" | "double" | "dashed" | "etched" | "ornate" | "glowing" | "none",
+  "borderWidth": number (0..6),
+  "cornerRadius": number (0..48),
+  "edgeWear": number (0..1),
+  "burnedEdges": number (0..1),
+  "paperTears": number (0..1),
+  "organicWobble": number (0..1),
+  "glowIntensity": number (0..1),
+  "shadowDepth": number (0..1),
+  "buttonStyle": "flat" | "arcadeDome" | "gamepad3d" | "woodCarved" | "sciFiHolokey" | "waxSeal" | "comicPop" | "bevel3d",
+  "joystickStyle": "modern" | "3dThumbstick" | "metalMachined" | "woodenLever" | "arcadeBall" | "sciFiHolo" | "stoneRune",
+  "barStyle": "smooth" | "segmented" | "beveled" | "neon" | "ornate",
+  "chatBubbleStyle": {
+    "shape": "rounded" | "pill" | "comic" | "graphicNovel" | "glass3d" | "parchmentTorn" | "sciFiHolo" | "woodenPlaque" | "sharp" | "thought" | "shout" | "scroll",
+    "tailStyle": "pointer" | "curved" | "dots" | "none",
+    "bgColor": "#RRGGBB",
+    "textColor": "#RRGGBB",
+    "borderColor": "#RRGGBB",
+    "speakerColor": "#RRGGBB",
+    "opacity": number (0.1..1.0),
+    "borderWidth": number (0..6),
+    "borderRadius": number (0..32),
+    "shadowStyle": "none" | "soft" | "hard" | "glow",
+    "fontFamily": "sans" | "display" | "serif" | "cartoon" | "comic" | "handwritten" | "pixel" | "mono" | "cinzel" | "gothic" | "garamond" | "orbitron" | "tactical" | "arcade",
+    "surfaceTexture": "smooth" | "parchment" | "wood" | "brushedMetal" | "forgedIron" | "stone" | "leather" | "holoGlass" | "circuitTech" | "arcadePlastic" | "comicHalftone" | "fabricCanvas",
+    "edgeWear": number (0..1),
+    "burnedEdges": number (0..1),
+    "paperTears": number (0..1),
+    "depth3d": number (0..1),
+    "glowColor": "#RRGGBB",
+    "rotationDeg": number (-8..8)
+  },
+  "chatPanelSettings": {
+    "displayMode": "bubbles" | "bottomPanel",
+    "panelTheme": "classic" | "parchment" | "retro" | "light" | "sciFi" | "comic" | "wood",
+    "panelBgColor": "#RRGGBB",
+    "panelBorderColor": "#RRGGBB",
+    "panelTextColor": "#RRGGBB",
+    "panelOpacity": number (0.15..1.0),
+    "panelTexture": "smooth" | "parchment" | "wood" | "brushedMetal" | "forgedIron" | "stone" | "leather" | "holoGlass" | "circuitTech" | "arcadePlastic" | "comicHalftone" | "fabricCanvas",
+    "panelShape": "circle" | "rounded" | "sharp" | "chamfer" | "hex" | "diamond" | "shield" | "scroll" | "arch" | "slant" | "cloud" | "tornOrganic",
+    "panelEdgeWear": number (0..1),
+    "panelBurnedEdges": number (0..1),
+    "panelPaperTears": number (0..1),
+    "panelFontFamily": "sans" | "display" | "serif" | "cartoon" | "comic" | "handwritten" | "pixel" | "mono" | "cinzel" | "gothic" | "garamond" | "orbitron" | "tactical" | "arcade"
+  },
   "widgets": [
     {
-      "kind": "bar" | "counter" | "inventoryGrid" | "minimap" | "objectiveList" | "dialogue" | "pauseButton" | "bossBar" | "joystick" | "actionButton",
+      "kind": "bar" | "counter" | "inventoryGrid" | "minimap" | "objectiveList" | "dialogue" | "pauseButton" | "timer" | "bossBar" | "tutorial" | "joystick" | "actionButton",
       "label": string,
-      "binding": "health" | "stamina" | "magic" | "coins" | "keys" | "objectives" | "minimap" | "boss" | "dialogue",
-      "anchor": "topLeading" | "top" | "topTrailing" | "bottomLeading" | "bottom" | "bottomTrailing",
-      "fillHex": "#RRGGBB"
+      "binding": "health" | "stamina" | "energy" | "magic" | "coins" | "keys" | "objectives" | "minimap" | "boss" | "dialogue",
+      "actionId": null | "jump" | "attack" | "interact" | "magicBolt" | "heal",
+      "anchor": "topLeading" | "top" | "topTrailing" | "bottomLeading" | "bottom" | "bottomTrailing" | "center",
+      "offsetX": number,
+      "offsetY": number,
+      "width": number (28..420),
+      "height": number (16..240),
+      "fillHex": "#RRGGBB",
+      "shape"?: "circle" | "rounded" | "sharp" | "chamfer" | "hex" | "diamond" | "shield" | "scroll" | "arch" | "slant" | "cloud" | "tornOrganic",
+      "surfaceTexture"?: "smooth" | "parchment" | "wood" | "brushedMetal" | "forgedIron" | "stone" | "leather" | "holoGlass" | "circuitTech" | "arcadePlastic" | "comicHalftone" | "fabricCanvas",
+      "buttonStyle"?: "flat" | "arcadeDome" | "gamepad3d" | "woodCarved" | "sciFiHolokey" | "waxSeal" | "comicPop" | "bevel3d",
+      "joystickStyle"?: "modern" | "3dThumbstick" | "metalMachined" | "woodenLever" | "arcadeBall" | "sciFiHolo" | "stoneRune",
+      "barStyle"?: "smooth" | "segmented" | "beveled" | "neon" | "ornate",
+      "opacity"?: number (0.08..1.0),
+      "rotationDeg"?: number (-25..25)
     }
   ]
 }`;

@@ -239,7 +239,7 @@ export class ChunkedTerrainSystem {
 
         const mesh = new THREE.Mesh(geometry, material);
         mesh.receiveShadow = true;
-        mesh.castShadow = true;
+        mesh.castShadow = false;
         mesh.frustumCulled = true;
         mesh.userData.isGround = true;
         mesh.userData.terrainChunk = { cx, cz };
@@ -630,6 +630,8 @@ export class ChunkedTerrainSystem {
     }
 
     chunk.centerY = (minY + maxY) * 0.5;
+    // Only chunks with meaningful vertical relief (mountains/cliffs) need to cast terrain shadows into CSM
+    chunk.mesh.castShadow = !isWorldMap && (maxY - minY) > 4.5;
     chunk.geometry.attributes.position.needsUpdate = true;
     chunk.geometry.attributes.normal.needsUpdate = true;
     chunk.geometry.attributes.color.needsUpdate = true;

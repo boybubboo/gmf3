@@ -259,6 +259,8 @@ const _up = new THREE.Vector3();
 const _fwdRef = new THREE.Vector3(0, 0, 1);
 const _upRef = new THREE.Vector3(0, 1, 0);
 const _tmpPt = new THREE.Vector3();
+const _tmpVel = new THREE.Vector3();
+const _ringQuat = new THREE.Quaternion();
 
 export class MonsterAttackVfxController {
   private readonly parent: THREE.Object3D;
@@ -531,12 +533,10 @@ export class MonsterAttackVfxController {
       if (attackType === 'electricShock' && Math.random() < dt * 18) {
         rig.root.getWorldPosition(_origin);
         _origin.y += 0.65 * sc;
-        _tmpPt.copy(_origin).add(
-          new THREE.Vector3(
-            (Math.random() - 0.5) * 1.1 * sc,
-            (Math.random() - 0.3) * 0.8 * sc,
-            (Math.random() - 0.5) * 1.1 * sc
-          )
+        _tmpPt.set(
+          _origin.x + (Math.random() - 0.5) * 1.1 * sc,
+          _origin.y + (Math.random() - 0.3) * 0.8 * sc,
+          _origin.z + (Math.random() - 0.5) * 1.1 * sc
         );
         this.spawnBolt(_origin, _tmpPt, meta.color, 0.18 * sc);
       }
@@ -563,14 +563,14 @@ export class MonsterAttackVfxController {
         for (let i = 0; i < 6; i++) {
           const ang = (i / 6) * Math.PI * 2 + Math.random() * 0.4;
           const spd = (2.8 + Math.random() * 2.5) * sc;
-          const vel = new THREE.Vector3(
+          _tmpVel.set(
             Math.cos(ang) * spd,
             (2.4 + Math.random() * 2.2) * sc,
             Math.sin(ang) * spd
           );
           this.spawnParticle(
             _origin,
-            vel,
+            _tmpVel,
             i % 2 === 0 ? '#78350F' : meta.secondaryColor,
             0.46,
             0.9 * sc,
@@ -590,8 +590,8 @@ export class MonsterAttackVfxController {
           anchor.getWorldPosition(_origin);
           anchor.getWorldQuaternion(_quat);
           _dir.copy(_fwdRef).applyQuaternion(_quat).normalize();
-          const ringQ = new THREE.Quaternion().setFromUnitVectors(_upRef, _dir);
-          this.spawnRing(_origin, meta.color, 0.42, 0.35 * sc, 3.6 * sc, ringQ);
+          _ringQuat.setFromUnitVectors(_upRef, _dir);
+          this.spawnRing(_origin, meta.color, 0.42, 0.35 * sc, 3.6 * sc, _ringQuat);
         }
       }
       return;
@@ -600,14 +600,14 @@ export class MonsterAttackVfxController {
     if (attackType === 'tailSmash') {
       if (shouldEmitBurst && rig.tailTipAnchor) {
         rig.tailTipAnchor.getWorldPosition(_origin);
-        const vel = new THREE.Vector3(
+        _tmpVel.set(
           (Math.random() - 0.5) * 1.4,
           0.4 + Math.random() * 1.0,
           (Math.random() - 0.5) * 1.4
         );
         this.spawnParticle(
           _origin,
-          vel,
+          _tmpVel,
           Math.random() < 0.5 ? meta.color : meta.secondaryColor,
           0.26,
           1.1 * sc,
@@ -628,9 +628,9 @@ export class MonsterAttackVfxController {
         _origin.y += 0.55 * sc;
         _origin.addScaledVector(_dir, 0.65 * sc);
         _origin.addScaledVector(_right, (Math.random() - 0.5) * 0.7 * sc);
-        const vel = _dir.clone().multiplyScalar((2.4 + Math.random() * 1.8) * sc);
-        vel.y += 0.6 * sc;
-        this.spawnParticle(_origin, vel, meta.secondaryColor, 0.24, 0.85 * sc, 0.1 * sc, 1.5, true);
+        _tmpVel.copy(_dir).multiplyScalar((2.4 + Math.random() * 1.8) * sc);
+        _tmpVel.y += 0.6 * sc;
+        this.spawnParticle(_origin, _tmpVel, meta.secondaryColor, 0.24, 0.85 * sc, 0.1 * sc, 1.5, true);
       }
       return;
     }
@@ -660,9 +660,10 @@ export class MonsterAttackVfxController {
             Math.random() < 0.6 ? meta.color : meta.secondaryColor,
             0.34 * sc
           );
+          _tmpVel.copy(_dir).multiplyScalar(5.5 * sc);
           this.spawnParticle(
             _origin,
-            _dir.clone().multiplyScalar(5.5 * sc),
+            _tmpVel,
             meta.color,
             0.22,
             0.7 * sc,
@@ -689,8 +690,8 @@ export class MonsterAttackVfxController {
           const count = rig.mouthAnchors.length > 1 ? 2 : 3;
           for (let k = 0; k < count; k++) {
             const spd = (isBeam ? 9.5 : attackType === 'waterJet' ? 8.2 : 6.2) * sc * (0.82 + Math.random() * 0.36);
-            const vel = _dir
-              .clone()
+            _tmpVel
+              .copy(_dir)
               .multiplyScalar(spd)
               .addScaledVector(_right, (Math.random() - 0.5) * spread * spd)
               .addScaledVector(_up, (Math.random() - 0.42) * spread * spd);
@@ -701,7 +702,7 @@ export class MonsterAttackVfxController {
             const additive = attackType !== 'poisonSpit';
             this.spawnParticle(
               _origin,
-              vel,
+              _tmpVel,
               col,
               isBeam ? 0.32 : 0.42,
               startS,

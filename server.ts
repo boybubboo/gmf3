@@ -5,7 +5,7 @@ import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -78,13 +78,101 @@ function validateRemoteHttpsBaseUrl(rawUrl: string): string {
 function extractFirstJsonObject(raw: string): string {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced ? fenced[1].trim() : trimmed;
+  const candidate = fenced
+    ? fenced[1].trim()
+    : trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   const firstBrace = candidate.indexOf('{');
   const lastBrace = candidate.lastIndexOf('}');
   if (firstBrace >= 0 && lastBrace > firstBrace) {
     return candidate.slice(firstBrace, lastBrace + 1);
   }
+  if (firstBrace >= 0) {
+    return candidate.slice(firstBrace);
+  }
   return candidate;
+}
+
+function repairTruncatedJson(input: string): string {
+  const src = input.trim().replace(/,\s*([}\]])/g, '$1');
+  const stack: ('}' | ']')[] = [];
+  let inString = false;
+  let escape = false;
+  let lastValidEnd = 0;
+
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      stack.push('}');
+    } else if (ch === '[') {
+      stack.push(']');
+    } else if (ch === '}' || ch === ']') {
+      if (stack.length > 0 && stack[stack.length - 1] === ch) {
+        stack.pop();
+        lastValidEnd = i + 1;
+        if (stack.length === 0) {
+          return src.slice(0, lastValidEnd);
+        }
+      }
+    }
+  }
+
+  let base = src;
+  if (inString) {
+    base += '"';
+  }
+  // Strip any dangling colon or trailing comma before closing open containers
+  base = base.replace(/[,:\s]+$/, '');
+  while (stack.length > 0) {
+    base += stack.pop();
+  }
+  return base.replace(/,\s*([}\]])/g, '$1');
+}
+
+function parseOrRepairJsonObject(raw: string): {
+  parsed: Record<string, unknown> | null;
+  jsonText: string;
+} {
+  const extracted = extractFirstJsonObject(raw);
+  const candidates = [
+    extracted,
+    extracted.replace(/,\s*([}\]])/g, '$1'),
+    repairTruncatedJson(extracted),
+  ];
+
+  const firstBrace = raw.indexOf('{');
+  if (firstBrace >= 0) {
+    candidates.push(repairTruncatedJson(raw.slice(firstBrace)));
+  }
+
+  for (const cand of candidates) {
+    if (!cand) continue;
+    try {
+      const val = JSON.parse(cand) as unknown;
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        return { parsed: val as Record<string, unknown>, jsonText: cand };
+      }
+      if (Array.isArray(val)) {
+        const wrapped = { widgets: val };
+        return { parsed: wrapped, jsonText: JSON.stringify(wrapped) };
+      }
+    } catch {
+      // try next repair candidate
+    }
+  }
+
+  return { parsed: null, jsonText: extracted };
 }
 
 const ALLOWED_IMAGE_MIMES = new Set([
@@ -217,9 +305,10 @@ async function startServer(): Promise<void> {
     if (provider === 'gemini') {
       const apiKey = process.env.GEMINI_API_KEY?.trim();
       if (!apiKey) {
-        res.status(503).json({
+        // Note: Use 422 instead of 503 because Nginx proxy_intercept_errors rewrites 502/503/504 to 200 /warmup.html
+        res.status(422).json({
           error:
-            'GEMINI_API_KEY is not configured on the server. Add it to your environment or switch to Local AI (Ollama/LM Studio).',
+            'GEMINI_API_KEY is not configured on the server. Add it in Settings > Secrets or switch to Local AI (Ollama/LM Studio).',
         });
         return;
       }
@@ -253,18 +342,17 @@ async function startServer(): Promise<void> {
           contents,
           config: {
             systemInstruction: systemPrompt || undefined,
-            ...(isGemini4 ? {} : { temperature }),
+            ...(isGemini4
+              ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+              : { temperature }),
             responseMimeType: 'application/json',
           },
         });
         const rawText = response.text ?? '';
-        const jsonText = extractFirstJsonObject(rawText);
-        let parsed: unknown = null;
-        try {
-          parsed = JSON.parse(jsonText);
-        } catch {
-          res.status(502).json({
-            error: 'Gemini returned invalid JSON.',
+        const { parsed, jsonText } = parseOrRepairJsonObject(rawText);
+        if (!parsed) {
+          res.status(422).json({
+            error: 'Gemini returned an incomplete or non-JSON response. Please try a shorter prompt.',
             rawText,
           });
           return;
@@ -277,7 +365,7 @@ async function startServer(): Promise<void> {
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Gemini request failed.';
-        res.status(502).json({ error: msg });
+        res.status(500).json({ error: msg });
       }
       return;
     }
@@ -285,7 +373,7 @@ async function startServer(): Promise<void> {
     // OpenAI-compatible remote HTTPS inference proxy
     const openAiKey = process.env.OPENAI_COMPAT_API_KEY?.trim();
     if (!openAiKey) {
-      res.status(503).json({
+      res.status(422).json({
         error:
           'OPENAI_COMPAT_API_KEY is not configured on the server. Add it to your environment or use Local AI / Gemini.',
       });
@@ -350,7 +438,11 @@ async function startServer(): Promise<void> {
         | null;
 
       if (!upstreamRes.ok) {
-        res.status(upstreamRes.status).json({
+        const safeStatus =
+          upstreamRes.status === 502 || upstreamRes.status === 503 || upstreamRes.status === 504
+            ? 500
+            : upstreamRes.status;
+        res.status(safeStatus).json({
           error:
             payload?.error?.message ||
             `Upstream inference returned status ${upstreamRes.status}.`,
@@ -359,13 +451,10 @@ async function startServer(): Promise<void> {
       }
 
       const content = payload?.choices?.[0]?.message?.content ?? '';
-      const jsonText = extractFirstJsonObject(content);
-      let parsed: unknown = null;
-      try {
-        parsed = JSON.parse(jsonText);
-      } catch {
-        res.status(502).json({
-          error: 'Inference provider returned invalid JSON.',
+      const { parsed, jsonText } = parseOrRepairJsonObject(content);
+      if (!parsed) {
+        res.status(422).json({
+          error: 'Inference provider returned invalid or incomplete JSON.',
           rawText: content,
         });
         return;
@@ -379,7 +468,7 @@ async function startServer(): Promise<void> {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'OpenAI-compatible request failed.';
-      res.status(502).json({ error: msg });
+      res.status(500).json({ error: msg });
     }
   });
 

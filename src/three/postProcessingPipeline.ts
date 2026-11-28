@@ -104,6 +104,7 @@ export class PostProcessingPipeline {
   private ssrPass: ReturnType<typeof ssr> | null = null;
   private gtaoPass: ReturnType<typeof ao> | null = null;
   private traaPass: TraaPassLike | null = null;
+  private bloomBuilt = false;
   private ssrBuilt = false;
   private gtaoBuilt = false;
   private traaBuilt = false;
@@ -218,12 +219,18 @@ export class PostProcessingPipeline {
       this.renderPipeline.dispose();
       this.renderPipeline = null;
     }
+    this.bloomBuilt = false;
     this.ssrBuilt = false;
     this.gtaoBuilt = false;
     this.traaBuilt = false;
   }
 
-  private initPipeline(enableSsr: boolean, enableGtao: boolean, enableTraa: boolean): void {
+  private initPipeline(
+    enableBloom: boolean,
+    enableSsr: boolean,
+    enableGtao: boolean,
+    enableTraa: boolean
+  ): void {
     this.disposePipelineNodes();
 
     const pipeline = new RenderPipeline(this.renderer);
@@ -308,15 +315,19 @@ export class PostProcessingPipeline {
         (scenePassNormal as unknown as Parameters<typeof ao>[1]) ?? null,
         this.camera
       );
-      gtaoPass.resolutionScale = 0.5;
-      gtaoPass.samples.value = 8;
+      gtaoPass.resolutionScale = 0.4;
+      gtaoPass.samples.value = 3;
       gtaoPass.radius.value = 0.85;
       gtaoPass.thickness.value = 1.0;
       gtaoPass.scale.value = 1.05;
       gtaoTex = gtaoPass.getTextureNode();
     }
 
-    const bloomPass = bloom(beautyColorTex, 0.48, 0.55, 0.72);
+    const bloomPass = enableBloom ? bloom(beautyColorTex, 0.48, 0.55, 0.72) : null;
+    if (bloomPass) {
+      // Quarter-res bloom mip chain cuts bloom GPU fillrate 4x while producing smoother glow
+      (bloomPass as unknown as { _resolutionScale?: number })._resolutionScale = 0.25;
+    }
 
     const uAspect = this.uAspect;
     const uTime = this.uTime;
@@ -359,23 +370,12 @@ export class PostProcessingPipeline {
     const uVolFogColor = this.uVolFogColor;
     const uVolFogInscatterColor = this.uVolFogInscatterColor;
 
-    // Pure arithmetic 2D hash & bilinear value noise (artifact-free across WebGPU & WebGL2)
-    const hash21 = (p: any) => {
-      const p3 = fract(vec3(p.x, p.y, p.x).mul(0.1031));
-      const p3d = dot(p3, vec3(p3.y, p3.z, p3.x).add(33.33));
-      const p3s = p3.add(vec3(p3d));
-      return fract(p3s.x.add(p3s.y).mul(p3s.z));
-    };
-
-    const vnoise2 = (p: any) => {
-      const i = floor(p);
-      const f = fract(p);
-      const u = f.mul(f).mul(vec2(3.0, 3.0).sub(f.mul(2.0)));
-      const a = hash21(i);
-      const b = hash21(i.add(vec2(1.0, 0.0)));
-      const c = hash21(i.add(vec2(0.0, 1.0)));
-      const d = hash21(i.add(vec2(1.0, 1.0)));
-      return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    // Fast zero-hash organic dual-wave turbulence for volumetric height fog (silky painterly clouds, ~5x faster than value-noise hashes)
+    const fastFogNoise = (p: any) => {
+      const w1 = cos(p.x.mul(1.85).add(cos(p.y.mul(1.35).sub(p.x.mul(0.55))).mul(0.85)))
+        .mul(cos(p.y.mul(1.55).sub(p.x.mul(0.72))));
+      const w2 = cos(p.x.mul(3.4).sub(p.y.mul(2.8)).add(1.3));
+      return clamp(float(0.5).add(w1.mul(0.32)).add(w2.mul(0.16)), float(0.0), float(1.0));
     };
 
     const ghostDisc = (uvA: any, posA: any, radius: number, sharpness: number) => {
@@ -446,16 +446,14 @@ export class PostProcessingPipeline {
       const baseTexel = beautyColorTex.sample(uvCoord);
       const col = baseTexel.rgb.toVar();
 
-      // 0a. Half-Res Ground-Truth Ambient Occlusion (5-tap cross-filtered to remove half-res dither)
+      // 0a. Ground-Truth Ambient Occlusion (lightweight 3-tap diagonal filter)
       if (gtaoTex) {
         If(uGtaoStrength.greaterThan(0.001), () => {
-          const stepUv = vec2(0.0018, 0.0024);
+          const stepUv = vec2(0.0022, 0.0028);
           const aoC = gtaoTex.sample(uvCoord).r;
-          const aoL = gtaoTex.sample(clamp(uvCoord.sub(vec2(stepUv.x, 0.0)), vec2(0.001), vec2(0.999))).r;
-          const aoR = gtaoTex.sample(clamp(uvCoord.add(vec2(stepUv.x, 0.0)), vec2(0.001), vec2(0.999))).r;
-          const aoU = gtaoTex.sample(clamp(uvCoord.sub(vec2(0.0, stepUv.y)), vec2(0.001), vec2(0.999))).r;
-          const aoD = gtaoTex.sample(clamp(uvCoord.add(vec2(0.0, stepUv.y)), vec2(0.001), vec2(0.999))).r;
-          const aoSmooth = clamp(aoC.mul(0.36).add(aoL.add(aoR).add(aoU).add(aoD).mul(0.16)), 0.0, 1.0);
+          const ao1 = gtaoTex.sample(clamp(uvCoord.sub(stepUv), vec2(0.001), vec2(0.999))).r;
+          const ao2 = gtaoTex.sample(clamp(uvCoord.add(stepUv), vec2(0.001), vec2(0.999))).r;
+          const aoSmooth = clamp(aoC.mul(0.5).add(ao1.add(ao2).mul(0.25)), 0.0, 1.0);
           // Protect sky background pixels (depth ~ 1.0) so sky never darkens
           const centerDepth = sceneDepthTex.sample(uvCoord).r;
           const skyProtect = smoothstep(0.9992, 0.996, centerDepth);
@@ -474,7 +472,7 @@ export class PostProcessingPipeline {
         col.addAssign(min(ssrPass.rgb, vec3(1.6)).mul(surfMask));
       }
 
-      // 0c. True 3D Screen-Space Ray-Marched Volumetric Height Fog (no horizontal geometry cut lines)
+      // 0c. True 3D Screen-Space Ray-Marched Volumetric Height Fog (analytic slab-clipped 3-step march in full resolution)
       If(uVolFogEnabled.greaterThan(0.5).and(uVolFogDensity.greaterThan(0.005)), () => {
         const cDepth = sceneDepthTex.sample(uvCoord).r;
         const isSky = isBackgroundDepth(cDepth);
@@ -482,29 +480,49 @@ export class PostProcessingPipeline {
         const midWorld = uCamWorldMatrix.mul(vec4(midView, 1.0)).xyz;
         const rayDir = normalize(midWorld.sub(uCamPos));
 
+        const spread = max(float(1.2), uVolFogSoftness);
+        const maxFogCeiling = uVolFogHeight.add(spread.mul(1.65)).add(2.5);
+
         const clampedDepth = select(isSky, float(0.5), cDepth);
         const hitView = getViewPosition(uvCoord, clampedDepth, uCamProjInv);
         const hitWorld = uCamWorldMatrix.mul(vec4(hitView, 1.0)).xyz;
         const hitDist = length(hitWorld.sub(uCamPos));
-        const maxMarchDist = select(isSky, float(130.0), min(hitDist, float(130.0)));
+        const maxMarchDist = select(isSky, float(125.0), min(hitDist, float(125.0)));
 
         const skyZenithFade = select(
           isSky,
-          float(1.0).sub(smoothstep(float(0.04), float(0.44), max(float(0.0), rayDir.y))),
+          float(1.0).sub(smoothstep(float(0.04), float(0.42), max(float(0.0), rayDir.y))),
           float(1.0)
         );
 
-        If(maxMarchDist.greaterThan(0.25).and(skyZenithFade.greaterThan(0.005)), () => {
-          const jitter = interleavedGradientNoise(screenCoordinate.xy);
-          const marchSteps = float(14.0);
-          const stepLen = maxMarchDist.div(marchSteps);
+        // Analytically clip the ray to y <= maxFogCeiling so upper sky & high-altitude rays skip the loop entirely
+        const camAboveFog = uCamPos.y.greaterThan(maxFogCeiling);
+        const headingDown = rayDir.y.lessThan(float(-0.001));
+        const headingUp = rayDir.y.greaterThan(float(0.001));
+        const tHitCeiling = maxFogCeiling.sub(uCamPos.y).div(select(abs(rayDir.y).greaterThan(0.001), rayDir.y, float(0.001)));
+
+        const tStart = select(
+          camAboveFog,
+          select(headingDown, max(float(0.0), tHitCeiling), float(9999.0)),
+          float(0.0)
+        );
+        const tEnd = select(
+          camAboveFog,
+          maxMarchDist,
+          select(headingUp, min(maxMarchDist, max(float(0.0), tHitCeiling)), maxMarchDist)
+        );
+        const slabLen = tEnd.sub(tStart);
+
+        If(slabLen.greaterThan(0.35).and(skyZenithFade.greaterThan(0.005)), () => {
+          // Gentle centered jitter (0.38..0.62) eliminates banding without visible stipple or halftone dots
+          const jitter = float(0.38).add(interleavedGradientNoise(screenCoordinate.xy).mul(0.24));
+          const marchSteps = float(3.0);
+          const stepLen = slabLen.div(marchSteps);
 
           const windSpeed = float(0.45).add(uVolFogWind.mul(0.65));
           const driftPhase = uTime.mul(uVolFogSpeed).mul(windSpeed);
           const driftW1 = vec2(0.72, 0.34).mul(driftPhase);
-          const driftW2 = vec2(-0.46, 0.56).mul(driftPhase);
 
-          const spread = max(float(1.2), uVolFogSoftness);
           const sharp = clamp(uVolFogSharpness, 0.0, 1.0);
           const bandHalf = mix(float(0.50), float(0.13), sharp);
           const patchActive = smoothstep(float(0.0), float(0.08), uVolFogPatchiness);
@@ -520,38 +538,16 @@ export class PostProcessingPipeline {
           const transmittance = float(1.0).toVar();
           const fogAccum = vec3(0.0).toVar();
 
-          Loop({ start: int(0), end: int(14), type: 'int', condition: '<' }, ({ i }) => {
-            const stepT = float(i).add(jitter).div(marchSteps);
-            const stepDist = stepT.mul(maxMarchDist);
+          Loop({ start: int(0), end: int(3), type: 'int', condition: '<' }, ({ i }) => {
+            const stepDist = tStart.add(float(i).add(jitter).mul(stepLen));
             const samplePos = uCamPos.add(rayDir.mul(stepDist));
 
-            // 3-octave domain-warped 3D drifting noise field
             const uvMacro = vec2(samplePos.x, samplePos.z)
-              .mul(0.026)
-              .add(vec2(samplePos.y.mul(0.05), samplePos.y.negate().mul(0.04)))
-              .sub(driftW1.mul(0.042));
-            const nMacro = vnoise2(uvMacro);
+              .mul(0.042)
+              .add(vec2(samplePos.y.mul(0.075), samplePos.y.negate().mul(0.052)))
+              .sub(driftW1.mul(0.062));
+            const fbm = fastFogNoise(uvMacro);
 
-            const rotX = samplePos.x.mul(0.8).sub(samplePos.z.mul(0.6));
-            const rotZ = samplePos.x.mul(0.6).add(samplePos.z.mul(0.8));
-            const uvMed = vec2(rotX, rotZ)
-              .mul(0.072)
-              .add(vec2(nMacro.mul(1.35), nMacro.negate().mul(1.1)))
-              .add(vec2(samplePos.y.mul(0.11), samplePos.y.mul(0.07)))
-              .sub(driftW2.mul(0.072));
-            const nMed = vnoise2(uvMed);
-
-            const rotFX = samplePos.x.mul(0.6).add(samplePos.z.mul(0.8));
-            const rotFZ = samplePos.z.mul(0.6).sub(samplePos.x.mul(0.8));
-            const uvFine = vec2(rotFX, rotFZ)
-              .mul(0.175)
-              .add(vec2(nMed.mul(1.35), samplePos.y.mul(0.22)))
-              .sub(driftW1.mul(0.11));
-            const nFine = vnoise2(uvFine);
-
-            const fbm = nMacro.mul(0.5).add(nMed.mul(0.34)).add(nFine.mul(0.16));
-
-            // Organic vertical boundary undulation + spread & blur/sharpness envelope
             const ceilingWave = fbm
               .sub(0.5)
               .mul(uVolFogNoise)
@@ -559,7 +555,7 @@ export class PostProcessingPipeline {
             const relY = samplePos.y.sub(uVolFogHeight.add(ceilingWave));
             const halfSpread = spread.mul(0.55);
             const hNorm = relY.add(halfSpread).div(max(float(1.0), spread.mul(1.1)));
-            const noisePerturb = nMed.sub(0.5).mul(0.42).add(nFine.sub(0.5).mul(0.24)).mul(uVolFogNoise);
+            const noisePerturb = fbm.sub(0.5).mul(0.48).mul(uVolFogNoise);
             const perturbedH = clamp(hNorm.sub(noisePerturb), float(-0.5), float(1.5));
 
             const rawHeightMask = float(1.0).sub(
@@ -574,13 +570,11 @@ export class PostProcessingPipeline {
             );
             const edgeDetail = mix(wispErode, float(1.0), smoothstep(float(0.24), float(0.76), blurCurve));
 
-            // Patch separation (fog banks vs clearings)
-            const bankSignal = nMacro.mul(0.75).add(nMed.mul(0.25));
-            const rawPatchMask = smoothstep(patchCut.sub(patchEdge), patchCut.add(0.26), bankSignal);
+            const rawPatchMask = smoothstep(patchCut.sub(patchEdge), patchCut.add(0.26), fbm);
             const patchMask = mix(float(1.0), rawPatchMask, patchActive);
 
             const nearFade = smoothstep(float(1.2), float(6.5), stepDist);
-            const farFade = float(1.0).sub(smoothstep(float(82.0), float(130.0), stepDist));
+            const farFade = float(1.0).sub(smoothstep(float(80.0), float(125.0), stepDist));
 
             const stepDensity = blurCurve
               .mul(edgeDetail)
@@ -600,33 +594,33 @@ export class PostProcessingPipeline {
         });
       });
 
-      // 0d. Depth-Occluded Volumetric Sun Shafts (14-tap dithered radial scatter toward sun)
+      // 0d. Depth-Occluded Volumetric Sun Shafts (6-tap gentle-dithered radial scatter toward sun)
       If(uGodRaysEnabled.greaterThan(0.5).and(uGodRaysIntensity.greaterThan(0.001)).and(uSunVisibility.greaterThan(0.005)), () => {
         const toSun = uSunScreenPos.sub(uvCoord);
         const aspectVec = vec2(uAspect, 1.0);
         const sunDist = length(toSun.mul(aspectVec));
-        // Screen-space interleaved dither eliminates radial stepping bands
-        const jitter = fract(dot(uvCoord.mul(vec2(128.4, 217.9)), vec2(12.9898, 78.233))).mul(0.09);
+        const jitter = interleavedGradientNoise(screenCoordinate.xy).mul(0.12);
         const shaftAccum = float(0.0).toVar();
         const decay = float(1.0).toVar();
-        Loop({ start: int(0), end: int(14), type: 'int', condition: '<' }, ({ i }) => {
-          const t = float(i).add(0.5).add(jitter).div(14.0).mul(0.82);
+        Loop({ start: int(0), end: int(6), type: 'int', condition: '<' }, ({ i }) => {
+          const t = float(i).add(0.44).add(jitter).div(6.0).mul(0.82);
           const sampleUv = clamp(uvCoord.add(toSun.mul(t)), vec2(0.002), vec2(0.998));
           const dSample = sceneDepthTex.sample(sampleUv).r;
-          // Far sky pixels pass sunlight through gaps in trees, peaks, and cave mouths
           const skyMask = smoothstep(0.993, 0.9992, dSample);
           shaftAccum.addAssign(skyMask.mul(decay));
-          decay.mulAssign(0.88);
+          decay.mulAssign(0.78);
         });
         const radialFalloff = exp(sunDist.mul(-1.85)).mul(float(1.0).sub(smoothstep(0.82, 1.45, sunDist)));
-        const godRayEnergy = shaftAccum.div(6.2).mul(radialFalloff).mul(uSunVisibility).mul(uGodRaysIntensity);
+        const godRayEnergy = shaftAccum.div(3.1).mul(radialFalloff).mul(uSunVisibility).mul(uGodRaysIntensity);
         col.addAssign(uSunColor.mul(godRayEnergy).mul(0.58));
       });
 
-      // Add optional Bloom contribution in linear HDR space
-      If(uBloomEnabled.greaterThan(0.5), () => {
-        col.addAssign(bloomPass.rgb);
-      });
+      // Add optional Bloom contribution in linear HDR space (only wired when Bloom is enabled)
+      if (bloomPass) {
+        If(uBloomEnabled.greaterThan(0.5), () => {
+          col.addAssign(bloomPass.rgb);
+        });
+      }
 
       // 1. Optical sun lens flare + horizontal anamorphic highlight streak in linear HDR
       If(uFlareEnabled.greaterThan(0.5).and(uFlareIntensity.greaterThan(0.001)), () => {
@@ -696,36 +690,41 @@ export class PostProcessingPipeline {
           });
 
           col.addAssign(flare.mul(uSunVisibility).mul(uFlareIntensity));
-        });
 
-        // Horizontal anamorphic highlight streak sampled from bright HDR pixels
-        const streakAccum = vec3(0.0).toVar();
-        const totalW = float(0.0).toVar();
-        const texelX = float(0.0075 * 2.2);
-        Loop({ start: int(-4), end: int(5), type: 'int', condition: '<' }, ({ i }) => {
-          const fi = float(i);
-          const w = exp(abs(fi).mul(-0.42));
-          const sampleUv = clamp(uvCoord.add(vec2(fi.mul(texelX), 0.0)), vec2(0.001), vec2(0.999));
-          const s = beautyColorTex.sample(sampleUv).rgb;
-          const lum = dot(s, vec3(0.2126, 0.7152, 0.0722));
-          const bright = max(s.sub(vec3(0.78)), vec3(0.0)).mul(smoothstep(0.65, 1.25, lum));
-          streakAccum.addAssign(bright.mul(w));
-          totalW.addAssign(w);
+          // Horizontal anamorphic highlight streak (only evaluated when sun is visible, 5 weighted taps)
+          const streakAccum = vec3(0.0).toVar();
+          const totalW = float(0.0).toVar();
+          const texelX = float(0.011 * 2.2);
+          Loop({ start: int(-2), end: int(3), type: 'int', condition: '<' }, ({ i }) => {
+            const fi = float(i);
+            const w = exp(abs(fi).mul(-0.52));
+            const sampleUv = clamp(uvCoord.add(vec2(fi.mul(texelX), 0.0)), vec2(0.001), vec2(0.999));
+            const s = beautyColorTex.sample(sampleUv).rgb;
+            const lum = dot(s, vec3(0.2126, 0.7152, 0.0722));
+            const bright = max(s.sub(vec3(0.78)), vec3(0.0)).mul(smoothstep(0.65, 1.25, lum));
+            streakAccum.addAssign(bright.mul(w));
+            totalW.addAssign(w);
+          });
+          const glintTint = mix(uSunColor, vec3(0.76, 0.9, 1.0), 0.38);
+          col.addAssign(
+            streakAccum
+              .div(max(0.001, totalW))
+              .mul(glintTint)
+              .mul(float(0.28).add(uFlareHalo.mul(0.45)))
+              .mul(uFlareIntensity)
+              .mul(uSunVisibility)
+          );
         });
-        const glintTint = mix(uSunColor, vec3(0.76, 0.9, 1.0), 0.38);
-        col.addAssign(
-          streakAccum
-            .div(max(0.001, totalW))
-            .mul(glintTint)
-            .mul(float(0.28).add(uFlareHalo.mul(0.45)))
-            .mul(uFlareIntensity)
-        );
       });
 
-      // 2. Exposure + AgX (default) or ACES Filmic tone mapping
+      // 2. Exposure + AgX (default) or ACES Filmic tone mapping (branch-gated so only ONE curve evaluates per pixel!)
       const expMult = uBaseExposure.mul(select(uGradeEnabled.greaterThan(0.5), uExposure, float(1.0)));
       col.mulAssign(expMult);
-      col.assign(mix(acesFilmicTsl(col), agxToneMappingTsl(col), clamp(uToneMappingMode, 0.0, 1.0)));
+      If(uToneMappingMode.greaterThan(0.5), () => {
+        col.assign(agxToneMappingTsl(col));
+      }).Else(() => {
+        col.assign(acesFilmicTsl(col));
+      });
 
       // 3. Linear -> sRGB encoding
       col.assign(linearToSrgbTsl(col));
@@ -768,6 +767,7 @@ export class PostProcessingPipeline {
       return vec4(col, baseTexel.a);
     })();
 
+    // Output directly to screen without an extra full-resolution RTT FXAA pass
     pipeline.outputNode = finalOutputNode;
     this.renderPipeline = pipeline;
     this.scenePass = scenePass;
@@ -775,6 +775,7 @@ export class PostProcessingPipeline {
     this.ssrPass = ssrPass;
     this.gtaoPass = gtaoPass;
     this.traaPass = traaPass;
+    this.bloomBuilt = enableBloom;
     this.ssrBuilt = enableSsr;
     this.gtaoBuilt = enableGtao;
     this.traaBuilt = enableTraa;
@@ -782,10 +783,8 @@ export class PostProcessingPipeline {
     const pr = this.renderer.getPixelRatio();
     const scaledW = Math.max(1, Math.floor(this.width * pr));
     const scaledH = Math.max(1, Math.floor(this.height * pr));
-    if (isIOSDevice() || enableTraa) {
-      const rt = (this.scenePass as unknown as { renderTarget?: THREE.RenderTarget }).renderTarget;
-      if (rt) rt.samples = 0;
-    }
+    const rt = (this.scenePass as unknown as { renderTarget?: THREE.RenderTarget }).renderTarget;
+    if (rt) rt.samples = 0;
     this.scenePass.setSize(scaledW, scaledH);
     this.ssrPass?.setSize(scaledW, scaledH);
     this.gtaoPass?.setSize(scaledW, scaledH);
@@ -840,6 +839,7 @@ export class PostProcessingPipeline {
   ): {
     cfg: ReturnType<typeof resolvePostProcessingConfig>;
     masterPostOn: boolean;
+    bloomRequested: boolean;
     vignetteOn: boolean;
     ssrRequested: boolean;
     gtaoRequested: boolean;
@@ -850,6 +850,7 @@ export class PostProcessingPipeline {
   } {
     const cfg = resolvePostProcessingConfig(config);
     const masterPostOn = Boolean(cfg.enabled);
+    const bloomRequested = masterPostOn && Boolean(cfg.bloomEnabled) && cfg.bloomIntensity > 0.001;
     const vignetteOn = masterPostOn && (cfg.vignetteEnabled ?? true) && cfg.vignette > 0.001;
     const ssrRequested =
       masterPostOn &&
@@ -879,7 +880,7 @@ export class PostProcessingPipeline {
     const anyEffectActive =
       volFogOn ||
       (masterPostOn &&
-        (cfg.bloomEnabled ||
+        (bloomRequested ||
           cfg.lensFlareEnabled ||
           cfg.colorGradingEnabled ||
           vignetteOn ||
@@ -890,6 +891,7 @@ export class PostProcessingPipeline {
     return {
       cfg,
       masterPostOn,
+      bloomRequested,
       vignetteOn,
       ssrRequested,
       gtaoRequested,
@@ -901,18 +903,20 @@ export class PostProcessingPipeline {
   }
 
   private ensurePipeline(
+    bloomRequested: boolean,
     ssrRequested: boolean,
     gtaoRequested: boolean,
     traaRequested: boolean
   ): void {
     if (
       !this.renderPipeline ||
+      bloomRequested !== this.bloomBuilt ||
       ssrRequested !== this.ssrBuilt ||
       gtaoRequested !== this.gtaoBuilt ||
       traaRequested !== this.traaBuilt
     ) {
       try {
-        this.initPipeline(ssrRequested, gtaoRequested, traaRequested);
+        this.initPipeline(bloomRequested, ssrRequested, gtaoRequested, traaRequested);
       } catch (pipeErr) {
         console.warn('Post-processing pipeline init failed; retrying with safe fallback:', pipeErr);
         if (ssrRequested) {
@@ -927,7 +931,7 @@ export class PostProcessingPipeline {
           this.traaFailed = true;
           PostProcessingPipeline.traaGloballyUnsupported = true;
         }
-        this.initPipeline(false, false, false);
+        this.initPipeline(bloomRequested, false, false, false);
       }
     }
   }
@@ -948,17 +952,19 @@ export class PostProcessingPipeline {
     targetObject?: THREE.Object3D
   ): Promise<void> {
     if (this.disposed) return;
-    const { ssrRequested, gtaoRequested, traaRequested, anyEffectActive } =
+    // Never run WebGPURenderer.compileAsync on a sub-object while the render loop is active:
+    // in Three.js r187, compileAsync(subObject, camera, targetScene) wipes the shared scene
+    // RenderList and mutates RenderTarget/MRT state across async frame yields, which can leave
+    // an offscreen PassNode RenderTarget bound and turn the canvas black.
+    if (targetObject) return;
+
+    const { bloomRequested, ssrRequested, gtaoRequested, traaRequested, anyEffectActive } =
       this.resolveFlags(config);
 
     if (!anyEffectActive || this.isSoftwareGl) {
       this.activeCompileCount++;
       try {
-        await this.renderer.compileAsync(
-          targetObject ?? this.scene,
-          this.camera,
-          targetObject ? this.scene : null
-        );
+        await this.renderer.compileAsync(this.scene, this.camera);
       } catch {
         // ignore precompile failures on fallback/disposed targets
       } finally {
@@ -967,7 +973,7 @@ export class PostProcessingPipeline {
       return;
     }
 
-    this.ensurePipeline(ssrRequested, gtaoRequested, traaRequested);
+    this.ensurePipeline(bloomRequested, ssrRequested, gtaoRequested, traaRequested);
     if (this.disposed || !this.scenePass) return;
 
     const passNode = this.scenePass as unknown as {
@@ -982,7 +988,8 @@ export class PostProcessingPipeline {
     if (typeof outputTypeFn === 'function') {
       passNode.renderTarget.texture.type = outputTypeFn.call(this.renderer);
     }
-    passNode.renderTarget.samples = isIOSDevice() || this.traaBuilt ? 0 : this.renderer.samples;
+    // Keep offscreen HDR+depth pass single-sampled (anti-aliasing is handled cleanly by FXAA / TRAA)
+    passNode.renderTarget.samples = 0;
     this.renderer.getDrawingBufferSize(this._drawingSize);
     const dbW = Math.max(1, Math.floor(this._drawingSize.x));
     const dbH = Math.max(1, Math.floor(this._drawingSize.y));
@@ -997,45 +1004,27 @@ export class PostProcessingPipeline {
 
     this.activeCompileCount++;
     try {
-      if (!targetObject) {
-        try {
-          await passNode.compileAsync(this.renderer);
-        } catch (err) {
-          if (this.ssrBuilt || this.gtaoBuilt || this.traaBuilt) {
-            console.warn('SSR/GTAO/TRAA precompile failed; falling back and retrying:', err);
-            if (this.ssrBuilt) {
-              this.ssrFailed = true;
-              PostProcessingPipeline.ssrGloballyUnsupported = true;
-            }
-            if (this.gtaoBuilt) {
-              this.gtaoFailed = true;
-              PostProcessingPipeline.gtaoGloballyUnsupported = true;
-            }
-            if (this.traaBuilt) {
-              this.traaFailed = true;
-              PostProcessingPipeline.traaGloballyUnsupported = true;
-            }
-            this.initPipeline(false, false, false);
-            if (!this.disposed && this.scenePass) {
-              await (this.scenePass as unknown as typeof passNode).compileAsync(this.renderer);
-            }
-          }
-        }
-        return;
-      }
-
-      const prevTarget = this.renderer.getRenderTarget();
-      const prevMrt = this.renderer.getMRT();
-      this.renderer.setRenderTarget(passNode.renderTarget);
-      this.renderer.setMRT(passNode.getMRT() as Parameters<WebGPURenderer['setMRT']>[0]);
       try {
-        await this.renderer.compileAsync(targetObject, this.camera, this.scene);
-      } catch {
-        // ignore precompile errors on transient/disposed objects
-      } finally {
-        if (!this.disposed) {
-          this.renderer.setRenderTarget(prevTarget);
-          this.renderer.setMRT(prevMrt);
+        await passNode.compileAsync(this.renderer);
+      } catch (err) {
+        if (this.ssrBuilt || this.gtaoBuilt || this.traaBuilt) {
+          console.warn('SSR/GTAO/TRAA precompile failed; falling back and retrying:', err);
+          if (this.ssrBuilt) {
+            this.ssrFailed = true;
+            PostProcessingPipeline.ssrGloballyUnsupported = true;
+          }
+          if (this.gtaoBuilt) {
+            this.gtaoFailed = true;
+            PostProcessingPipeline.gtaoGloballyUnsupported = true;
+          }
+          if (this.traaBuilt) {
+            this.traaFailed = true;
+            PostProcessingPipeline.traaGloballyUnsupported = true;
+          }
+          this.initPipeline(bloomRequested, false, false, false);
+          if (!this.disposed && this.scenePass) {
+            await (this.scenePass as unknown as typeof passNode).compileAsync(this.renderer);
+          }
         }
       }
     } finally {
@@ -1053,6 +1042,7 @@ export class PostProcessingPipeline {
     const {
       cfg,
       masterPostOn,
+      bloomRequested,
       vignetteOn,
       ssrRequested,
       gtaoRequested,
@@ -1062,13 +1052,11 @@ export class PostProcessingPipeline {
       anyEffectActive,
     } = this.resolveFlags(ctx.config, ctx.volumetricFog);
 
-    // Protect screen draw if an async compileAsync batch yielded mid-flight with a PassNode RT/MRT bound
-    const savedTarget = this.renderer.getRenderTarget();
-    const savedMrt = this.renderer.getMRT();
-    if (savedTarget !== null) {
+    // Ensure main canvas swapchain target (null) and null MRT are bound before drawing
+    if (this.renderer.getRenderTarget() !== null) {
       this.renderer.setRenderTarget(null);
     }
-    if (savedMrt !== null) {
+    if (this.renderer.getMRT() !== null) {
       this.renderer.setMRT(null);
     }
 
@@ -1079,10 +1067,10 @@ export class PostProcessingPipeline {
         return;
       }
 
-      // Lazily rebuild RenderPipeline with/without MRT + SSRNode / GTAONode / TRAANode only when toggled
-      this.ensurePipeline(ssrRequested, gtaoRequested, traaRequested);
+      // Lazily rebuild RenderPipeline with/without Bloom / MRT + SSRNode / GTAONode / TRAANode only when toggled
+      this.ensurePipeline(bloomRequested, ssrRequested, gtaoRequested, traaRequested);
 
-      if (!this.renderPipeline || !this.bloomPass) {
+      if (!this.renderPipeline) {
         this.renderer.render(this.scene, this.camera);
         return;
       }
@@ -1154,9 +1142,9 @@ export class PostProcessingPipeline {
       }
 
       // 1. Update Bloom pass parameters
-      const bloomOn = masterPostOn && cfg.bloomEnabled && cfg.bloomIntensity > 0.001;
+      const bloomOn = bloomRequested && Boolean(this.bloomPass);
       this.uBloomEnabled.value = bloomOn ? 1.0 : 0.0;
-      if (bloomOn) {
+      if (bloomOn && this.bloomPass) {
         this.bloomPass.strength.value = THREE.MathUtils.clamp(cfg.bloomIntensity, 0, 2.5);
         this.bloomPass.threshold.value = THREE.MathUtils.clamp(cfg.bloomThreshold, 0, 1.5);
         this.bloomPass.radius.value = THREE.MathUtils.clamp(cfg.bloomRadius, 0, 1.5);
@@ -1255,24 +1243,27 @@ export class PostProcessingPipeline {
             this.traaFailed = true;
             PostProcessingPipeline.traaGloballyUnsupported = true;
           }
-          this.initPipeline(false, false, false);
+          this.initPipeline(bloomRequested, false, false, false);
           this.renderPipeline?.render();
         } else {
           throw err;
         }
       }
     } finally {
-      if (savedTarget !== null) {
-        this.renderer.setRenderTarget(savedTarget);
-      }
-      if (savedMrt !== null) {
-        this.renderer.setMRT(savedMrt);
+      if (!this.disposed) {
+        if (this.renderer.getRenderTarget() !== null) {
+          this.renderer.setRenderTarget(null);
+        }
+        if (this.renderer.getMRT() !== null) {
+          this.renderer.setMRT(null);
+        }
       }
     }
   }
 
   public dispose(): void {
     this.disposed = true;
+    this.pendingResize = null;
     this.disposePipelineNodes();
   }
 }

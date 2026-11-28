@@ -2264,6 +2264,79 @@ export type WidgetKind =
   | 'joystick'
   | 'actionButton';
 
+export type HudSurfaceTexture =
+  | 'smooth'
+  | 'parchment'
+  | 'wood'
+  | 'brushedMetal'
+  | 'forgedIron'
+  | 'stone'
+  | 'leather'
+  | 'holoGlass'
+  | 'circuitTech'
+  | 'arcadePlastic'
+  | 'comicHalftone'
+  | 'fabricCanvas';
+
+export type HudWidgetShape =
+  | 'circle'
+  | 'rounded'
+  | 'sharp'
+  | 'chamfer'
+  | 'hex'
+  | 'diamond'
+  | 'shield'
+  | 'scroll'
+  | 'arch'
+  | 'slant'
+  | 'cloud'
+  | 'tornOrganic';
+
+export type HudBorderStyle =
+  | 'solid'
+  | 'double'
+  | 'dashed'
+  | 'etched'
+  | 'ornate'
+  | 'glowing'
+  | 'none';
+
+export type HudButtonStyle =
+  | 'flat'
+  | 'arcadeDome'
+  | 'gamepad3d'
+  | 'woodCarved'
+  | 'sciFiHolokey'
+  | 'waxSeal'
+  | 'comicPop'
+  | 'bevel3d';
+
+export type HudJoystickStyle =
+  | 'modern'
+  | '3dThumbstick'
+  | 'metalMachined'
+  | 'woodenLever'
+  | 'arcadeBall'
+  | 'sciFiHolo'
+  | 'stoneRune';
+
+export type HudBarStyle =
+  | 'smooth'
+  | 'segmented'
+  | 'beveled'
+  | 'neon'
+  | 'ornate';
+
+export type HudThemePresetId =
+  | 'medievalParchment'
+  | 'sciFiHolo'
+  | 'arcadeCabinet'
+  | 'consoleGamepad'
+  | 'comicGraphic'
+  | 'ancientStone'
+  | 'steampunkBrass'
+  | 'ghostMinimal';
+
 export interface HUDWidget {
   id: string;
   kind: WidgetKind;
@@ -2276,15 +2349,46 @@ export interface HUDWidget {
   fillHex: string;
   label: string;
   actionId?: ActionButtonBinding;
-  shape?: 'circle' | 'rounded';
-  opacity?: number;
+  shape?: HudWidgetShape;
+  opacity?: number; // 0.08..1.0 (full ghost-back support)
   knobColorHex?: string;
+  // Unrestricted Surface, Texture, Organic Wear & 3D Control styling
+  surfaceTexture?: HudSurfaceTexture;
+  bgHex?: string;
+  textHex?: string;
+  borderHex?: string;
+  accentHex?: string;
+  borderStyle?: HudBorderStyle;
+  borderWidth?: number; // 0..6
+  cornerRadius?: number; // 0..48
+  edgeWear?: number; // 0..1 organic rough/chipped edge displacement
+  burnedEdges?: number; // 0..1 scorched sepia/char vignette edges
+  paperTears?: number; // 0..1 irregular deckled / torn paper bites
+  organicWobble?: number; // 0..1 hand-drawn irregularity / tilt
+  glowIntensity?: number; // 0..1 neon / magical outer aura
+  glowHex?: string;
+  shadowDepth?: number; // 0..1 3D extrusion & drop depth
+  rotationDeg?: number; // -25..25
+  fontFamily?: ChatFontId;
+  fontSize?: number; // optional override
+  uppercase?: boolean;
+  letterSpacing?: number; // 0..4 px
+  textGlow?: boolean;
+  buttonStyle?: HudButtonStyle;
+  joystickStyle?: HudJoystickStyle;
+  knobSizePct?: number; // 25..65
+  knobTexture?: HudSurfaceTexture;
+  barStyle?: HudBarStyle;
 }
 
 export interface HUDProfile {
   id: string;
   name: string;
   themeName: string;
+  presetId?: HudThemePresetId;
+  defaultFontFamily?: ChatFontId;
+  defaultTexture?: HudSurfaceTexture;
+  defaultOpacity?: number;
   widgets: HUDWidget[];
 }
 
@@ -2722,7 +2826,12 @@ export type ChatBubbleShape =
   | 'sharp'
   | 'thought'
   | 'shout'
-  | 'scroll';
+  | 'scroll'
+  | 'graphicNovel'
+  | 'glass3d'
+  | 'parchmentTorn'
+  | 'sciFiHolo'
+  | 'woodenPlaque';
 
 export type ChatBubbleTailStyle = 'pointer' | 'curved' | 'dots' | 'none';
 
@@ -2734,7 +2843,13 @@ export type ChatFontId =
   | 'comic'
   | 'handwritten'
   | 'pixel'
-  | 'mono';
+  | 'mono'
+  | 'cinzel'
+  | 'gothic'
+  | 'orbitron'
+  | 'arcade'
+  | 'garamond'
+  | 'tactical';
 
 export type ChatBubbleShadow = 'none' | 'soft' | 'hard' | 'glow';
 export type ChatBubbleAnim = 'pop' | 'float' | 'fade' | 'none';
@@ -2747,7 +2862,12 @@ export type ChatBubblePresetId =
   | 'thought'
   | 'shout'
   | 'sleekDark'
-  | 'neonTerminal';
+  | 'neonTerminal'
+  | 'graphicNovel'
+  | 'bubble3d'
+  | 'burnedScroll'
+  | 'woodenTavern'
+  | 'holoHud';
 
 export interface ChatBubbleStyle {
   presetId?: ChatBubblePresetId;
@@ -2757,9 +2877,9 @@ export interface ChatBubbleStyle {
   textColor: string;
   borderColor: string;
   speakerColor: string;
-  opacity: number; // 0.45..1.0
-  borderWidth: number; // 0..5
-  borderRadius: number; // 0..28
+  opacity: number; // 0.1..1.0 (supports ghost-back)
+  borderWidth: number; // 0..6
+  borderRadius: number; // 0..32
   shadowStyle: ChatBubbleShadow;
   fontFamily: ChatFontId;
   fontSize: number; // 11..22
@@ -2774,10 +2894,25 @@ export interface ChatBubbleStyle {
   floatHeight: number; // 0..2.2m extra Y above character head
   autoShowOnApproach: boolean;
   autoShowDistance: number; // 2.5..9.5m
+  // Material, organic edge wear, burns, tears & 3D extrusion
+  surfaceTexture?: HudSurfaceTexture;
+  edgeWear?: number; // 0..1
+  burnedEdges?: number; // 0..1
+  paperTears?: number; // 0..1
+  depth3d?: number; // 0..1
+  glowColor?: string;
+  rotationDeg?: number; // -8..8
 }
 
 export type ChatDisplayMode = 'bubbles' | 'bottomPanel';
-export type ChatPanelThemeId = 'classic' | 'parchment' | 'retro' | 'light';
+export type ChatPanelThemeId =
+  | 'classic'
+  | 'parchment'
+  | 'retro'
+  | 'light'
+  | 'sciFi'
+  | 'comic'
+  | 'wood';
 
 export type DialogueOutputMode = 'text' | 'audio' | 'both';
 
@@ -2797,12 +2932,18 @@ export interface ChatDisplaySettings {
   panelBgColor: string;
   panelBorderColor: string;
   panelTextColor: string;
-  panelOpacity: number; // 0.65..1.0
+  panelOpacity: number; // 0.15..1.0
   panelUseCharacterStyle: boolean;
   panelShowPortrait: boolean;
   panelShowHistory: boolean;
   panelPauseGame: boolean;
   panelCompact: boolean;
+  panelTexture?: HudSurfaceTexture;
+  panelShape?: HudWidgetShape;
+  panelEdgeWear?: number;
+  panelBurnedEdges?: number;
+  panelPaperTears?: number;
+  panelFontFamily?: ChatFontId;
 }
 
 export * from './inventory';

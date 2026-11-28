@@ -279,6 +279,27 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
   );
 
   if (!currentLevel || !currentProject) return null;
+
+  if (domain === 'atmosphere') {
+    return (
+      <aside
+        onPointerDownCapture={(e) =>
+          publishGuidanceFromControlEvent(e, controlHintBadge)
+        }
+        onFocusCapture={(e) =>
+          publishGuidanceFromControlEvent(e, controlHintBadge)
+        }
+        className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4"
+      >
+        <AtmosphereInspectorPanel
+          store={store}
+          section={atmosphereSection}
+          onAddVistaItem={onAddVistaItem}
+        />
+      </aside>
+    );
+  }
+
   const envType = getEnvironmentType(currentLevel);
 
   // --- WORLD MAP OVERVIEW INSPECTOR ---
@@ -4787,12 +4808,6 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
         })()
       ) : domain === 'platformerKit' ? (
         <PlatformerMovementInspector store={store} level={currentLevel} />
-      ) : domain === 'atmosphere' ? (
-        <AtmosphereInspectorPanel
-          store={store}
-          section={atmosphereSection}
-          onAddVistaItem={onAddVistaItem}
-        />
       ) : domain === 'particleFx' ? (
         (() => {
           const customCount = allFxTemplates.filter((t) => t.isCustom).length;

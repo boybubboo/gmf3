@@ -2102,6 +2102,7 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
 
         {/* CENTER HUGE 3D STAGE */}
         <main className="flex-1 min-w-0 h-[360px] sm:h-[420px] lg:h-auto lg:min-h-0 relative bg-[#111521]">
+          {!store.isPlaying && (
           <RigPreviewStage
             asset={stageAsset ?? selectedAsset}
             actorTarget={selectedActor.target}
@@ -2139,6 +2140,7 @@ export const MotionStage: React.FC<{ store: MakerStore }> = ({ store }) => {
               setRuntimeState({ actorId: activeActorKey, ...info });
             }}
           />
+          )}
 
           {/* Compact Top-Left Camera Controls + Orbit Lock for Touch */}
           <div className="absolute top-3 left-3 flex flex-wrap items-center gap-1 p-1 rounded-xl bg-[#171A23]/95 border border-white/[0.12] z-10">

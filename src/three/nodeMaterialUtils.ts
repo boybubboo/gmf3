@@ -572,22 +572,30 @@ export function buildWeatheringColorTsl(baseRgbNode: unknown) {
     const uWearFactor = safeMaterialReference('userData.uWearFactor', 'float', 0) as unknown as ReturnType<typeof float>;
 
     const baseRgb = vec3(baseRgbNode as THREE.Vector3);
-    const tinted = mix(baseRgb, baseRgb.mul(vec3(uTintColor)), clamp(uTintMix, 0.0, 1.0));
+    const colOut = mix(baseRgb, baseRgb.mul(vec3(uTintColor)), clamp(uTintMix, 0.0, 1.0)).toVar();
     const amt = clamp(uWeatherIntensity, 0.0, 1.0);
 
-    const weathered = applyDegradeLayersTsl(
-      tinted,
-      typeBandMask(uWeatherType, 1).mul(amt),
-      typeBandMask(uWeatherType, 4).mul(amt),
-      typeBandMask(uWeatherType, 5).mul(amt),
-      typeBandMask(uWeatherType, 6).mul(amt),
-      typeBandMask(uWeatherType, 7).mul(amt),
-      typeBandMask(uWeatherType, 2).mul(amt),
-      typeBandMask(uWeatherType, 8).mul(amt),
-      typeBandMask(uWeatherType, 9).mul(amt),
-      typeBandMask(uWeatherType, 3).mul(amt)
-    );
-    return applyWearDingsScratchesTsl(weathered, clamp(uWearFactor, 0.0, 1.0));
+    If(uWeatherType.greaterThan(0.5).and(amt.greaterThan(0.005)), () => {
+      colOut.assign(
+        applyDegradeLayersTsl(
+          colOut,
+          typeBandMask(uWeatherType, 1).mul(amt),
+          typeBandMask(uWeatherType, 4).mul(amt),
+          typeBandMask(uWeatherType, 5).mul(amt),
+          typeBandMask(uWeatherType, 6).mul(amt),
+          typeBandMask(uWeatherType, 7).mul(amt),
+          typeBandMask(uWeatherType, 2).mul(amt),
+          typeBandMask(uWeatherType, 8).mul(amt),
+          typeBandMask(uWeatherType, 9).mul(amt),
+          typeBandMask(uWeatherType, 3).mul(amt)
+        )
+      );
+    });
+    const wear = clamp(uWearFactor, 0.0, 1.0);
+    If(wear.greaterThan(0.005), () => {
+      colOut.assign(applyWearDingsScratchesTsl(colOut, wear));
+    });
+    return colOut;
   })();
 }
 
@@ -597,19 +605,24 @@ export function buildWeatheringRoughnessTsl() {
     const uWeatherIntensity = safeMaterialReference('userData.uWeatherIntensity', 'float', 0) as unknown as ReturnType<typeof float>;
     const uWearFactor = safeMaterialReference('userData.uWearFactor', 'float', 0) as unknown as ReturnType<typeof float>;
     const amt = clamp(uWeatherIntensity, 0.0, 1.0);
+    const degR = materialRoughness.toVar();
 
-    const degR = applyDegradeRoughnessTsl(
-      materialRoughness,
-      typeBandMask(uWeatherType, 1).mul(amt),
-      typeBandMask(uWeatherType, 4).mul(amt),
-      typeBandMask(uWeatherType, 5).mul(amt),
-      typeBandMask(uWeatherType, 6).mul(amt),
-      typeBandMask(uWeatherType, 7).mul(amt),
-      typeBandMask(uWeatherType, 2).mul(amt),
-      typeBandMask(uWeatherType, 8).mul(amt),
-      typeBandMask(uWeatherType, 9).mul(amt),
-      typeBandMask(uWeatherType, 3).mul(amt)
-    );
+    If(uWeatherType.greaterThan(0.5).and(amt.greaterThan(0.005)), () => {
+      degR.assign(
+        applyDegradeRoughnessTsl(
+          degR,
+          typeBandMask(uWeatherType, 1).mul(amt),
+          typeBandMask(uWeatherType, 4).mul(amt),
+          typeBandMask(uWeatherType, 5).mul(amt),
+          typeBandMask(uWeatherType, 6).mul(amt),
+          typeBandMask(uWeatherType, 7).mul(amt),
+          typeBandMask(uWeatherType, 2).mul(amt),
+          typeBandMask(uWeatherType, 8).mul(amt),
+          typeBandMask(uWeatherType, 9).mul(amt),
+          typeBandMask(uWeatherType, 3).mul(amt)
+        )
+      );
+    });
     return mix(degR, max(degR, 0.94), clamp(uWearFactor.mul(0.8), 0.0, 1.0));
   })();
 }

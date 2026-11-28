@@ -1942,6 +1942,7 @@ function buildConformalStubbleMesh(
   tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.magFilter = THREE.LinearFilter;
+  tex.userData.ownedByMaterial = true;
   tex.needsUpdate = true;
 
   const geo = new THREE.BufferGeometry();

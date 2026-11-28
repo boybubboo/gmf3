@@ -2,7 +2,6 @@ export * from '../features/world/environment/islandAtmosphere';
 import * as THREE from 'three';
 import {
   MeshBasicNodeMaterial,
-  MeshPhysicalNodeMaterial,
   MeshStandardNodeMaterial,
   MeshToonNodeMaterial,
   PMREMGenerator,
@@ -19,6 +18,8 @@ import {
   clamp,
   cos,
   cross,
+  dFdx,
+  dFdy,
   dot,
   exp,
   float,
@@ -26,7 +27,6 @@ import {
   fract,
   length,
   materialColor,
-  materialDiffuseRoughness,
   materialOpacity,
   materialRoughness,
   max,
@@ -53,6 +53,7 @@ import {
   vec4,
 } from 'three/tsl';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   applyDegradeLayersTsl,
   applyDegradeRoughnessTsl,
@@ -314,6 +315,7 @@ export interface IslandSceneHandles {
   grassSystem?: StylizedGrassSystem;
   waterDepthTex?: THREE.DataTexture;
   waterDepthTexData?: Float32Array;
+  waterDepthTexHalfData?: Uint16Array;
   waterDepthTexSize?: number;
   pendingFoliagePromise?: Promise<void>;
   updateMountainUniforms?: (cfg?: MountainProfileConfig) => void;
@@ -355,14 +357,16 @@ export function computeEffectivePixelRatio(
 ): number {
   if (isSoftwareGl) return 1;
   const isIOS = isIOSDevice();
-  const rawDpr = isIOS ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
+  const rawDpr = isIOS
+    ? 1
+    : Math.min(window.devicePixelRatio || 1, resolutionScale <= 1 ? 1.25 : 1.5);
   let targetPr = rawDpr * (isIOS ? Math.min(resolutionScale, 1) : resolutionScale);
-  // Cap total rasterized pixel count around ~2.3M pixels on desktop (900k on iOS) when scale <= 1
+  // Cap total rasterized pixel count around ~1.05M pixels on desktop (850k on iOS) when scale <= 1 for locked 60 FPS
   if (resolutionScale <= 1 || isIOS) {
-    const maxPixels = isIOS ? 900_000 : 2_300_000;
+    const maxPixels = isIOS ? 850_000 : 1_050_000;
     const area = Math.max(1, width * height);
     const maxBudgetPr = Math.sqrt(maxPixels / area);
-    targetPr = Math.min(targetPr, Math.max(isIOS ? 0.65 : 0.75, maxBudgetPr));
+    targetPr = Math.min(targetPr, Math.max(isIOS ? 0.65 : 0.72, maxBudgetPr));
   }
   return THREE.MathUtils.clamp(targetPr, 0.5, isIOS ? 1 : 2.25);
 }
@@ -504,7 +508,7 @@ export function applyLiveRendererQuality(
   if (shadowLight) {
     shadowLight.castShadow = shadowsActive;
     const baseRes =
-      shadowQuality === 'high' ? 2048 : shadowQuality === 'low' ? 512 : 1024;
+      shadowQuality === 'high' ? 1536 : shadowQuality === 'low' ? 512 : 768;
     const targetRes = isIOSDevice() ? Math.min(baseRes, 512) : baseRes;
     if (
       shadowLight.shadow.mapSize.x !== targetRes ||
@@ -514,6 +518,18 @@ export function applyLiveRendererQuality(
       if (shadowLight.shadow.map) {
         shadowLight.shadow.map.dispose();
         shadowLight.shadow.map = null;
+      }
+      const csmNode = (shadowLight.shadow as unknown as {
+        shadowNode?: { lights?: THREE.DirectionalLight[] };
+      }).shadowNode;
+      if (csmNode?.lights) {
+        for (const lw of csmNode.lights) {
+          if (lw.shadow) {
+            lw.shadow.mapSize.set(targetRes, targetRes);
+            lw.shadow.map?.dispose();
+            lw.shadow.map = null;
+          }
+        }
       }
       shadowLight.shadow.needsUpdate = true;
     }
@@ -779,6 +795,11 @@ export function computeAtmosphereState(level: GameLevel, overrideTime?: number):
   });
 }
 
+const _atmoMoonDir = new THREE.Vector3();
+const _atmoCloudTint = new THREE.Color();
+const _atmoNightCloudCol = new THREE.Color('#475A7E');
+const _atmoStormCloudCol = new THREE.Color('#49556B');
+
 export function applyAtmosphere(
   scene: THREE.Scene,
   sunLight: THREE.DirectionalLight,
@@ -831,11 +852,14 @@ export function applyAtmosphere(
   const moonGlow = THREE.MathUtils.clamp(level.moonGlow ?? 0.95, 0, 2.0);
   const moonAzRad = ((level.moonAngle ?? 215) * Math.PI) / 180;
   const moonElRad = (THREE.MathUtils.clamp(level.moonElevation ?? 34, 5, 82) * Math.PI) / 180;
-  const moonDir = new THREE.Vector3(
-    Math.cos(moonAzRad) * Math.cos(moonElRad),
-    Math.sin(moonElRad),
-    Math.sin(moonAzRad) * Math.cos(moonElRad)
-  ).normalize();
+  _atmoMoonDir
+    .set(
+      Math.cos(moonAzRad) * Math.cos(moonElRad),
+      Math.sin(moonElRad),
+      Math.sin(moonAzRad) * Math.cos(moonElRad)
+    )
+    .normalize();
+  const moonDir = _atmoMoonDir;
 
   const starScale = THREE.MathUtils.clamp(level.starIntensity ?? 1, 0, 1.5);
   const starDensity = THREE.MathUtils.clamp(level.starDensity ?? 0.85, 0.1, 1.5);
@@ -917,15 +941,17 @@ export function applyAtmosphere(
         : 0.99) * goldenScale;
   }
 
-  const cloudTint = new THREE.Color('#F5EDE4')
+  _atmoCloudTint
+    .set('#F5EDE4')
     .lerp(atmo.horizonColor, atmo.warmGlow * 0.42)
     .lerp(atmo.sunColor, 0.22);
   if (atmo.nightFactor > 0) {
-    cloudTint.lerp(new THREE.Color('#475A7E'), atmo.nightFactor * 0.72);
+    _atmoCloudTint.lerp(_atmoNightCloudCol, atmo.nightFactor * 0.72);
   }
   if (stormFactor > 0.01) {
-    cloudTint.lerp(new THREE.Color('#49556B'), stormFactor * 0.78);
+    _atmoCloudTint.lerp(_atmoStormCloudCol, stormFactor * 0.78);
   }
+  const cloudTint = _atmoCloudTint;
 
   // Persist live motion & storm parameters on scene.userData for zero-alloc per-frame updates
   scene.userData.__makerCloudSpeed = cloudSpeed;
@@ -1051,10 +1077,19 @@ export function applyAtmosphere(
       env !== 'sideScroller' &&
       cloudDensity > 0.015 &&
       cloudOpacity > 0.015;
-    const cloudMat = clouds.userData?.material as MeshStandardNodeMaterial | undefined;
-    if (cloudMat) {
-      cloudMat.color.copy(cloudTint);
-      cloudMat.emissive.copy(atmo.horizonColor).multiplyScalar(atmo.warmGlow * 0.22);
+    const cloudU = clouds.userData?.cloudUniforms as
+      | {
+          uCloudColor: { value: THREE.Color };
+          uEmissiveColor: { value: THREE.Color };
+          uEmissiveIntensity: { value: number };
+          uSoftness: { value: number };
+          uOpacity: { value: number };
+          uStorm: { value: number };
+        }
+      | undefined;
+    if (cloudU) {
+      cloudU.uCloudColor.value.copy(cloudTint);
+      cloudU.uEmissiveColor.value.copy(atmo.horizonColor).multiplyScalar(atmo.warmGlow * 0.22);
       const baseEmissiveIntensity =
         stormFactor > 0.2
           ? 0.05
@@ -1063,21 +1098,15 @@ export function applyAtmosphere(
           : atmo.warmGlow > 0.4
           ? 0.44
           : 0.14;
-      cloudMat.emissiveIntensity = baseEmissiveIntensity;
+      cloudU.uEmissiveIntensity.value = baseEmissiveIntensity;
       clouds.userData.baseEmissiveIntensity = baseEmissiveIntensity;
-      clouds.userData.baseEmissiveColor = cloudMat.emissive.clone();
-      const cloudU = clouds.userData?.cloudUniforms as
-        | {
-            uSoftness: { value: number };
-            uOpacity: { value: number };
-            uStorm: { value: number };
-          }
-        | undefined;
-      if (cloudU) {
-        cloudU.uSoftness.value = cloudSoftness;
-        cloudU.uOpacity.value = cloudOpacity;
-        cloudU.uStorm.value = stormFactor;
+      if (!(clouds.userData.baseEmissiveColor instanceof THREE.Color)) {
+        clouds.userData.baseEmissiveColor = new THREE.Color();
       }
+      (clouds.userData.baseEmissiveColor as THREE.Color).copy(cloudU.uEmissiveColor.value);
+      cloudU.uSoftness.value = cloudSoftness;
+      cloudU.uOpacity.value = cloudOpacity;
+      cloudU.uStorm.value = stormFactor;
     }
     const qualityTier = (scene.userData.__makerTerrainQuality as TerrainQualityTier | undefined) ?? 'balanced';
     const maxBand = qualityTier === 'performance' ? 0 : qualityTier === 'balanced' ? 1 : 2;
@@ -1171,8 +1200,13 @@ function getSharedStarSpriteTexture(): THREE.CanvasTexture | null {
   return tex;
 }
 
-function createFacetedCloudMesh(mat: THREE.Material, variant = 0): THREE.Group {
-  const cloud = new THREE.Group();
+const _sharedMergedCloudGeos: (THREE.BufferGeometry | null)[] = [null, null, null];
+
+function getSharedMergedCloudGeometry(variant = 0): THREE.BufferGeometry {
+  const idx = Math.abs(variant) % 3;
+  const cached = _sharedMergedCloudGeos[idx];
+  if (cached) return cached;
+
   const puffLayouts: [number, number, number, number, number, number, number][][] = [
     [
       [0, 0.25, 0, 2.35, 1.35, 0.74, 1.08],
@@ -1180,8 +1214,6 @@ function createFacetedCloudMesh(mat: THREE.Material, variant = 0): THREE.Group {
       [2.25, -0.1, -0.25, 1.75, 1.2, 0.7, 1.0],
       [-0.85, 0.95, 0.18, 1.55, 1.05, 0.88, 0.95],
       [1.05, 0.82, -0.15, 1.45, 1.0, 0.84, 0.92],
-      [0.2, 0.1, 1.25, 1.4, 1.1, 0.68, 0.92],
-      [-0.25, 0.05, -1.2, 1.35, 1.05, 0.66, 0.9],
     ],
     [
       [0, 0.15, 0, 2.55, 1.45, 0.7, 1.05],
@@ -1189,27 +1221,48 @@ function createFacetedCloudMesh(mat: THREE.Material, variant = 0): THREE.Group {
       [2.4, -0.18, 0.3, 1.65, 1.12, 0.66, 0.94],
       [0.35, 1.08, 0.1, 1.68, 1.08, 0.9, 0.98],
       [-1.15, 0.72, -0.22, 1.38, 1.0, 0.82, 0.9],
-      [1.35, 0.58, 0.18, 1.3, 1.0, 0.78, 0.92],
     ],
     [
       [-0.4, 0.18, 0, 2.15, 1.25, 0.72, 1.0],
       [1.55, 0.08, 0.25, 1.88, 1.18, 0.7, 0.96],
       [-2.15, -0.2, 0.2, 1.35, 1.08, 0.64, 0.88],
       [0.55, 0.92, -0.12, 1.48, 1.02, 0.88, 0.94],
-      [-1.05, 0.72, 0.18, 1.28, 0.96, 0.82, 0.9],
     ],
   ];
 
   const unitGeo = getSharedSoftCloudPuffGeometry();
-  const layout = puffLayouts[Math.abs(variant) % puffLayouts.length];
+  const layout = puffLayouts[idx];
+  const parts: THREE.BufferGeometry[] = [];
+  const mat4 = new THREE.Matrix4();
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const euler = new THREE.Euler();
+  const scl = new THREE.Vector3();
+
   for (let i = 0; i < layout.length; i++) {
     const [px, py, pz, r, sx, sy, sz] = layout[i];
-    const puff = new THREE.Mesh(unitGeo, mat);
-    puff.position.set(px, py, pz);
-    puff.scale.set(r * sx, r * sy, r * sz);
-    puff.rotation.set(((i * 0.7 + variant) % 1) * 0.45, (i * 1.1 + variant) % Math.PI, 0);
-    cloud.add(puff);
+    const g = unitGeo.clone();
+    pos.set(px, py, pz);
+    euler.set(((i * 0.7 + idx) % 1) * 0.45, (i * 1.1 + idx) % Math.PI, 0);
+    quat.setFromEuler(euler);
+    scl.set(r * sx, r * sy, r * sz);
+    mat4.compose(pos, quat, scl);
+    g.applyMatrix4(mat4);
+    parts.push(g);
   }
+
+  const merged = mergeGeometries(parts, false) ?? unitGeo.clone();
+  for (const p of parts) p.dispose();
+  merged.computeBoundingSphere();
+  _sharedMergedCloudGeos[idx] = merged;
+  return merged;
+}
+
+function createFacetedCloudMesh(mat: THREE.Material, variant = 0): THREE.Mesh {
+  const cloud = new THREE.Mesh(getSharedMergedCloudGeometry(variant), mat);
+  cloud.castShadow = false;
+  cloud.receiveShadow = false;
+  cloud.userData.skipBotwStyle = true;
   return cloud;
 }
 
@@ -1301,20 +1354,25 @@ export function updateSkyClouds(scene: THREE.Scene, elapsed: number, wind = 0.3)
   }
   if (!clouds || !clouds.visible) return;
 
-  const cloudU = clouds.userData?.cloudUniforms as { uTime?: { value: number } } | undefined;
+  const cloudU = clouds.userData?.cloudUniforms as
+    | {
+        uTime?: { value: number };
+        uEmissiveColor?: { value: THREE.Color };
+        uEmissiveIntensity?: { value: number };
+      }
+    | undefined;
   if (cloudU?.uTime) {
     cloudU.uTime.value = elapsed * (0.4 + wind * 0.7) * Math.max(0.1, cloudSpeedMult);
   }
-  const cloudMat = clouds.userData?.material as MeshStandardNodeMaterial | undefined;
-  if (cloudMat) {
+  if (cloudU?.uEmissiveColor && cloudU?.uEmissiveIntensity) {
     const baseEmInt = (clouds.userData.baseEmissiveIntensity as number | undefined) ?? 0.14;
     const baseEmCol = clouds.userData.baseEmissiveColor as THREE.Color | undefined;
     if (flash > 0.02) {
-      cloudMat.emissive.copy(_lightningColor);
-      cloudMat.emissiveIntensity = baseEmInt + flash * 0.55 * stormFactor;
+      cloudU.uEmissiveColor.value.copy(_lightningColor);
+      cloudU.uEmissiveIntensity.value = baseEmInt + flash * 0.55 * stormFactor;
     } else if (baseEmCol) {
-      cloudMat.emissive.copy(baseEmCol);
-      cloudMat.emissiveIntensity = baseEmInt;
+      cloudU.uEmissiveColor.value.copy(baseEmCol);
+      cloudU.uEmissiveIntensity.value = baseEmInt;
     }
   }
 
@@ -1371,8 +1429,8 @@ const skyValueNoiseTsl = Fn(([p]: [any]) => {
   const pv = vec2(p);
   const i = floor(pv);
   const fRaw = fract(pv);
-  // Quintic smoothstep for artifact-free high-res cloud gradients
-  const f = vec2(fRaw.mul(fRaw).mul(fRaw).mul(fRaw.mul(fRaw.mul(6.0).sub(15.0)).add(10.0)));
+  // Fast cubic Hermite smoothstep for smooth sky cloud gradients
+  const f = fRaw.mul(fRaw).mul(vec2(3.0, 3.0).sub(fRaw.mul(2.0)));
   const a = skyHash21Tsl(i);
   const b = skyHash21Tsl(i.add(vec2(1.0, 0.0)));
   const c = skyHash21Tsl(i.add(vec2(0.0, 1.0)));
@@ -1382,15 +1440,15 @@ const skyValueNoiseTsl = Fn(([p]: [any]) => {
 
 const skyFbmCloudTsl = Fn(([pIn]: [any]) => {
   const v = float(0.0).toVar();
-  const amp = float(0.50).toVar();
+  const amp = float(0.54).toVar();
   const p = vec2(pIn).toVar();
-  Loop(5, () => {
+  Loop(3, () => {
     v.addAssign(amp.mul(skyValueNoiseTsl(p)));
     const nextP = vec2(p.x.mul(0.8).sub(p.y.mul(0.6)), p.x.mul(0.6).add(p.y.mul(0.8)))
       .mul(2.04)
       .add(vec2(1.7, 9.2));
     p.assign(nextP);
-    amp.mulAssign(0.48);
+    amp.mulAssign(0.46);
   });
   return v;
 });
@@ -1594,37 +1652,25 @@ export function ensureSkyDome(scene: THREE.Scene, radiusScale = 1.0) {
           const skyUV = vec2(dir.x, dir.z).div(dir.y.add(heightProj)).mul(uvScale);
           const drift = vec2(uTime.mul(0.024), uTime.mul(0.011));
 
-          // Domain warp for silky, organic high-res cloud edges
-          const warpN = skyValueNoiseTsl(skyUV.mul(1.6).add(drift.mul(0.8)));
-          const warpedUV = skyUV.add(vec2(warpN.sub(0.5), warpN.mul(0.7).sub(0.35)).mul(mix(0.18, 0.52, uCloudSoftness)));
+          // Domain warp for silky, organic cloud edges (single warp + 3-oct FBM + wisp + sun shadow = ~5.5x faster)
+          const warpN = skyValueNoiseTsl(skyUV.mul(1.5).add(drift.mul(0.8)));
+          const warpedUV = skyUV.add(vec2(warpN.sub(0.5), warpN.mul(0.7).sub(0.35)).mul(mix(0.18, 0.48, uCloudSoftness)));
 
           const n1 = skyFbmCloudTsl(warpedUV.add(drift));
-          const n2 = skyFbmCloudTsl(warpedUV.mul(2.25).sub(drift.mul(1.38)));
-          const rawCloud = n1.mul(0.64).add(n2.mul(0.36)).toVar();
+          const n2 = skyValueNoiseTsl(warpedUV.mul(2.25).sub(drift.mul(1.38)));
+          const rawCloud = n1.mul(0.72).add(n2.mul(0.28)).toVar();
           const sunOffset = vec2(sunDirN.x, sunDirN.z).mul(0.16);
           const opticalThickness = float(0.45).toVar();
 
           If(sharedAtmoU.uCloudDetailLevel.greaterThan(0.55), () => {
-            const shadowSample1 = skyFbmCloudTsl(warpedUV.add(drift).add(sunOffset.mul(0.55)));
-            const shadowSample2 = skyFbmCloudTsl(warpedUV.add(drift).add(sunOffset.mul(1.25)));
-            const wispDeck = skyFbmCloudTsl(
-              warpedUV.mul(1.35).add(drift.mul(1.55)).add(vec2(14.2, 6.7))
-            );
-            rawCloud.assign(mix(rawCloud, max(rawCloud, wispDeck.mul(0.94)), 0.38));
+            const shadowSample = skyValueNoiseTsl(warpedUV.add(drift).add(sunOffset.mul(0.95)));
             opticalThickness.assign(
               clamp(
-                shadowSample1.mul(0.55).add(shadowSample2.mul(0.45)).sub(rawCloud.mul(0.35)),
+                shadowSample.mul(0.92).sub(rawCloud.mul(0.32)),
                 0.0,
                 1.2
               )
             );
-
-            If(sharedAtmoU.uCloudDetailLevel.greaterThan(0.9), () => {
-              const upperDeck = skyFbmCloudTsl(
-                warpedUV.mul(0.82).add(drift.mul(0.72)).sub(sunOffset.mul(1.35))
-              );
-              rawCloud.assign(max(rawCloud, upperDeck.mul(0.86)));
-            });
           });
 
           const threshold = mix(0.82, 0.25, uCloudDensity);
@@ -1776,34 +1822,58 @@ export function ensureSkyDome(scene: THREE.Scene, radiusScale = 1.0) {
   if (!scene.userData.__makerClouds && !scene.getObjectByName('maker-clouds')) {
     const cloudsGroup = new THREE.Group();
     cloudsGroup.name = 'maker-clouds';
+    const uCloudColor = uniform(new THREE.Color('#FFFFFF'));
+    const uEmissiveColor = uniform(new THREE.Color('#000000'));
+    const uEmissiveIntensity = uniform(0.14);
     const uSoftness = uniform(0.68);
     const uOpacity = uniform(0.88);
     const uStorm = uniform(0.0);
     const uCloudTime = uniform(0.0);
+    const botwU = getSharedBotwUniforms();
 
-    const cloudMat = new MeshStandardNodeMaterial({
+    // Lightweight analytically sun-lit MeshBasicNodeMaterial (skips PBR shadow-map sampling & CSM overhead on 3D sky clouds)
+    const cloudMat = new MeshBasicNodeMaterial({
       color: '#FFFFFF',
-      roughness: 0.94,
-      metalness: 0.0,
-      flatShading: false,
       transparent: true,
       depthWrite: false,
       side: THREE.FrontSide,
+      toneMapped: true,
+      fog: true,
     });
-    attachBotwPainterlyShader(cloudMat, { rimStrengthScale: 0.82, shadowLiftScale: 0.68 });
+    cloudMat.userData.botwPatched = true;
 
-    // Soft Fresnel + organic world-space wispy edge feathering for high-res fluffy/storm clouds
+    cloudMat.colorNode = Fn(() => {
+      const nW = normalize(normalWorld);
+      const sunN = normalize(botwU.uSunDir);
+      const sunWrap = clamp(dot(nW, sunN).mul(0.55).add(0.58), 0.18, 1.08);
+      const topLift = smoothstep(-0.35, 0.75, nW.y);
+      const cloudCol = uCloudColor.rgb;
+      const shadowTint = mix(botwU.uShadowCoolColor.rgb, vec3(0.76, 0.84, 0.94), 0.55);
+      const litBase = mix(
+        cloudCol.mul(shadowTint).mul(0.88),
+        cloudCol.mul(1.06),
+        sunWrap.mul(0.72).add(topLift.mul(0.28))
+      );
+      const viewDir = normalize(cameraPosition.sub(positionWorld).add(vec3(0.0001)));
+      const rim = pow(float(1.0).sub(clamp(abs(dot(nW, viewDir)), 0.0, 1.0)), 2.6)
+        .mul(topLift)
+        .mul(botwU.uSunColor.rgb)
+        .mul(0.22);
+      const stormUnder = mix(vec3(1.0), vec3(0.68, 0.72, 0.82), uStorm.mul(float(1.0).sub(topLift)).mul(0.65));
+      return litBase.mul(stormUnder).add(rim).add(uEmissiveColor.rgb.mul(uEmissiveIntensity));
+    })();
+
+    // Soft Fresnel + fast analytic wispy edge feathering for fluffy/storm clouds
     cloudMat.opacityNode = Fn(() => {
       const viewDir = normalize(cameraPosition.sub(positionWorld).add(vec3(0.0001)));
       const ndv = clamp(abs(dot(normalize(normalWorld), viewDir)), 0.0, 1.0);
       const softPow = mix(float(0.18), float(2.35), uSoftness);
       const edgeFeather = pow(ndv, softPow);
-      const wispNoise = skyValueNoiseTsl(
-        positionWorld.xz.mul(0.075).add(vec2(uCloudTime.mul(0.05), positionWorld.y.mul(0.06)))
-      );
+      const wP = positionWorld.xz.mul(0.22).add(vec2(uCloudTime.mul(0.15), positionWorld.y.mul(0.18)));
+      const wispWave = sin(wP.x.add(cos(wP.y.mul(1.3)).mul(0.9))).mul(cos(wP.y.sub(wP.x.mul(0.6)))).mul(0.5).add(0.5);
       const wispyMask = mix(
         float(1.0),
-        smoothstep(0.12, 0.84, wispNoise.mul(0.55).add(ndv.mul(0.68))),
+        smoothstep(0.12, 0.84, wispWave.mul(0.55).add(ndv.mul(0.68))),
         uSoftness.mul(0.85)
       );
       const stormThickness = mix(float(1.0), float(1.18), uStorm);
@@ -1813,13 +1883,16 @@ export function ensureSkyDome(scene: THREE.Scene, radiusScale = 1.0) {
     cloudsGroup.userData.material = cloudMat;
     cloudsGroup.userData.radiusScale = radiusScale;
     cloudsGroup.userData.cloudUniforms = {
+      uCloudColor,
+      uEmissiveColor,
+      uEmissiveIntensity,
       uSoftness,
       uOpacity,
       uStorm,
       uTime: uCloudTime,
     };
 
-    const totalClouds = 48;
+    const totalClouds = 36;
     for (let i = 0; i < totalClouds; i++) {
       const baseAngle = (i / totalClouds) * Math.PI * 2 + (i % 3) * 0.11;
       const band = i % 3;
@@ -1946,37 +2019,35 @@ function createWaterSurfaceNodes(params: WaterSurfaceNodesParams) {
 
   const positionNode = vec3(positionLocal.x, positionLocal.y.add(wv1).add(wv2), positionLocal.z);
 
-  const computeWaveNormalWorld = (wpXZ: any, tVal: any) => {
+  const computeWaveNormalWorld = (wpXZ: any, tVal: any, withCapillary: boolean) => {
     const flowP = wpXZ.sub(flowVecNode.mul(tVal.mul(0.85)));
-    const detailGain = mix(0.52, 1.15, sharedU.uWaterDetailLevel);
+    const detailGain = mix(0.52, 1.12, sharedU.uWaterDetailLevel);
     const slopeScale = float(0.42).add(windRippleNode.mul(0.88)).mul(detailGain);
 
     const ph1 = flowP.x.mul(0.34).add(flowP.y.mul(0.21)).add(tVal.mul(waveSpeedNode.mul(1.45).add(0.45)));
     const c1 = cos(ph1);
-    const dx1 = c1.mul(0.024);
-    const dz1 = c1.mul(0.015);
+    const dx1 = c1.mul(0.025);
+    const dz1 = c1.mul(0.016);
 
     const ph2 = flowP.x.mul(-0.27).add(flowP.y.mul(0.39)).sub(tVal.mul(waveSpeedNode.mul(1.18).add(0.35)));
     const c2 = cos(ph2);
-    const dx2 = c2.mul(-0.018);
-    const dz2 = c2.mul(0.026);
+    const dx2 = c2.mul(-0.019);
+    const dz2 = c2.mul(0.027);
 
-    const ph3 = flowP.x.mul(0.88).sub(flowP.y.mul(0.62)).add(tVal.mul(waveSpeedNode.mul(2.15).add(0.75)));
+    const ph3 = flowP.x.mul(0.92).sub(flowP.y.mul(0.68)).add(tVal.mul(waveSpeedNode.mul(2.2).add(0.75)));
     const c3 = cos(ph3);
-    const dx3 = c3.mul(0.022).mul(sharedU.uWaterDetailLevel);
-    const dz3 = c3.mul(-0.016).mul(sharedU.uWaterDetailLevel);
+    const dx3 = c3.mul(0.024).mul(sharedU.uWaterDetailLevel);
+    const dz3 = c3.mul(-0.018).mul(sharedU.uWaterDetailLevel);
 
-    const ph4 = flowP.x.mul(-1.32).sub(flowP.y.mul(1.08)).sub(tVal.mul(waveSpeedNode.mul(2.65).add(0.95)));
-    const c4 = cos(ph4);
-    const dx4 = c4.mul(-0.017).mul(smoothstep(0.3, 0.95, sharedU.uWaterDetailLevel));
-    const dz4 = c4.mul(-0.014).mul(smoothstep(0.3, 0.95, sharedU.uWaterDetailLevel));
-
-    const dHx = dx1.add(dx2).add(dx3).add(dx4).mul(slopeScale);
-    const dHz = dz1.add(dz2).add(dz3).add(dz4).mul(slopeScale);
-    // Close-up capillary wind micro-ripples (fade cleanly beyond 42m to prevent far aliasing)
+    const dHx = dx1.add(dx2).add(dx3).mul(slopeScale);
+    const dHz = dz1.add(dz2).add(dz3).mul(slopeScale);
+    if (!withCapillary) {
+      return normalize(vec3(dHx.negate(), float(1.0), dHz.negate()));
+    }
+    // Close-up capillary wind micro-ripples (fade cleanly beyond 38m)
     const camDistXZ = length(vec2(cameraPosition.x, cameraPosition.z).sub(wpXZ));
     const closeCapillaryFade = float(1.0)
-      .sub(smoothstep(10.0, 44.0, camDistXZ))
+      .sub(smoothstep(10.0, 38.0, camDistXZ))
       .mul(smoothstep(0.25, 0.8, sharedU.uWaterDetailLevel));
     const capUv = wpXZ.mul(2.35).sub(flowVecNode.mul(timeNode.mul(1.85)));
     const capX = cos(capUv.x.mul(1.7).add(sin(capUv.y.mul(1.4)).mul(0.8)).add(timeNode.mul(2.8)))
@@ -1988,10 +2059,13 @@ function createWaterSurfaceNodes(params: WaterSurfaceNodesParams) {
     return normalize(vec3(dHx.add(capX).negate(), float(1.0), dHz.add(capZ).negate()));
   };
 
-  const normalNode = Fn(() => {
-    const wpXZ = vec2(positionWorld.x, positionWorld.z);
-    return transformNormalToView(computeWaveNormalWorld(wpXZ, timeNode));
-  })();
+  const sharedWaveNormalWorld = computeWaveNormalWorld(
+    vec2(positionWorld.x, positionWorld.z),
+    timeNode,
+    false
+  );
+
+  const normalNode = transformNormalToView(sharedWaveNormalWorld);
 
   const colorNode = Fn(() => {
     const wp = positionWorld;
@@ -2000,15 +2074,13 @@ function createWaterSurfaceNodes(params: WaterSurfaceNodesParams) {
     const meshDiameterNode = float(terrainWorldRadius * 2.0);
     const terrainUv = wpXZ.add(meshRadiusNode).div(meshDiameterNode);
 
+    // Single-tap hardware bilinear lookup on HalfFloat waterDepthTex (4x fewer fetches than manual 4-tap)
     const texRes = float(waterDepthTexSize);
-    const texPos = clamp(terrainUv, vec2(0.0), vec2(1.0)).mul(texRes.sub(1.0));
-    const f = fract(texPos);
-    const baseCell = floor(texPos);
-    const h00 = texture(waterDepthTex, baseCell.add(0.5).div(texRes)).r;
-    const h10 = texture(waterDepthTex, baseCell.add(vec2(1.0, 0.0)).add(0.5).div(texRes)).r;
-    const h01 = texture(waterDepthTex, baseCell.add(vec2(0.0, 1.0)).add(0.5).div(texRes)).r;
-    const h11 = texture(waterDepthTex, baseCell.add(vec2(1.0, 1.0)).add(0.5).div(texRes)).r;
-    const sampledTerrainY = mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
+    const depthUv = clamp(terrainUv, vec2(0.0), vec2(1.0))
+      .mul(texRes.sub(1.0))
+      .add(0.5)
+      .div(texRes);
+    const sampledTerrainY = texture(waterDepthTex, depthUv).r;
 
     let terrainY = sampledTerrainY;
     if (boundsFade) {
@@ -2036,35 +2108,42 @@ function createWaterSurfaceNodes(params: WaterSurfaceNodesParams) {
       smoothstep(0.05, 0.42, depthNorm)
     );
 
-    // 2. Flowing current streaks & shallow-bed solar caustics (quality-adaptive)
+    // 2. Flowing current streaks (zero-hash analytic wave) & branch-gated shallow-bed solar caustics
     const flowShift = flowVecNode.mul(timeNode.mul(1.12));
     const rippleUv = wpXZ.mul(0.34).sub(flowShift);
     const flowStrength = length(flowVecNode);
-    const flowStreak = smoothstep(0.54, 0.88, tFbm2DTsl(rippleUv))
+    const flowWave = sin(rippleUv.x.mul(2.1).add(cos(rippleUv.y.mul(1.65)).mul(0.85)))
+      .mul(cos(rippleUv.y.mul(1.85).sub(rippleUv.x.mul(0.65))))
+      .mul(0.5)
+      .add(0.5);
+    const flowStreak = smoothstep(0.52, 0.88, flowWave)
       .mul(float(0.08).add(min(float(0.22), flowStrength.mul(0.14))))
       .mul(float(0.55).add(windRippleNode.mul(0.45)));
 
-    const cUv1 = wpXZ.mul(0.62).sub(flowShift.mul(0.9)).add(vec2(timeNode.mul(0.18), timeNode.mul(-0.14)));
-    const cUv2 = wpXZ.mul(0.79).sub(flowShift.mul(1.15)).add(vec2(timeNode.mul(-0.16), timeNode.mul(0.2)));
-    const ca1 = abs(
-      sin(cUv1.x.add(sin(cUv1.y.mul(1.3)).mul(0.65))).mul(
-        sin(cUv1.y.add(cos(cUv1.x.mul(1.15)).mul(0.65)))
-      )
-    );
-    const ca2 = abs(
-      sin(cUv2.x.mul(1.27).sub(cos(cUv2.y.mul(1.35)).mul(0.55))).mul(
-        sin(cUv2.y.mul(1.19).add(sin(cUv2.x.mul(1.22)).mul(0.55)))
-      )
-    );
-    const causticRidge = pow(float(1.0).sub(clamp(min(ca1, ca2), 0.0, 1.0)), 4.6);
-    const causticMask = exp(waterDepth.negate().mul(0.42))
-      .mul(smoothstep(0.04, 0.24, waterDepth))
-      .mul(float(1.0).sub(sharedU.uNightFactor.mul(0.8)))
-      .mul(smoothstep(0.32, 0.78, sharedU.uWaterDetailLevel));
-    const causticLight = sharedU.uSunColor.mul(causticRidge).mul(causticMask).mul(0.34);
+    const causticLight = vec3(0.0).toVar();
+    If(waterDepth.lessThan(4.6).and(sharedU.uWaterDetailLevel.greaterThan(0.32)), () => {
+      const cUv1 = wpXZ.mul(0.62).sub(flowShift.mul(0.9)).add(vec2(timeNode.mul(0.18), timeNode.mul(-0.14)));
+      const cUv2 = wpXZ.mul(0.79).sub(flowShift.mul(1.15)).add(vec2(timeNode.mul(-0.16), timeNode.mul(0.2)));
+      const ca1 = abs(
+        sin(cUv1.x.add(sin(cUv1.y.mul(1.3)).mul(0.65))).mul(
+          sin(cUv1.y.add(cos(cUv1.x.mul(1.15)).mul(0.65)))
+        )
+      );
+      const ca2 = abs(
+        sin(cUv2.x.mul(1.27).sub(cos(cUv2.y.mul(1.35)).mul(0.55))).mul(
+          sin(cUv2.y.mul(1.19).add(sin(cUv2.x.mul(1.22)).mul(0.55)))
+        )
+      );
+      const causticRidge = pow(float(1.0).sub(clamp(min(ca1, ca2), 0.0, 1.0)), 4.6);
+      const causticMask = exp(waterDepth.negate().mul(0.42))
+        .mul(smoothstep(0.04, 0.24, waterDepth))
+        .mul(float(1.0).sub(sharedU.uNightFactor.mul(0.8)))
+        .mul(smoothstep(0.32, 0.78, sharedU.uWaterDetailLevel));
+      causticLight.assign(sharedU.uSunColor.mul(causticRidge).mul(causticMask).mul(0.34));
+    });
 
-    // 3. Analytic wave normal -> Planar atmospheric sky reflection, IOR refraction & solar sparkle
-    const waveN = computeWaveNormalWorld(wpXZ, timeNode);
+    // 3. Reuse shared animated wave normal -> Planar atmospheric sky reflection, IOR refraction & solar sparkle
+    const waveN = sharedWaveNormalWorld;
     const viewDir = normalize(cameraPosition.sub(wp));
     const reflDir = normalize(reflect(viewDir.negate(), waveN));
     const reflElev = clamp(reflDir.y, 0.0, 1.0);
@@ -2074,8 +2153,8 @@ function createWaterSurfaceNodes(params: WaterSurfaceNodesParams) {
     const sunDirN = normalize(sharedU.uSunDir);
     const reflSunDot = max(0.0, dot(reflDir, sunDirN));
     const sunGlint = pow(reflSunDot, 96.0).mul(0.78);
-    // Crisp high-frequency diamond sun sparkle on capillary wave crests
-    const diamondGlint = pow(reflSunDot, 320.0).mul(1.15);
+    // Crisp high-frequency diamond sun sparkle on wave crests
+    const diamondGlint = pow(reflSunDot, 280.0).mul(1.15);
     const sunSheen = pow(reflSunDot, 16.0).mul(0.18);
     const skyReflCol = skyReflBase.add(sharedU.uSunColor.mul(sunGlint.add(diamondGlint).add(sunSheen)));
 
@@ -2102,32 +2181,37 @@ function createWaterSurfaceNodes(params: WaterSurfaceNodesParams) {
       clamp(fresnel.mul(0.82), 0.0, 0.88)
     );
 
-    // 4. Organic shoreline & lapping wave foam
-    const n1 = sin(wpXZ.x.mul(0.85).add(wpXZ.y.mul(0.65)).add(timeNode.mul(1.2))).mul(0.5).add(0.5);
-    const n2 = cos(wpXZ.x.mul(1.45).sub(wpXZ.y.mul(1.15)).sub(timeNode.mul(0.95))).mul(0.5).add(0.5);
-    const organicNoise = mix(n1, n2, 0.5);
+    // 4. Organic shoreline & lapping wave foam (branch-gated to shallow shoreline < 2.0m)
+    const shoreFoam = float(0.0).toVar();
+    If(waterDepth.lessThan(2.05), () => {
+      const n1 = sin(wpXZ.x.mul(0.85).add(wpXZ.y.mul(0.65)).add(timeNode.mul(1.2))).mul(0.5).add(0.5);
+      const n2 = cos(wpXZ.x.mul(1.45).sub(wpXZ.y.mul(1.15)).sub(timeNode.mul(0.95))).mul(0.5).add(0.5);
+      const organicNoise = mix(n1, n2, 0.5);
 
-    const edgeFoam = float(1.0)
-      .sub(smoothstep(0.03, 0.46, waterDepth))
-      .mul(smoothstep(0.0, 0.05, waterDepth));
-    const waveBand = smoothstep(0.08, 0.36, waterDepth).mul(
-      float(1.0).sub(smoothstep(0.95, 1.9, waterDepth))
-    );
-    const rippleWave = smoothstep(
-      0.44,
-      0.86,
-      sin(waterDepth.mul(7.2).sub(timeNode.mul(2.45)).add(organicNoise.mul(2.5)))
-        .mul(0.5)
-        .add(0.5)
-    );
-    const shoreFoam = clamp(
-      edgeFoam
-        .mul(0.76)
-        .add(waveBand.mul(rippleWave).mul(0.64).mul(float(0.58).add(organicNoise.mul(0.42))))
-        .mul(foamAmountNode),
-      0.0,
-      1.0
-    );
+      const edgeFoam = float(1.0)
+        .sub(smoothstep(0.03, 0.46, waterDepth))
+        .mul(smoothstep(0.0, 0.05, waterDepth));
+      const waveBand = smoothstep(0.08, 0.36, waterDepth).mul(
+        float(1.0).sub(smoothstep(0.95, 1.9, waterDepth))
+      );
+      const rippleWave = smoothstep(
+        0.44,
+        0.86,
+        sin(waterDepth.mul(7.2).sub(timeNode.mul(2.45)).add(organicNoise.mul(2.5)))
+          .mul(0.5)
+          .add(0.5)
+      );
+      shoreFoam.assign(
+        clamp(
+          edgeFoam
+            .mul(0.76)
+            .add(waveBand.mul(rippleWave).mul(0.64).mul(float(0.58).add(organicNoise.mul(0.42))))
+            .mul(foamAmountNode),
+          0.0,
+          1.0
+        )
+      );
+    });
 
     let shadedWater = reflectedWater;
     if (selectedGlowNode) {
@@ -2155,17 +2239,6 @@ function xformTerrainUvTsl(uvNode: any, params: THREE.Vector4, rotRad: number) {
   const rx = uvNode.x.mul(c).sub(uvNode.y.mul(s));
   const ry = uvNode.x.mul(s).add(uvNode.y.mul(c));
   return vec2(rx, ry).mul(vec2(params.x, params.y)).add(vec2(params.z, params.w));
-}
-
-function sampleTerrainReliefTsl(tex: THREE.Texture, uvNode: any, strengthVal: any) {
-  if (typeof strengthVal === 'number' && strengthVal < 0.01) return float(1.0);
-  const lumaW = vec3(0.299, 0.587, 0.114);
-  const cL = texture(tex, uvNode.sub(vec2(0.0045, 0.0))).rgb;
-  const cR = texture(tex, uvNode.add(vec2(0.0045, 0.0))).rgb;
-  const cD = texture(tex, uvNode.sub(vec2(0.0, 0.0045))).rgb;
-  const cU = texture(tex, uvNode.add(vec2(0.0, 0.0045))).rgb;
-  const grad = dot(cR, lumaW).sub(dot(cL, lumaW)).mul(0.72).add(dot(cU, lumaW).sub(dot(cD, lumaW)).mul(0.68));
-  return clamp(float(1.0).add(grad.mul(strengthVal).mul(1.9)), 0.62, 1.38);
 }
 
 const _sampleIslandFloatUniform = uniform(0);
@@ -2280,7 +2353,6 @@ function createTerrainMaterial(
     : new THREE.Vector4(1, 1, 0, 0);
   const grassRot = customGrass ? THREE.MathUtils.degToRad(customGrass.settings.rotationDeg ?? 0) : 0;
   const grassTintStrength = customGrass ? THREE.MathUtils.clamp(customGrass.settings.tintStrength ?? 0.22, 0, 1) : 1.0;
-  const grassBumpStrength = customGrass ? THREE.MathUtils.clamp(customGrass.settings.bumpStrength ?? 0.35, 0, 1) : 0;
 
   const pathUv = customPath
     ? new THREE.Vector4(
@@ -2292,7 +2364,6 @@ function createTerrainMaterial(
     : new THREE.Vector4(1.25, 1.25, 0, 0);
   const cobbleUv = customPath ? pathUv.clone() : new THREE.Vector4(1.35, 1.35, 0, 0);
   const pathRot = customPath ? THREE.MathUtils.degToRad(customPath.settings.rotationDeg ?? 0) : 0;
-  const pathBumpStrength = customPath ? THREE.MathUtils.clamp(customPath.settings.bumpStrength ?? 0.5, 0, 1) : 0;
 
   const rockUv = customRock
     ? new THREE.Vector4(
@@ -2303,7 +2374,6 @@ function createTerrainMaterial(
       )
     : new THREE.Vector4(1.15, 1.15, 0, 0);
   const rockRot = customRock ? THREE.MathUtils.degToRad(customRock.settings.rotationDeg ?? 0) : 0;
-  const rockBumpStrength = customRock ? THREE.MathUtils.clamp(customRock.settings.bumpStrength ?? 0.6, 0, 1) : 0;
 
   const uTime = asIslandFloatUniformNode(timeUniform, 0);
   const uWind = asIslandFloatUniformNode(windUniform, 0.45);
@@ -2319,68 +2389,41 @@ function createTerrainMaterial(
     const vW2 = attribute('aW2', 'vec3');
     const wp = positionWorld;
     const wn = normalize(normalWorld);
-
     const wpXZ = vec2(wp.x, wp.z);
+
+    // Fast 2-tap shared procedural fields (8 hashes total instead of 16, reused across all layers, banks, mountains & detail)
     const uvW = wpXZ.mul(0.16);
-    const uvFine = wpXZ.mul(0.42);
-    const uvTuft = wpXZ.mul(1.35);
-    const orgMacro = tFbm2DTsl(wpXZ.mul(0.19));
-    const orgFine = tFbm2DTsl(wpXZ.mul(0.68).add(vec2(11.3, 4.7)));
-    const tuftNoise = tNoise2DTsl(uvTuft).mul(0.6).add(tNoise2DTsl(uvTuft.mul(2.35).add(vec2(5.1, 9.2))).mul(0.4));
+    const orgMacro = tNoise2DTsl(wpXZ.mul(0.22));
+    const orgFine = tNoise2DTsl(wpXZ.mul(0.76).add(vec2(11.3, 4.7)));
+    const tuftGrain = sin(wp.x.mul(1.9).add(cos(wp.z.mul(1.6)).mul(1.2))).mul(cos(wp.z.mul(1.8).sub(wp.x.mul(0.9)))).mul(0.5).add(0.5);
+    const tuftNoise = orgFine.mul(0.65).add(tuftGrain.mul(0.35));
     const edgeJitter = orgMacro.sub(0.5).mul(0.38).add(orgFine.sub(0.5).mul(0.22));
 
     const dapple1 = sin(wp.x.mul(0.075).add(sin(wp.z.mul(0.055)).mul(1.4))).mul(cos(wp.z.mul(0.068).add(0.6)));
     const dapple2 = sin(wp.x.mul(0.14).sub(wp.z.mul(0.11)).add(1.8)).mul(0.5);
     const meadowVar = float(0.94).add(dapple1.add(dapple2).mul(0.055)).add(orgFine.sub(0.5).mul(0.09));
 
-    const uvGrass = xformTerrainUvTsl(uvW, grassUv, grassRot);
-    const uvGrassFine = xformTerrainUvTsl(uvFine, grassUv, grassRot + 0.35);
-    const uvRock = xformTerrainUvTsl(uvW, rockUv, rockRot);
-    const uvRockSlope = xformTerrainUvTsl(
-      vec2(wp.x.add(wp.z).mul(0.17), wp.y.mul(0.24)),
-      rockUv,
-      rockRot
-    );
-    const uvCobble = xformTerrainUvTsl(uvW, cobbleUv, pathRot);
-    const uvDirt = xformTerrainUvTsl(uvW, pathUv, pathRot);
-
-    const gTint = mix(
-      vec3(1.0),
-      vec3(grassTint.r, grassTint.g, grassTint.b),
-      float(grassTintStrength)
-    );
-    const cGrassMacro = texture(texGrass, uvGrass).rgb;
-    const cGrassFine = texture(texGrass, uvGrassFine).rgb;
-    // Contrasty grass-blade underlayment gives depth beneath windblown 3D grass blades
-    const grassUnderlay = float(0.84).add(tuftNoise.mul(0.32)).mul(float(0.92).add(orgMacro.mul(0.16)));
-    const cGrass = mix(cGrassMacro, cGrassFine, 0.38)
-      .mul(gTint)
-      .mul(meadowVar)
-      .mul(grassUnderlay)
-      .mul(sampleTerrainReliefTsl(texGrass, uvGrass, Math.max(0.28, grassBumpStrength)));
-
-    // Rich chocolate / mid-to-dark brown shore & creek-bank soil with embedded pebble micro-relief
-    const cSandMacro = texture(atlas.sand, uvW).rgb;
-    const cSandFine = texture(atlas.sand, uvFine.mul(1.25)).rgb;
-    const pebbleSpeck = smoothstep(0.68, 0.88, tNoise2DTsl(wpXZ.mul(2.85).add(vec2(7.1, 3.3))));
-    const cSandRaw = mix(cSandMacro, cSandFine, 0.42)
-      .mul(sampleTerrainReliefTsl(atlas.sand, uvW, 0.52))
-      .mul(float(0.92).add(orgFine.mul(0.18)));
-    const cSand = mix(
-      cSandRaw.mul(uDirtShoreCol.mul(1.42)),
-      vec3(0.48, 0.44, 0.41),
-      pebbleSpeck.mul(0.28)
-    );
-
     const slopeAmt = clamp(float(1.0).sub(abs(wn.y)), 0.0, 1.0);
-    const mUv = wpXZ.mul(0.075).mul(uMtnNoiseScale);
-    const mFbm = tFbm2DTsl(mUv);
-    const mRidged = float(1.0).sub(abs(mFbm.mul(2.0).sub(1.0)));
-    const mBillow = abs(mFbm.mul(2.0).sub(1.0));
-    const mTerraced = floor(mFbm.mul(5.0)).div(5.0);
+
+    // Precompute bank, mountain rock, moss crevice, and snow masks so texture fetches are strictly branch-gated
+    const waterElev = wp.y.add(1.65);
+    const bankMask = float(1.0)
+      .sub(
+        smoothstep(
+          float(0.14).add(edgeJitter.mul(0.4)),
+          float(1.22).add(edgeJitter.mul(0.65)),
+          waterElev
+        )
+      )
+      .mul(smoothstep(-0.85, -0.05, waterElev));
+
+    const mNoiseBase = orgMacro;
+    const mRidged = float(1.0).sub(abs(mNoiseBase.mul(2.0).sub(1.0)));
+    const mBillow = abs(mNoiseBase.mul(2.0).sub(1.0));
+    const mTerraced = floor(mNoiseBase.mul(5.0)).div(5.0);
     const mNoise = select(
       uMtnNoiseMode.lessThan(0.5),
-      mFbm,
+      mNoiseBase,
       select(
         uMtnNoiseMode.lessThan(1.5),
         mRidged,
@@ -2390,100 +2433,212 @@ function createTerrainMaterial(
     const mAlt = wp.y.add(mNoise.sub(0.5).mul(3.6).mul(uMtnRandomness));
     const mRockBand = smoothstep(uMtnRockH.sub(uMtnBandSoftness), uMtnRockH.add(uMtnBandSoftness), mAlt);
     const mSnowBand = smoothstep(uMtnSnowH.sub(uMtnBandSoftness), uMtnSnowH.add(uMtnBandSoftness), mAlt);
+    const slopeTrig = clamp(uProcCliffThreshold.add(edgeJitter.mul(0.13)), 0.14, 0.85);
+    const rockSlope = smoothstep(slopeTrig.sub(0.1), slopeTrig.add(0.26), slopeAmt).mul(uProcAutoSlopeBlend);
+    const rockCov = clamp(max(rockSlope, mRockBand.mul(0.82)).mul(float(1.0).sub(mSnowBand.mul(0.88))), 0.0, 1.0);
+    const snowCov = mSnowBand.mul(float(1.0).sub(smoothstep(0.58, 0.9, slopeAmt).mul(0.65)));
+    const creviceMossMask = smoothstep(0.2, 0.52, slopeAmt)
+      .mul(float(1.0).sub(smoothstep(0.54, 0.86, slopeAmt)))
+      .mul(smoothstep(0.46, 0.78, orgMacro))
+      .mul(clamp(uProcCurvatureMoss, 0.0, 1.2))
+      .mul(float(1.0).sub(mSnowBand));
 
-    // Stretch-free 3-axis triplanar rock strata projection for steep crags & canyon walls
-    const triWeightsRaw = pow(abs(wn).add(vec3(0.05)), vec3(4.2));
-    const triWeights = triWeightsRaw.div(triWeightsRaw.x.add(triWeightsRaw.y).add(triWeightsRaw.z).add(0.0001));
-    const uvRockX = xformTerrainUvTsl(vec2(wp.z, wp.y).mul(0.19), rockUv, rockRot);
-    const uvRockZ = xformTerrainUvTsl(vec2(wp.x, wp.y).mul(0.19), rockUv, rockRot);
-    const cRockFlat = texture(texRock, uvRock).rgb;
-    const cRockTri = texture(texRock, uvRockX).rgb.mul(triWeights.x)
-      .add(cRockFlat.mul(triWeights.y))
-      .add(texture(texRock, uvRockZ).rgb.mul(triWeights.z));
-    const cRockWall = mix(texture(texRock, uvRockSlope).rgb, cRockTri, clamp(uProcTriplanarStrength, 0.0, 1.0));
-    const strata = float(0.9).add(sin(wp.y.mul(2.55).add(orgMacro.mul(4.8))).mul(0.19));
-    const cRock = mix(cRockFlat, cRockWall, smoothstep(0.18, 0.56, slopeAmt))
-      .mul(strata)
-      .mul(float(1.0).add(mNoise.sub(0.5).mul(0.34).mul(uMtnRoughness)))
-      .mul(sampleTerrainReliefTsl(texRock, uvRock, Math.max(0.35, rockBumpStrength)));
-
-    const cSnow = texture(atlas.snow, uvW).rgb.mul(float(0.96).add(orgFine.mul(0.08)));
-    const cMossRaw = mix(
-      texture(atlas.moss, uvW.mul(1.05)).rgb,
-      texture(atlas.moss, uvFine.mul(0.95)).rgb,
-      0.35
-    ).mul(
-      mix(
-        vec3(1.0),
-        vec3(mossTint.r, mossTint.g, mossTint.b),
-        float(isToon ? 0.22 : 0.2)
-      )
-    );
-    const cMoss = mix(cGrass.mul(0.89), cMossRaw, float(isToon ? 0.48 : 0.46));
-    const cCobble = texture(texPath, uvCobble).rgb.mul(
-      sampleTerrainReliefTsl(texPath, uvCobble, Math.max(0.3, pathBumpStrength))
-    );
-
-    const dFbm = tFbm2DTsl(wpXZ.mul(0.28));
-    const dFine = tNoise2DTsl(wpXZ.mul(0.95));
-    const dPebbleGrain = smoothstep(0.64, 0.88, tNoise2DTsl(wpXZ.mul(2.65).add(vec2(3.7, 8.9))));
-    const dCracked = smoothstep(0.12, 0.36, abs(dFine.sub(0.5)).mul(2.0));
-    const dRocky = step(0.62, dFine).mul(0.6).add(dFbm.mul(0.4));
-    const dPatchy = smoothstep(0.26, 0.74, tFbm2DTsl(wpXZ.mul(0.11)));
-    const dMixFactor = select(
-      uDirtNoiseKind.lessThan(0.5),
-      dFbm,
-      select(
-        uDirtNoiseKind.lessThan(1.5),
-        dCracked,
-        select(uDirtNoiseKind.lessThan(2.5), dRocky, dPatchy)
-      )
-    );
-    const dContrasted = clamp(
-      dMixFactor.sub(0.5).mul(float(0.6).add(uDirtNoiseContrast.mul(1.8))).add(0.5),
+    const grassPresence = clamp(
+      vW0.x.add(vW1.x.mul(0.75)).add(vW2.z).sub(bankMask.mul(0.65)),
       0.0,
       1.0
     );
-    const dCustomTint = mix(uDirtSecCol, uDirtHeroCol, dContrasted);
-    const cDirtBase = mix(texture(texDirt, uvDirt).rgb, texture(texDirt, uvFine).rgb, 0.32).mul(
-      sampleTerrainReliefTsl(texDirt, uvDirt, float(0.25).add(uDirtBumpStrength.mul(0.55)))
+    const dirtOrBankPresence = clamp(
+      vW0.y.add(vW1.z).add(vW2.y).add(bankMask.mul(0.95)),
+      0.0,
+      1.0
     );
-    const cDirtWithGrit = mix(
-      mix(
-        cDirtBase,
-        cDirtBase.mul(vec3(1.18)).mul(dCustomTint),
-        uDirtUseCustom
-      ).mul(float(1.0).sub(uDirtDegrade.mul(0.24).mul(float(1.0).sub(dFbm)))),
-      vec3(0.46, 0.42, 0.38),
-      dPebbleGrain.mul(float(0.18).add(uDirtBumpStrength.mul(0.22)))
-    );
-    const cDirt = cDirtWithGrit;
+    const sodEdgeActive = grassPresence.greaterThan(0.02).and(dirtOrBankPresence.greaterThan(0.02));
 
-    const cLeaves = mix(
-      texture(atlas.leavesFloor, uvW.mul(1.08)).rgb,
-      texture(atlas.leavesFloor, uvFine.mul(0.95)).rgb,
-      0.38
-    )
-      .mul(float(0.88).add(orgMacro.mul(0.24)))
-      .mul(sampleTerrainReliefTsl(atlas.leavesFloor, uvW.mul(1.08), 0.45));
+    // Precompute UVs and screen-space partial derivatives in uniform control flow
+    // so branch-gated texture().grad(dx, dy) calls compile to textureSampleGrad in WGSL (100% legal inside non-uniform If blocks)
+    const dUvWX = dFdx(uvW);
+    const dUvWY = dFdy(uvW);
+    const uvGrass = xformTerrainUvTsl(uvW, grassUv, grassRot);
+    const dUvGrassX = dFdx(uvGrass);
+    const dUvGrassY = dFdy(uvGrass);
+    const uvRock = xformTerrainUvTsl(uvW, rockUv, rockRot);
+    const dUvRockX = dFdx(uvRock);
+    const dUvRockY = dFdy(uvRock);
+    const uvRockTriX = xformTerrainUvTsl(vec2(wp.z, wp.y).mul(0.19), rockUv, rockRot);
+    const dUvRockTriXX = dFdx(uvRockTriX);
+    const dUvRockTriXY = dFdy(uvRockTriX);
+    const uvRockTriZ = xformTerrainUvTsl(vec2(wp.x, wp.y).mul(0.19), rockUv, rockRot);
+    const dUvRockTriZX = dFdx(uvRockTriZ);
+    const dUvRockTriZY = dFdy(uvRockTriZ);
+    const uvCobble = xformTerrainUvTsl(uvW, cobbleUv, pathRot);
+    const dUvCobbleX = dFdx(uvCobble);
+    const dUvCobbleY = dFdy(uvCobble);
+    const uvDirt = xformTerrainUvTsl(uvW, pathUv, pathRot);
+    const dUvDirtX = dFdx(uvDirt);
+    const dUvDirtY = dFdy(uvDirt);
 
-    const cClumpyDirt = mix(
-      texture(atlas.clumpyDirt, uvDirt.mul(1.05)).rgb,
-      texture(atlas.clumpyDirt, uvFine.mul(1.1)).rgb,
-      0.36
-    )
-      .mul(float(0.86).add(orgFine.mul(0.26)))
-      .mul(sampleTerrainReliefTsl(atlas.clumpyDirt, uvDirt.mul(1.05), 0.58));
+    // Branch-gated splat layer texture samples (typical pixel fetches 1-2 textures instead of 46!)
+    const cGrass = vec3(0.28, 0.52, 0.22).toVar();
+    const cGrassFineVar = vec3(0.28, 0.52, 0.22).toVar();
+    const grassNeeded = vW0.x
+      .greaterThan(0.002)
+      .or(vW1.x.greaterThan(0.002))
+      .or(vW2.z.greaterThan(0.002))
+      .or(bankMask.greaterThan(0.01))
+      .or(creviceMossMask.greaterThan(0.01))
+      .or(sodEdgeActive);
+    If(grassNeeded, () => {
+      const gTint = mix(
+        vec3(1.0),
+        vec3(grassTint.r, grassTint.g, grassTint.b),
+        float(grassTintStrength)
+      );
+      const cGrassMacro = texture(texGrass, uvGrass).grad(dUvGrassX, dUvGrassY).rgb;
+      const grassUnderlay = float(0.84)
+        .add(tuftNoise.mul(0.32))
+        .mul(float(0.92).add(orgMacro.mul(0.16)));
+      cGrassFineVar.assign(cGrassMacro);
+      cGrass.assign(cGrassMacro.mul(gTint).mul(meadowVar).mul(grassUnderlay));
+    });
+
+    const cSand = vec3(0.45, 0.34, 0.24).toVar();
+    const sandNeeded = vW0.y.greaterThan(0.002).or(bankMask.greaterThan(0.01));
+    If(sandNeeded, () => {
+      const cSandMacro = texture(atlas.sand, uvW).grad(dUvWX, dUvWY).rgb;
+      const pebbleSpeck = smoothstep(0.7, 0.9, tuftNoise);
+      const cSandRaw = cSandMacro.mul(float(0.9).add(orgFine.mul(0.2)));
+      cSand.assign(
+        mix(
+          cSandRaw.mul(uDirtShoreCol.mul(1.42)),
+          vec3(0.48, 0.44, 0.41),
+          pebbleSpeck.mul(0.26)
+        )
+      );
+    });
+
+    const cRock = vec3(0.46, 0.46, 0.48).toVar();
+    const rockNeeded = vW0.z.greaterThan(0.002).or(rockCov.greaterThan(0.005));
+    If(rockNeeded, () => {
+      const cRockFlat = texture(texRock, uvRock).grad(dUvRockX, dUvRockY).rgb;
+      const cRockFinal = cRockFlat.toVar();
+      If(slopeAmt.greaterThan(0.16), () => {
+        const triWeightsRaw = pow(abs(wn).add(vec3(0.05)), vec3(4.2));
+        const triWeights = triWeightsRaw.div(
+          triWeightsRaw.x.add(triWeightsRaw.y).add(triWeightsRaw.z).add(0.0001)
+        );
+        const cRockTri = texture(texRock, uvRockTriX)
+          .grad(dUvRockTriXX, dUvRockTriXY)
+          .rgb.mul(triWeights.x)
+          .add(cRockFlat.mul(triWeights.y))
+          .add(texture(texRock, uvRockTriZ).grad(dUvRockTriZX, dUvRockTriZY).rgb.mul(triWeights.z));
+        const rockWallMix = mix(cRockFlat, cRockTri, clamp(uProcTriplanarStrength, 0.0, 1.0));
+        cRockFinal.assign(mix(cRockFlat, rockWallMix, smoothstep(0.18, 0.56, slopeAmt)));
+      });
+      const strata = float(0.9).add(sin(wp.y.mul(2.55).add(orgMacro.mul(4.8))).mul(0.19));
+      cRock.assign(
+        cRockFinal
+          .mul(strata)
+          .mul(float(1.0).add(mNoise.sub(0.5).mul(0.34).mul(uMtnRoughness)))
+      );
+    });
+
+    const cSnow = vec3(0.93, 0.96, 1.0).toVar();
+    If(vW0.w.greaterThan(0.002).or(snowCov.greaterThan(0.005)), () => {
+      cSnow.assign(
+        texture(atlas.snow, uvW).grad(dUvWX, dUvWY).rgb.mul(float(0.96).add(orgFine.mul(0.08)))
+      );
+    });
+
+    const cMoss = vec3(0.24, 0.42, 0.19).toVar();
+    const mossNeeded = vW1.x
+      .greaterThan(0.002)
+      .or(bankMask.greaterThan(0.01))
+      .or(creviceMossMask.greaterThan(0.005))
+      .or(sodEdgeActive);
+    If(mossNeeded, () => {
+      const cMossRaw = texture(atlas.moss, uvW.mul(1.05))
+        .grad(dUvWX.mul(1.05), dUvWY.mul(1.05))
+        .rgb.mul(
+          mix(
+            vec3(1.0),
+            vec3(mossTint.r, mossTint.g, mossTint.b),
+            float(isToon ? 0.22 : 0.2)
+          )
+        );
+      cMoss.assign(mix(cGrass.mul(0.89), cMossRaw, float(isToon ? 0.48 : 0.46)));
+    });
+
+    const cCobble = vec3(0.54, 0.52, 0.5).toVar();
+    If(vW1.y.greaterThan(0.002), () => {
+      cCobble.assign(texture(texPath, uvCobble).grad(dUvCobbleX, dUvCobbleY).rgb);
+    });
+
+    const cDirt = vec3(0.42, 0.31, 0.22).toVar();
+    If(vW1.z.greaterThan(0.002), () => {
+      const dFbm = orgMacro;
+      const dFine = orgFine;
+      const dPebbleGrain = smoothstep(0.66, 0.88, tuftNoise);
+      const dCracked = smoothstep(0.12, 0.36, abs(dFine.sub(0.5)).mul(2.0));
+      const dRocky = step(0.62, dFine).mul(0.6).add(dFbm.mul(0.4));
+      const dPatchy = smoothstep(0.26, 0.74, dFbm);
+      const dMixFactor = select(
+        uDirtNoiseKind.lessThan(0.5),
+        dFbm,
+        select(
+          uDirtNoiseKind.lessThan(1.5),
+          dCracked,
+          select(uDirtNoiseKind.lessThan(2.5), dRocky, dPatchy)
+        )
+      );
+      const dContrasted = clamp(
+        dMixFactor.sub(0.5).mul(float(0.6).add(uDirtNoiseContrast.mul(1.8))).add(0.5),
+        0.0,
+        1.0
+      );
+      const dCustomTint = mix(uDirtSecCol, uDirtHeroCol, dContrasted);
+      const cDirtBase = texture(texDirt, uvDirt).grad(dUvDirtX, dUvDirtY).rgb;
+      cDirt.assign(
+        mix(
+          mix(
+            cDirtBase,
+            cDirtBase.mul(vec3(1.18)).mul(dCustomTint),
+            uDirtUseCustom
+          ).mul(float(1.0).sub(uDirtDegrade.mul(0.24).mul(float(1.0).sub(dFbm)))),
+          vec3(0.46, 0.42, 0.38),
+          dPebbleGrain.mul(float(0.18).add(uDirtBumpStrength.mul(0.22)))
+        )
+      );
+    });
+
+    const cLeaves = vec3(0.38, 0.26, 0.14).toVar();
+    If(vW2.x.greaterThan(0.002), () => {
+      cLeaves.assign(
+        texture(atlas.leavesFloor, uvW.mul(1.08))
+          .grad(dUvWX.mul(1.08), dUvWY.mul(1.08))
+          .rgb.mul(float(0.88).add(orgMacro.mul(0.24)))
+      );
+    });
+
+    const cClumpyDirt = vec3(0.36, 0.25, 0.17).toVar();
+    const clumpyNeeded = vW2.y.greaterThan(0.002).or(bankMask.greaterThan(0.01)).or(sodEdgeActive);
+    If(clumpyNeeded, () => {
+      const uvClump = uvDirt.mul(1.05);
+      cClumpyDirt.assign(
+        texture(atlas.clumpyDirt, uvClump)
+          .grad(dUvDirtX.mul(1.05), dUvDirtY.mul(1.05))
+          .rgb.mul(float(0.86).add(orgFine.mul(0.26)))
+      );
+    });
 
     const cTallGrassPatch = mix(
       cGrass.mul(0.9),
-      cGrassFine.mul(uTallGrassPatchCol).mul(float(0.9).add(tuftNoise.mul(0.28))),
+      cGrassFineVar.mul(uTallGrassPatchCol).mul(float(0.9).add(tuftNoise.mul(0.28))),
       0.78
     );
 
-    const avgW = vec3(0.33, 0.33, 0.33);
-    const hGrass = float(0.55).add(orgFine.mul(0.35)).add(dot(cGrassMacro, avgW).sub(0.5).mul(0.25));
-    const hSand = float(0.42).add(orgMacro.mul(0.28)).add(dot(cSandFine, avgW).sub(0.5).mul(0.22));
+    const hGrass = float(0.55).add(orgFine.mul(0.35));
+    const hSand = float(0.42).add(orgMacro.mul(0.28));
     const hRock = float(0.58).add(orgMacro.mul(0.32));
     const hDirt = float(0.48).add(orgFine.mul(0.3));
 
@@ -2502,10 +2657,10 @@ function createTerrainMaterial(
     const w1Raw = max(vec3(0.0), vW1.add(vec3(w1x, w1y, w1z)));
     const w2Raw = max(vec3(0.0), vW2.add(vec3(w2x, w2y, w2z)));
 
-    // Sharper height-modulated exponent (1.85) eliminates broad muddy/diffused blending between grass and dirt
-    const w0 = pow(w0Raw.add(vec4(0.0001)), vec4(1.85)).mul(step(0.002, vW0));
-    const w1 = pow(w1Raw.add(vec3(0.0001)), vec3(1.85)).mul(step(0.002, vW1));
-    const w2 = pow(w2Raw.add(vec3(0.0001)), vec3(1.85)).mul(step(0.002, vW2));
+    // Crisp quadratic height-modulated weights (0 transcendental pow() calls, clean sharp grass/dirt transitions)
+    const w0 = w0Raw.mul(w0Raw).mul(step(0.002, vW0));
+    const w1 = w1Raw.mul(w1Raw).mul(step(0.002, vW1));
+    const w2 = w2Raw.mul(w2Raw).mul(step(0.002, vW2));
     const sumW = w0.x
       .add(w0.y)
       .add(w0.z)
@@ -2532,81 +2687,59 @@ function createTerrainMaterial(
       .div(sumW)
       .toVar();
 
-    // River & lake banks use rich chocolate/dark-brown damp earth + moss (never washed-out yellow beach sand)
-    const waterElev = wp.y.add(1.65);
-    const bankMask = float(1.0)
-      .sub(
-        smoothstep(
-          float(0.14).add(edgeJitter.mul(0.4)),
-          float(1.22).add(edgeJitter.mul(0.65)),
-          waterElev
+    // River & lake banks (only evaluated near shoreline band)
+    If(bankMask.greaterThan(0.005), () => {
+      const paintedSandRatio = smoothstep(0.08, 0.42, vW0.y);
+      const chocolateLoam = mix(cClumpyDirt.mul(0.84), cSand.mul(0.95), 0.55);
+      const naturalBankCol = mix(
+        mix(cMoss.mul(0.84), chocolateLoam, float(0.42).add(orgFine.mul(0.32))),
+        mix(cSand, chocolateLoam, float(0.38).add(orgFine.mul(0.24))),
+        paintedSandRatio
+      );
+      texCol.assign(mix(texCol, naturalBankCol, bankMask.mul(mix(0.46, 0.68, paintedSandRatio))));
+    });
+
+    // --- ORGANIC CURVED GRASS-TO-DIRT UNDERLAYER & CREEK-BANK SOD LIP TRANSITION (branch-gated to boundaries only!) ---
+    If(sodEdgeActive.and(uUnderlayerContrast.greaterThan(0.01)), () => {
+      const turfMacroCurve = orgMacro.sub(0.5).mul(0.46);
+      const turfFineClump = tNoise2DTsl(wpXZ.mul(1.85).add(vec2(orgMacro.mul(1.4), orgFine.mul(1.2)))).sub(0.5).mul(0.24);
+      const turfMicroRoot = tuftNoise.sub(0.5).mul(0.14);
+      const turfOrganicWarp = turfMacroCurve.add(turfFineClump).add(turfMicroRoot);
+      const grassBoundaryField = grassPresence.sub(dirtOrBankPresence.mul(0.85)).add(turfOrganicWarp);
+
+      const sodLipMask = smoothstep(-0.04, 0.11, grassBoundaryField)
+        .mul(float(1.0).sub(smoothstep(0.14, 0.38, grassBoundaryField)))
+        .mul(smoothstep(0.06, 0.26, dirtOrBankPresence))
+        .mul(clamp(uUnderlayerContrast, 0.0, 1.5));
+      const sodBevelHighlight = float(0.86)
+        .add(smoothstep(0.02, 0.16, grassBoundaryField).mul(0.28))
+        .add(turfMicroRoot.mul(0.5));
+      const fibrousSodCol = mix(
+        cGrass.mul(vec3(0.76, 0.88, 0.64)),
+        mix(cMoss.mul(0.82), cClumpyDirt.mul(0.95), smoothstep(0.5, 0.85, turfFineClump.add(0.5))),
+        tuftNoise
+      ).mul(sodBevelHighlight);
+      texCol.assign(mix(texCol, fibrousSodCol, clamp(sodLipMask.mul(0.86), 0.0, 0.92)));
+
+      const undercutShadowMask = smoothstep(-0.36, -0.1, grassBoundaryField)
+        .mul(float(1.0).sub(smoothstep(-0.06, 0.06, grassBoundaryField)))
+        .mul(smoothstep(0.06, 0.28, grassPresence))
+        .mul(clamp(uUnderlayerContrast, 0.0, 1.5));
+      const darkUndercutSoil = mix(
+        vec3(0.17, 0.11, 0.07),
+        mix(uDirtShoreCol.mul(0.48), cClumpyDirt.mul(0.45), 0.5),
+        tuftNoise
+      );
+      texCol.assign(
+        mix(
+          texCol,
+          mix(texCol.mul(0.44), darkUndercutSoil, 0.68),
+          clamp(undercutShadowMask.mul(float(0.76).add(slopeAmt.mul(0.48))), 0.0, 0.88)
         )
-      )
-      .mul(smoothstep(-0.85, -0.05, waterElev));
-    const paintedSandRatio = smoothstep(0.08, 0.42, vW0.y);
-    const chocolateLoam = mix(cClumpyDirt.mul(0.84), cSand.mul(0.95), 0.55);
-    const naturalBankCol = mix(
-      mix(cMoss.mul(0.84), chocolateLoam, float(0.42).add(orgFine.mul(0.32))),
-      mix(cSand, chocolateLoam, float(0.38).add(orgFine.mul(0.24))),
-      paintedSandRatio
-    );
-    texCol.assign(mix(texCol, naturalBankCol, bankMask.mul(mix(0.46, 0.68, paintedSandRatio))));
+      );
+    });
 
-    // --- ORGANIC CURVED GRASS-TO-DIRT UNDERLAYER & CREEK-BANK SOD LIP TRANSITION ---
-    // Domain-warped multi-octave FBM noise curves the grass-to-dirt boundary organically with 3D micro-normal relief
-    const warpX = tFbm2DTsl(wpXZ.mul(0.38).add(vec2(11.3, 4.7))).sub(0.5);
-    const warpZ = tFbm2DTsl(wpXZ.mul(0.38).add(vec2(23.1, 17.9))).sub(0.5);
-    const warpedUv = wpXZ.add(vec2(warpX, warpZ).mul(1.85));
-    const turfMacroCurve = tFbm2DTsl(warpedUv.mul(0.52)).sub(0.5).mul(0.46);
-    const turfFineClump = tNoise2DTsl(warpedUv.mul(2.15)).sub(0.5).mul(0.24);
-    const turfMicroRoot = tNoise2DTsl(warpedUv.mul(5.8)).sub(0.5).mul(0.14);
-    const turfOrganicWarp = turfMacroCurve.add(turfFineClump).add(turfMicroRoot);
-
-    const grassPresence = clamp(
-      vW0.x.add(vW1.x.mul(0.75)).add(vW2.z).sub(bankMask.mul(0.65)),
-      0.0,
-      1.0
-    );
-    const dirtOrBankPresence = clamp(
-      vW0.y.add(vW1.z).add(vW2.y).add(bankMask.mul(0.95)),
-      0.0,
-      1.0
-    );
-    const grassBoundaryField = grassPresence.sub(dirtOrBankPresence.mul(0.85)).add(turfOrganicWarp);
-
-    // 1. Thick curved grassy sod lip with sun-lit micro-bump bevel where the grass layer ends
-    const sodLipMask = smoothstep(-0.04, 0.11, grassBoundaryField)
-      .mul(float(1.0).sub(smoothstep(0.14, 0.38, grassBoundaryField)))
-      .mul(smoothstep(0.06, 0.26, dirtOrBankPresence))
-      .mul(clamp(uUnderlayerContrast, 0.0, 1.5));
-    const sodBevelHighlight = float(0.86).add(smoothstep(0.02, 0.16, grassBoundaryField).mul(0.28)).add(turfMicroRoot.mul(0.5));
-    const fibrousSodCol = mix(
-      cGrass.mul(vec3(0.76, 0.88, 0.64)),
-      mix(cMoss.mul(0.82), cClumpyDirt.mul(0.95), smoothstep(0.5, 0.85, turfFineClump.add(0.5))),
-      tuftNoise
-    ).mul(sodBevelHighlight);
-    texCol.assign(mix(texCol, fibrousSodCol, clamp(sodLipMask.mul(0.86), 0.0, 0.92)));
-
-    // 2. Curved dark root-fiber & soil undercut shadow cast onto the dirt/creek bank directly below the grass lip
-    const undercutShadowMask = smoothstep(-0.36, -0.1, grassBoundaryField)
-      .mul(float(1.0).sub(smoothstep(-0.06, 0.06, grassBoundaryField)))
-      .mul(smoothstep(0.06, 0.28, grassPresence))
-      .mul(clamp(uUnderlayerContrast, 0.0, 1.5));
-    const rootStriation = tNoise2DTsl(warpedUv.mul(4.4)).mul(0.65).add(turfMicroRoot.add(0.5).mul(0.35));
-    const darkUndercutSoil = mix(
-      vec3(0.17, 0.11, 0.07),
-      mix(uDirtShoreCol.mul(0.48), cClumpyDirt.mul(0.45), 0.5),
-      rootStriation
-    );
-    texCol.assign(
-      mix(
-        texCol,
-        mix(texCol.mul(0.44), darkUndercutSoil, 0.68),
-        clamp(undercutShadowMask.mul(float(0.76).add(slopeAmt.mul(0.48))), 0.0, 0.88)
-      )
-    );
-
-    // --- PROCEDURAL DIRT & TRAIL WATER PUDDLES WITH SKY REFLECTION & DAMP RIMS ---
+    // --- PROCEDURAL DIRT & TRAIL WATER PUDDLES (branch-gated to flat dirt/trail pixels only!) ---
     const dirtActiveMask = clamp(
       w1.z.add(w2.y).add(w0.y.mul(0.65)).div(sumW),
       0.0,
@@ -2614,106 +2747,68 @@ function createTerrainMaterial(
     )
       .mul(float(1.0).sub(smoothstep(0.16, 0.38, slopeAmt)))
       .mul(step(-1.45, wp.y));
-    const puddleUv = wpXZ.mul(float(0.26).div(uDirtPuddleScale));
-    const puddleNoise = tFbm2DTsl(puddleUv.add(vec2(19.4, 7.8)))
-      .mul(0.72)
-      .add(tNoise2DTsl(puddleUv.mul(2.4)).mul(0.28));
-    const puddleThresh = clamp(float(0.76).sub(uDirtPuddleDensity.mul(0.24)), 0.38, 0.85);
-    const puddleWetRim = smoothstep(puddleThresh.sub(0.11), puddleThresh.add(0.02), puddleNoise).mul(dirtActiveMask);
-    const puddleWaterCore = smoothstep(puddleThresh, puddleThresh.add(0.045), puddleNoise).mul(dirtActiveMask);
-    // Darken damp mud ring around puddle perimeter
-    texCol.assign(mix(texCol, texCol.mul(0.54), puddleWetRim.mul(0.68)));
-    // Glossy sky-reflecting water puddle surface with subtle wind ripple
-    const viewDir = normalize(cameraPosition.sub(wp));
-    const puddleFresnel = clamp(pow(float(1.0).sub(clamp(dot(wn, viewDir), 0.0, 1.0)), 2.6), 0.18, 0.88);
-    const puddleRipple = sin(wp.x.mul(6.5).add(wp.z.mul(5.2)).add(uTime.mul(2.4))).mul(0.04);
-    const puddleSkyCol = vec3(0.44, 0.58, 0.72).add(vec3(puddleRipple));
-    const puddleCol = mix(texCol.mul(0.38), puddleSkyCol, puddleFresnel.mul(0.76));
-    texCol.assign(mix(texCol, puddleCol, puddleWaterCore.mul(0.86)));
+    If(dirtActiveMask.greaterThan(0.02).and(uDirtPuddleDensity.greaterThan(0.01)), () => {
+      const puddleUv = wpXZ.mul(float(0.26).div(uDirtPuddleScale));
+      const puddleNoise = tNoise2DTsl(puddleUv.add(vec2(19.4, 7.8)))
+        .mul(0.72)
+        .add(orgFine.mul(0.28));
+      const puddleThresh = clamp(float(0.76).sub(uDirtPuddleDensity.mul(0.24)), 0.38, 0.85);
+      const puddleWetRim = smoothstep(puddleThresh.sub(0.11), puddleThresh.add(0.02), puddleNoise).mul(dirtActiveMask);
+      const puddleWaterCore = smoothstep(puddleThresh, puddleThresh.add(0.045), puddleNoise).mul(dirtActiveMask);
+      texCol.assign(mix(texCol, texCol.mul(0.54), puddleWetRim.mul(0.68)));
+      const viewDir = normalize(cameraPosition.sub(wp));
+      const puddleFresnel = clamp(pow(float(1.0).sub(clamp(dot(wn, viewDir), 0.0, 1.0)), 2.6), 0.18, 0.88);
+      const puddleRipple = sin(wp.x.mul(6.5).add(wp.z.mul(5.2)).add(uTime.mul(2.4))).mul(0.04);
+      const puddleSkyCol = vec3(0.44, 0.58, 0.72).add(vec3(puddleRipple));
+      const puddleCol = mix(texCol.mul(0.38), puddleSkyCol, puddleFresnel.mul(0.76));
+      texCol.assign(mix(texCol, puddleCol, puddleWaterCore.mul(0.86)));
+    });
 
-    const slopeTrig = clamp(uProcCliffThreshold.add(edgeJitter.mul(0.13)), 0.14, 0.85);
-    const rockSlope = smoothstep(slopeTrig.sub(0.1), slopeTrig.add(0.26), slopeAmt).mul(uProcAutoSlopeBlend);
-    const rockCov = clamp(max(rockSlope, mRockBand.mul(0.82)).mul(float(1.0).sub(mSnowBand.mul(0.88))), 0.0, 1.0);
     texCol.assign(mix(texCol, cRock, rockCov.mul(isToon ? 0.86 : 0.9)));
-
-    // Automatic damp moss along shaded lower cliff shelves & concave valleys
-    const creviceMossMask = smoothstep(0.2, 0.52, slopeAmt)
-      .mul(float(1.0).sub(smoothstep(0.54, 0.86, slopeAmt)))
-      .mul(smoothstep(0.46, 0.78, orgMacro))
-      .mul(clamp(uProcCurvatureMoss, 0.0, 1.2))
-      .mul(float(1.0).sub(mSnowBand));
     texCol.assign(mix(texCol, cMoss.mul(0.92), clamp(creviceMossMask.mul(0.58), 0.0, 0.65)));
-
-    const snowCov = mSnowBand.mul(float(1.0).sub(smoothstep(0.58, 0.9, slopeAmt).mul(0.65)));
     texCol.assign(mix(texCol, cSnow, snowCov.mul(0.88)));
 
     const meadowCov = clamp(w0.x.add(w1.x.mul(0.85)).add(w2.z).div(sumW), 0.0, 1.0).mul(float(1.0).sub(rockCov));
-    const wDirT = normalize(vec2(0.84, 0.54));
-    const wSpeedT = float(0.85).add(uWind.mul(0.95));
-    const wUvT = wpXZ.mul(0.052).sub(wDirT.mul(uTime.mul(wSpeedT).mul(0.62)));
-    const distantWave = smoothstep(
-      0.32,
-      0.84,
-      tNoise2DTsl(wUvT).mul(0.65).add(tNoise2DTsl(wUvT.mul(2.15).add(vec2(4.2, 1.7))).mul(0.35))
-    );
-    texCol.addAssign(
-      vec3(0.055, 0.075, 0.015).mul(distantWave).mul(meadowCov).mul(clamp(uWind.mul(0.7).add(0.35), 0.25, 1.2))
-    );
+    If(meadowCov.greaterThan(0.05), () => {
+      const wDirT = normalize(vec2(0.84, 0.54));
+      const wSpeedT = float(0.85).add(uWind.mul(0.95));
+      const wUvT = wpXZ.mul(0.052).sub(wDirT.mul(uTime.mul(wSpeedT).mul(0.62)));
+      const distantWave = smoothstep(0.32, 0.84, tNoise2DTsl(wUvT));
+      texCol.addAssign(
+        vec3(0.055, 0.075, 0.015).mul(distantWave).mul(meadowCov).mul(clamp(uWind.mul(0.7).add(0.35), 0.25, 1.2))
+      );
+    });
 
-    // GPU finite-difference micro-normals & directional ridge lighting + close-up tactile grain (0–28m)
-    const sunDir = normalize(getSharedBotwUniforms().uSunDir);
-    const camDistT = length(cameraPosition.sub(wp));
-    const closeDetailFade = float(1.0).sub(smoothstep(6.0, 28.0, camDistT)).mul(uTerrainDetailLevel);
-    const reliefFreq = mix(float(0.65), float(1.45), rockCov);
-    const mEps = float(0.32);
-    const mC = tFbm2DTsl(wpXZ.mul(reliefFreq));
-    const mDx = tFbm2DTsl(wpXZ.add(vec2(mEps, 0.0)).mul(reliefFreq)).sub(mC).div(mEps);
-    const mDz = tFbm2DTsl(wpXZ.add(vec2(0.0, mEps)).mul(reliefFreq)).sub(mC).div(mEps);
-    // High-frequency close-up mineral/pebble grain (fades cleanly before aliasing distance)
-    const hiFreq = mix(float(3.6), float(6.4), rockCov);
-    const hiC = tNoise2DTsl(wpXZ.mul(hiFreq).add(vec2(wp.y.mul(1.8), wp.y.mul(-1.4))));
-    const hiDx = tNoise2DTsl(wpXZ.add(vec2(0.08, 0.0)).mul(hiFreq).add(vec2(wp.y.mul(1.8), wp.y.mul(-1.4))))
-      .sub(hiC)
-      .mul(closeDetailFade);
-    const hiDz = tNoise2DTsl(wpXZ.add(vec2(0.0, 0.08)).mul(hiFreq).add(vec2(wp.y.mul(1.8), wp.y.mul(-1.4))))
-      .sub(hiC)
-      .mul(closeDetailFade);
-    const reliefGain = mix(float(0.22), float(0.72), rockCov).mul(uProcMicroNormal).mul(uTerrainDetailLevel);
-    const microN = normalize(
-      wn.add(
-        vec3(
-          mDx.negate().mul(reliefGain).sub(hiDx.mul(mix(float(1.1), float(2.4), rockCov))),
-          0.0,
-          mDz.negate().mul(reliefGain).sub(hiDz.mul(mix(float(1.1), float(2.4), rockCov)))
-        )
-      )
+    // Zero-hash micro-cavity & tactile contrast (physical close-up normal relief handled by branch-gated mat.normalNode)
+    const microCavity = float(1.0).sub(
+      clamp(float(0.48).sub(orgMacro).mul(0.32).mul(rockCov).mul(uTerrainDetailLevel), 0.0, 0.22)
     );
-    const baseSunDot = clamp(dot(wn, sunDir), 0.0, 1.0);
-    const microSunDot = clamp(dot(microN, sunDir), 0.0, 1.0);
-    const microLitDelta = microSunDot.sub(baseSunDot).mul(mix(float(0.22), float(0.52), rockCov));
-    const microCavity = float(1.0).sub(clamp(float(0.45).sub(mC).mul(0.38).mul(rockCov).mul(uTerrainDetailLevel), 0.0, 0.25));
-    const closeGrainContrast = hiC.sub(0.5).mul(mix(float(0.09), float(0.16), rockCov)).mul(closeDetailFade);
-    const microDetail = float(0.96).add(orgFine.sub(0.5).mul(0.09)).add(microLitDelta).add(closeGrainContrast);
+    const microDetail = float(0.96)
+      .add(orgFine.sub(0.5).mul(0.11))
+      .add(tuftNoise.sub(0.5).mul(mix(float(0.06), float(0.12), rockCov)));
     texCol.mulAssign(microDetail.mul(microCavity));
 
     const vWeather0 = attribute('aWeather0', 'vec4');
     const vWeather1 = attribute('aWeather1', 'float');
-    const chipFromCrack = vWeather0.y.mul(0.55);
-    const mudWet = vWeather0.w.mul(0.32);
-    texCol.assign(
-      applyDegradeLayersTsl(
-        texCol,
-        vWeather0.x,
-        vWeather0.y,
-        chipFromCrack,
-        vWeather0.z,
-        vWeather0.w,
-        vWeather1,
-        float(0.0),
-        float(0.0),
-        mudWet
-      )
-    );
+    const weatherSum = vWeather0.x.add(vWeather0.y).add(vWeather0.z).add(vWeather0.w).add(vWeather1);
+    If(weatherSum.greaterThan(0.005), () => {
+      const chipFromCrack = vWeather0.y.mul(0.55);
+      const mudWet = vWeather0.w.mul(0.32);
+      texCol.assign(
+        applyDegradeLayersTsl(
+          texCol,
+          vWeather0.x,
+          vWeather0.y,
+          chipFromCrack,
+          vWeather0.z,
+          vWeather0.w,
+          vWeather1,
+          float(0.0),
+          float(0.0),
+          mudWet
+        )
+      );
+    });
 
     const wet = float(1.0).sub(smoothstep(-1.72, float(-1.12).add(edgeJitter.mul(0.25)), wp.y));
     texCol.assign(mix(texCol, texCol.mul(isToon ? 0.64 : 0.6), wet.mul(isToon ? 0.52 : 0.58)));
@@ -2735,25 +2830,27 @@ function createTerrainMaterial(
     // Gentle drifting world-space cloud shadows across open sunlit terrain
     texCol.mulAssign(createDriftingCloudShadowNode(wpXZ));
 
-    // Live X-Ray Mountain Cave Carver topographic elevation contour rings on visible solid mountain
-    const elevMask = smoothstep(1.65, 3.4, wp.y).mul(uCaveXRayMode);
-    const contourBand = smoothstep(0.84, 0.98, abs(sin(wp.y.mul(Math.PI * 1.35)))).mul(elevMask);
-    const gridBand = max(
-      smoothstep(0.955, 0.995, abs(sin(wp.x.mul(Math.PI * 0.45)))),
-      smoothstep(0.955, 0.995, abs(sin(wp.z.mul(Math.PI * 0.45))))
-    ).mul(elevMask);
-    texCol.assign(
-      mix(
-        texCol,
-        vec3(0.24, 0.82, 1.0),
-        clamp(contourBand.mul(0.45).add(gridBand.mul(0.16)), 0.0, 0.55)
-      )
-    );
+    // Live X-Ray Mountain Cave Carver topographic elevation contour rings (gated so 0 ALU outside cave mode)
+    If(uCaveXRayMode.greaterThan(0.5), () => {
+      const elevMask = smoothstep(1.65, 3.4, wp.y);
+      const contourBand = smoothstep(0.84, 0.98, abs(sin(wp.y.mul(Math.PI * 1.35)))).mul(elevMask);
+      const gridBand = max(
+        smoothstep(0.955, 0.995, abs(sin(wp.x.mul(Math.PI * 0.45)))),
+        smoothstep(0.955, 0.995, abs(sin(wp.z.mul(Math.PI * 0.45))))
+      ).mul(elevMask);
+      texCol.assign(
+        mix(
+          texCol,
+          vec3(0.24, 0.82, 1.0),
+          clamp(contourBand.mul(0.45).add(gridBand.mul(0.16)), 0.0, 0.55)
+        )
+      );
+    });
 
     return vec4(texCol.mul(isToon ? 1.09 : 1.12), float(1.0));
   })();
 
-  const mat = new MeshPhysicalNodeMaterial({
+  const mat = new MeshStandardNodeMaterial({
     vertexColors: true,
     roughness: customGrass
       ? THREE.MathUtils.clamp(customGrass.settings.roughness ?? 0.84, 0.08, 1.0)
@@ -2761,28 +2858,26 @@ function createTerrainMaterial(
       ? 0.9
       : 0.84,
     metalness: 0.02,
-    diffuseRoughness: THREE.MathUtils.clamp(
-      customGrass?.settings.diffuseRoughness ?? (isToon ? 0.93 : 0.9),
-      0,
-      1
-    ),
     flatShading: false,
   });
   mat.colorNode = terrainColorNode;
-  // Close-up physical micro-normal perturbation (0..26m) so PBR specular & point lights catch rock/soil facets
+  // Branch-gated close-up physical micro-normal perturbation (0..22m only; distant terrain pays 0 noise hashes)
   mat.normalNode = Fn(() => {
     const wp = positionWorld;
     const wn = normalize(normalWorld);
-    const wpXZ = vec2(wp.x, wp.z);
     const camDist = length(cameraPosition.sub(wp));
-    const closeFade = float(1.0).sub(smoothstep(5.0, 26.0, camDist)).mul(uTerrainDetailLevel).mul(uProcMicroNormal);
-    const slopeAmt = clamp(float(1.0).sub(abs(wn.y)), 0.0, 1.0);
-    const nFreq = mix(float(2.4), float(4.8), slopeAmt);
-    const baseSample = tNoise2DTsl(wpXZ.mul(nFreq).add(vec2(wp.y.mul(1.6), wp.y.mul(-1.2))));
-    const dxSample = tNoise2DTsl(wpXZ.add(vec2(0.09, 0.0)).mul(nFreq).add(vec2(wp.y.mul(1.6), wp.y.mul(-1.2)))).sub(baseSample);
-    const dzSample = tNoise2DTsl(wpXZ.add(vec2(0.0, 0.09)).mul(nFreq).add(vec2(wp.y.mul(1.6), wp.y.mul(-1.2)))).sub(baseSample);
-    const strength = mix(float(0.38), float(0.95), slopeAmt).mul(closeFade);
-    const perturbedWorld = normalize(wn.add(vec3(dxSample.negate().mul(strength), 0.0, dzSample.negate().mul(strength))));
+    const closeFade = float(1.0).sub(smoothstep(5.0, 22.0, camDist)).mul(uTerrainDetailLevel).mul(uProcMicroNormal);
+    const perturbedWorld = wn.toVar();
+    If(closeFade.greaterThan(0.01), () => {
+      const wpXZ = vec2(wp.x, wp.z);
+      const slopeAmt = clamp(float(1.0).sub(abs(wn.y)), 0.0, 1.0);
+      const nFreq = mix(float(2.4), float(4.8), slopeAmt);
+      const baseSample = tNoise2DTsl(wpXZ.mul(nFreq).add(vec2(wp.y.mul(1.6), wp.y.mul(-1.2))));
+      const dxSample = tNoise2DTsl(wpXZ.add(vec2(0.09, 0.0)).mul(nFreq).add(vec2(wp.y.mul(1.6), wp.y.mul(-1.2)))).sub(baseSample);
+      const dzSample = tNoise2DTsl(wpXZ.add(vec2(0.0, 0.09)).mul(nFreq).add(vec2(wp.y.mul(1.6), wp.y.mul(-1.2)))).sub(baseSample);
+      const strength = mix(float(0.38), float(0.95), slopeAmt).mul(closeFade);
+      perturbedWorld.assign(normalize(wn.add(vec3(dxSample.negate().mul(strength), 0.0, dzSample.negate().mul(strength)))));
+    });
     return transformNormalToView(perturbedWorld);
   })();
   mat.roughnessNode = Fn(() => {
@@ -2791,35 +2886,43 @@ function createTerrainMaterial(
     const vW2 = attribute('aW2', 'vec3');
     const wp = positionWorld;
     const wn = normalize(normalWorld);
-    const wpXZ = vec2(wp.x, wp.z);
+    const vWeather0 = attribute('aWeather0', 'vec4');
+    const vWeather1 = attribute('aWeather1', 'float');
+    const finalRough = materialRoughness.toVar();
+    const weatherSum = vWeather0.x.add(vWeather0.y).add(vWeather0.z).add(vWeather0.w).add(vWeather1);
+    If(weatherSum.greaterThan(0.005), () => {
+      finalRough.assign(
+        applyDegradeRoughnessTsl(
+          materialRoughness,
+          vWeather0.x,
+          vWeather0.y,
+          vWeather0.y.mul(0.55),
+          vWeather0.z,
+          vWeather0.w,
+          vWeather1,
+          float(0.0),
+          float(0.0),
+          vWeather0.w.mul(0.32)
+        )
+      );
+    });
+
     const slopeAmt = clamp(float(1.0).sub(abs(wn.y)), 0.0, 1.0);
     const dirtActive = clamp(vW1.z.add(vW2.y).add(vW0.y.mul(0.65)), 0.0, 1.0)
       .mul(float(1.0).sub(smoothstep(0.16, 0.38, slopeAmt)))
       .mul(step(-1.45, wp.y));
-    const puddleUv = wpXZ.mul(float(0.26).div(uDirtPuddleScale));
-    const puddleNoise = tFbm2DTsl(puddleUv.add(vec2(19.4, 7.8)))
-      .mul(0.72)
-      .add(tNoise2DTsl(puddleUv.mul(2.4)).mul(0.28));
-    const puddleThresh = clamp(float(0.76).sub(uDirtPuddleDensity.mul(0.24)), 0.38, 0.85);
-    const puddleMask = smoothstep(puddleThresh, puddleThresh.add(0.045), puddleNoise).mul(dirtActive);
-
-    const vWeather0 = attribute('aWeather0', 'vec4');
-    const vWeather1 = attribute('aWeather1', 'float');
-    const baseRough = applyDegradeRoughnessTsl(
-      materialRoughness,
-      vWeather0.x,
-      vWeather0.y,
-      vWeather0.y.mul(0.55),
-      vWeather0.z,
-      vWeather0.w,
-      vWeather1,
-      float(0.0),
-      float(0.0),
-      vWeather0.w.mul(0.32)
-    );
-    return mix(baseRough, float(0.07), puddleMask);
+    If(dirtActive.greaterThan(0.02).and(uDirtPuddleDensity.greaterThan(0.01)), () => {
+      const wpXZ = vec2(wp.x, wp.z);
+      const puddleUv = wpXZ.mul(float(0.26).div(uDirtPuddleScale));
+      const puddleNoise = tNoise2DTsl(puddleUv.add(vec2(19.4, 7.8)))
+        .mul(0.72)
+        .add(tNoise2DTsl(wpXZ.mul(0.74).add(vec2(11.3, 4.7))).mul(0.28));
+      const puddleThresh = clamp(float(0.76).sub(uDirtPuddleDensity.mul(0.24)), 0.38, 0.85);
+      const puddleMask = smoothstep(puddleThresh, puddleThresh.add(0.045), puddleNoise).mul(dirtActive);
+      finalRough.assign(mix(finalRough, float(0.07), puddleMask));
+    });
+    return finalRough;
   })();
-  mat.diffuseRoughnessNode = materialDiffuseRoughness;
   attachBotwPainterlyShader(mat, { rimStrengthScale: 0.42, shadowLiftScale: 0.85 });
   return {
     material: mat,
@@ -4194,17 +4297,18 @@ export function buildIslandMesh(
     isWorldMapMode ? 175 : Math.max(42, Math.round((worldRadius / IslandTerrain.radius) * 42))
   );
 
-  // Live terrain elevation DataTexture (FloatType + NearestFilter + manual 4-tap bilinear in TSL)
-  // Gives exact per-pixel water depth across coasts, coves, and sculpted rivers on both WebGPU & WebGL2.
+  // Live terrain elevation DataTexture (HalfFloatType + LinearFilter for 1-tap hardware bilinear lookup)
+  const waterDepthTexHalfData = new Uint16Array(waterDepthTexData.length);
+  packFloatRgbaToHalfFloat(waterDepthTexData, waterDepthTexHalfData);
   const waterDepthTex = new THREE.DataTexture(
-    waterDepthTexData,
+    waterDepthTexHalfData,
     waterDepthTexSize,
     waterDepthTexSize,
     THREE.RGBAFormat,
-    THREE.FloatType
+    THREE.HalfFloatType
   );
-  waterDepthTex.minFilter = THREE.NearestFilter;
-  waterDepthTex.magFilter = THREE.NearestFilter;
+  waterDepthTex.minFilter = THREE.LinearFilter;
+  waterDepthTex.magFilter = THREE.LinearFilter;
   waterDepthTex.wrapS = THREE.ClampToEdgeWrapping;
   waterDepthTex.wrapT = THREE.ClampToEdgeWrapping;
   waterDepthTex.generateMipmaps = false;
@@ -4270,6 +4374,7 @@ export function buildIslandMesh(
       terrainWorldRadius: worldRadius,
       waterDepthTex,
       waterDepthTexData,
+      waterDepthTexHalfData,
       waterDepthTexSize,
       updateMountainUniforms: (cfg) => terrainMatBundle.updateMountainUniforms(cfg),
       updateProceduralUniforms: (cfg) => terrainMatBundle.updateProceduralUniforms(cfg),
@@ -4423,6 +4528,7 @@ export function buildIslandMesh(
     terrainWorldRadius: worldRadius,
     waterDepthTex,
     waterDepthTexData,
+    waterDepthTexHalfData,
     waterDepthTexSize,
     updateMountainUniforms: (cfg) => terrainMatBundle.updateMountainUniforms(cfg),
     updateProceduralUniforms: (cfg) => terrainMatBundle.updateProceduralUniforms(cfg),
@@ -4978,11 +5084,23 @@ export function buildIslandMesh(
  * Populates a 256x256 Float32 RGBA DataTexture with world terrain heights so the open-world
  * water shader computes exact per-pixel shoreline depth, optical absorption, and organic foam.
  */
+function packFloatRgbaToHalfFloat(src: Float32Array, dst: Uint16Array): void {
+  const len = src.length;
+  for (let i = 0; i < len; i += 4) {
+    const h = THREE.DataUtils.toHalfFloat(src[i]);
+    dst[i] = h;
+    dst[i + 1] = h;
+    dst[i + 2] = h;
+    dst[i + 3] = 15360; // 1.0 in IEEE 754 binary16
+  }
+}
+
 function populateWaterDepthTexture(
   terrain: TerrainData,
   data: Float32Array,
   size: number,
-  brushArea?: { x: number; z: number; radius: number }
+  brushArea?: { x: number; z: number; radius: number },
+  halfData?: Uint16Array
 ): void {
   const worldRadius = getTerrainRadius(terrain);
   const worldDiameter = worldRadius * 2;
@@ -5011,6 +5129,13 @@ function populateWaterDepthTexture(
       data[idx + 1] = h;
       data[idx + 2] = h;
       data[idx + 3] = 1.0;
+      if (halfData) {
+        const hh = THREE.DataUtils.toHalfFloat(h);
+        halfData[idx] = hh;
+        halfData[idx + 1] = hh;
+        halfData[idx + 2] = hh;
+        halfData[idx + 3] = 15360;
+      }
     }
   }
 }
@@ -5044,6 +5169,9 @@ export function updateIslandTerrainGeometryInPlace(
         handles.waterDepthTexSize,
         worldRadius
       );
+      if (handles.waterDepthTexHalfData) {
+        packFloatRgbaToHalfFloat(handles.waterDepthTexData, handles.waterDepthTexHalfData);
+      }
       handles.waterDepthTex.needsUpdate = true;
     }
     return true;
@@ -5062,7 +5190,8 @@ export function updateIslandTerrainGeometryInPlace(
       terrain,
       handles.waterDepthTexData,
       handles.waterDepthTexSize,
-      brushArea
+      brushArea,
+      handles.waterDepthTexHalfData
     );
     handles.waterDepthTex.needsUpdate = true;
   }
@@ -9507,6 +9636,10 @@ export function disposeObject3D(root: THREE.Object3D) {
       const geom = (renderable as { geometry?: THREE.BufferGeometry }).geometry;
       if (geom && !disposedGeometries.has(geom)) {
         disposedGeometries.add(geom);
+        const bvhGeom = geom as THREE.BufferGeometry & { disposeBoundsTree?: () => void };
+        if (typeof bvhGeom.disposeBoundsTree === 'function') {
+          bvhGeom.disposeBoundsTree();
+        }
         geom.dispose();
       }
       const mat = renderable.material;
@@ -9519,4 +9652,10 @@ export function disposeObject3D(root: THREE.Object3D) {
       }
     }
   });
+
+  if ((root as THREE.Scene).isScene && root.userData) {
+    for (const k of Object.keys(root.userData)) {
+      delete root.userData[k];
+    }
+  }
 }

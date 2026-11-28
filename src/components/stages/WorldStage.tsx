@@ -774,6 +774,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     if (domainId === 'atmosphere') {
       setPlaceFxTemplateId(null);
       setPlacePlatformerModuleId(null);
+      store.setSelectedEntityID(null);
       if (tool === 'terrain' || tool === 'add') setTool('move');
       if (leftActiveTab !== 'atmosphere') setLeftActiveTab('atmosphere');
       return;
@@ -3115,7 +3116,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                   store.setActiveWorldDomain('select');
                 }}
               />
-            ) : (
+            ) : !store.isPlaying ? (
               <WorldViewport3D
                 project={currentProject}
                 level={currentLevel}
@@ -3142,11 +3143,12 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                 selectedWaterBodyId={store.selectedWaterBodyId}
                 selectedCaveId={store.selectedCaveId}
                 worldMap={wm}
-                worldEditorScope={store.worldEditorScope}
+                worldEditorScope={isWorldMapScope ? 'worldMap' : currentLevel.id}
                 activeWorldRegionCode={store.activeWorldRegionCode}
                 worldMapBrushMode={store.worldMapBrushMode}
                 selectedWorldLandCode={store.selectedWorldLandCode}
                 renderPaused={
+                  store.isPlaying ||
                   store.treeMakerOpen ||
                   store.showingTextureStudio ||
                   store.objectMakerOpen ||
@@ -3407,7 +3409,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                   }
                 }}
               />
-            ))}
+            ) : null)}
         </div>
 
         {/* Bottom Precision & Viewport Action Bar (Land/Level scope only; World Map stays clean in Left Panel) */}

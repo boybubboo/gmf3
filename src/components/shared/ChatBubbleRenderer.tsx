@@ -6,7 +6,8 @@ import {
   resolveChatBubbleStyle,
   resolveChatDisplaySettings,
 } from '../../data/chatBubblePresets';
-import type { ChatBubbleStyle, ChatDisplaySettings, EntityKind } from '../../types/maker';
+import type { ChatBubbleStyle, ChatDisplaySettings, EntityKind, HudWidgetShape } from '../../types/maker';
+import { buildSurfaceVisualStyles } from '../../utils/hudMaterials';
 
 export interface ChatHistoryEntry {
   id: string;
@@ -50,13 +51,19 @@ export function useTypewriterText(
 }
 
 function computeShadow(style: ChatBubbleStyle): string {
+  const d3 = style.depth3d ?? 0;
+  const glow = style.glowColor ?? style.borderColor;
+  if (style.shape === 'glass3d' || d3 >= 0.45) {
+    const ext = Math.round(3 + d3 * 6);
+    return `0 ${ext}px 0 ${hexToRgba(style.borderColor, 0.72)}, 0 ${ext + 10}px 24px rgba(0,0,0,0.42), inset 0 2px 3px rgba(255,255,255,0.48), inset 0 -4px 8px rgba(0,0,0,0.28)`;
+  }
   switch (style.shadowStyle) {
     case 'none':
       return 'none';
     case 'hard':
       return `4px 4px 0px ${style.borderColor}`;
     case 'glow':
-      return `0 0 18px ${hexToRgba(style.borderColor, 0.45)}, 0 4px 14px rgba(0,0,0,0.4)`;
+      return `0 0 18px ${hexToRgba(glow, 0.5)}, 0 4px 14px rgba(0,0,0,0.4)`;
     case 'soft':
     default:
       return '0 10px 24px -6px rgba(0, 0, 0, 0.32), 0 3px 8px -2px rgba(0, 0, 0, 0.18)';
@@ -68,7 +75,16 @@ function computeBorderRadius(style: ChatBubbleStyle): string {
     case 'pill':
       return '999px';
     case 'sharp':
+    case 'sciFiHolo':
       return `${Math.min(4, style.borderRadius)}px`;
+    case 'graphicNovel':
+      return '4px';
+    case 'parchmentTorn':
+      return '5px';
+    case 'woodenPlaque':
+      return '10px';
+    case 'glass3d':
+      return `${Math.max(16, style.borderRadius)}px`;
     case 'thought':
       return `${Math.max(22, style.borderRadius)}px`;
     case 'shout':
@@ -80,6 +96,23 @@ function computeBorderRadius(style: ChatBubbleStyle): string {
     case 'rounded':
     default:
       return `${style.borderRadius}px`;
+  }
+}
+
+function mapBubbleShapeToHudShape(shape: ChatBubbleStyle['shape']): HudWidgetShape {
+  switch (shape) {
+    case 'graphicNovel':
+      return 'slant';
+    case 'parchmentTorn':
+      return 'tornOrganic';
+    case 'sciFiHolo':
+      return 'chamfer';
+    case 'sharp':
+      return 'sharp';
+    case 'pill':
+      return 'circle';
+    default:
+      return 'rounded';
   }
 }
 
@@ -131,7 +164,8 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
     replayNonce
   );
 
-  const bgRgba = hexToRgba(style.bgColor, style.opacity);
+  const clampedOpacity = Math.max(0.1, Math.min(1, style.opacity));
+  const bgRgba = hexToRgba(style.bgColor, clampedOpacity);
   const borderRadius = computeBorderRadius(style);
   const boxShadow = computeShadow(style);
   const animClass = compact ? '' : getEntranceClass(style.entranceAnim);
@@ -143,6 +177,71 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
   const isSharp = style.shape === 'sharp';
   const isThought = style.shape === 'thought';
   const isShout = style.shape === 'shout';
+  const isGraphicNovel = style.shape === 'graphicNovel';
+  const isGlass3d = style.shape === 'glass3d';
+  const isParchmentTorn = style.shape === 'parchmentTorn';
+  const isSciFiHolo = style.shape === 'sciFiHolo';
+  const isWoodPlaque = style.shape === 'woodenPlaque';
+
+  const resolvedTexture =
+    style.surfaceTexture ??
+    (isParchmentTorn
+      ? 'parchment'
+      : isWoodPlaque
+      ? 'wood'
+      : isSciFiHolo
+      ? 'holoGlass'
+      : isGraphicNovel
+      ? 'comicHalftone'
+      : isGlass3d
+      ? 'arcadePlastic'
+      : 'smooth');
+
+  const resolvedTears = style.paperTears ?? (isParchmentTorn ? 0.55 : 0);
+  const resolvedBurns = style.burnedEdges ?? (isParchmentTorn ? 0.72 : 0);
+  const resolvedWear = style.edgeWear ?? (isParchmentTorn ? 0.45 : isWoodPlaque ? 0.25 : 0);
+
+  const surface = useMemo(
+    () =>
+      buildSurfaceVisualStyles({
+        surfaceTexture: resolvedTexture,
+        shape: mapBubbleShapeToHudShape(style.shape),
+        bgHex: style.bgColor,
+        borderHex: style.borderColor,
+        borderStyle: isSciFiHolo ? 'glowing' : isWoodPlaque ? 'ornate' : 'solid',
+        borderWidth: style.borderWidth,
+        cornerRadius: style.borderRadius,
+        edgeWear: resolvedWear,
+        burnedEdges: resolvedBurns,
+        paperTears: resolvedTears,
+        glowIntensity: style.shadowStyle === 'glow' || isSciFiHolo ? 0.65 : 0,
+        glowHex: style.glowColor ?? style.borderColor,
+        shadowDepth: style.depth3d ?? 0.35,
+        rotationDeg: style.rotationDeg ?? (isGraphicNovel ? -1.2 : 0),
+        opacity: clampedOpacity,
+        seed: speaker.length * 7 + 3,
+      }),
+    [
+      resolvedTexture,
+      style.shape,
+      style.bgColor,
+      style.borderColor,
+      style.borderWidth,
+      style.borderRadius,
+      style.shadowStyle,
+      style.glowColor,
+      style.depth3d,
+      style.rotationDeg,
+      resolvedWear,
+      resolvedBurns,
+      resolvedTears,
+      isSciFiHolo,
+      isWoodPlaque,
+      isGraphicNovel,
+      clampedOpacity,
+      speaker.length,
+    ]
+  );
 
   const effectiveTail = style.tailStyle;
 
@@ -161,6 +260,9 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
       className={`relative inline-flex flex-col items-center select-none ${animClass}`}
       style={{
         maxWidth: compact ? '100%' : `${style.maxWidth}px`,
+        opacity: clampedOpacity,
+        transform: surface.outerStyle.transform,
+        filter: surface.usesClipPath ? surface.outerStyle.filter : undefined,
       }}
       onClick={handleInteract}
     >
@@ -186,45 +288,69 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
 
       {/* Main bubble body */}
       <div
-        className={`relative transition-transform ${onClick ? 'cursor-pointer' : ''}`}
+        className={`relative transition-transform overflow-hidden ${onClick ? 'cursor-pointer' : ''}`}
         style={{
-          backgroundColor: bgRgba,
+          ...surface.surfaceStyle,
+          backgroundColor: style.bgColor,
           color: style.textColor,
-          borderStyle: 'solid',
+          borderStyle: isWoodPlaque ? 'double' : 'solid',
           borderWidth: `${style.borderWidth}px`,
           borderColor: style.borderColor,
-          borderRadius,
-          boxShadow,
+          borderRadius: surface.usesClipPath ? surface.surfaceStyle.borderRadius : borderRadius,
+          boxShadow: surface.usesClipPath
+            ? surface.surfaceStyle.boxShadow
+            : [boxShadow, surface.surfaceStyle.boxShadow].filter(Boolean).join(', '),
+          filter: surface.wearFilterUrl,
           padding: compact
             ? '8px 12px'
             : style.shape === 'pill'
             ? '10px 18px'
+            : isGraphicNovel || isParchmentTorn
+            ? '11px 18px'
             : '10px 14px',
           minWidth: compact ? '140px' : '118px',
           outline:
             isSharp && style.borderWidth > 0
-              ? `2px solid ${hexToRgba(style.bgColor, Math.min(1, style.opacity))}`
+              ? `2px solid ${hexToRgba(style.bgColor, Math.min(1, clampedOpacity))}`
               : undefined,
           outlineOffset: isSharp ? '-5px' : undefined,
         }}
       >
-        {/* Fantasy scroll subtle inner corner ornaments */}
-        {isScroll && (
+        {/* Burned / scorched parchment vignette overlay */}
+        {surface.burnOverlayStyle && (
+          <span
+            className="pointer-events-none absolute inset-0 z-[1]"
+            style={surface.burnOverlayStyle}
+          />
+        )}
+
+        {/* 3D Gloss top highlight arc */}
+        {isGlass3d && (
+          <span
+            className="pointer-events-none absolute inset-x-2 top-1 h-[38%] rounded-full opacity-45 z-[1]"
+            style={{
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.65) 0%, transparent 100%)',
+            }}
+          />
+        )}
+
+        {/* Fantasy scroll / Wood plaque / Sci-Fi Holo corner trims */}
+        {(isScroll || isWoodPlaque || isSciFiHolo) && (
           <>
             <span
-              className="pointer-events-none absolute top-1 left-1 w-2 h-2 border-t border-l opacity-55"
+              className="pointer-events-none absolute top-1 left-1 w-2.5 h-2.5 border-t-2 border-l-2 opacity-75 z-[2]"
               style={{ borderColor: style.borderColor }}
             />
             <span
-              className="pointer-events-none absolute top-1 right-1 w-2 h-2 border-t border-r opacity-55"
+              className="pointer-events-none absolute top-1 right-1 w-2.5 h-2.5 border-t-2 border-r-2 opacity-75 z-[2]"
               style={{ borderColor: style.borderColor }}
             />
             <span
-              className="pointer-events-none absolute bottom-1 left-1 w-2 h-2 border-b border-l opacity-55"
+              className="pointer-events-none absolute bottom-1 left-1 w-2.5 h-2.5 border-b-2 border-l-2 opacity-75 z-[2]"
               style={{ borderColor: style.borderColor }}
             />
             <span
-              className="pointer-events-none absolute bottom-1 right-1 w-2 h-2 border-b border-r opacity-55"
+              className="pointer-events-none absolute bottom-1 right-1 w-2.5 h-2.5 border-b-2 border-r-2 opacity-75 z-[2]"
               style={{ borderColor: style.borderColor }}
             />
           </>
@@ -236,14 +362,14 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
             <span
               className="pointer-events-none absolute -top-2 left-5 w-5 h-3 rounded-full"
               style={{
-                backgroundColor: bgRgba,
+                backgroundColor: style.bgColor,
                 borderTop: `${Math.max(1, style.borderWidth)}px solid ${style.borderColor}`,
               }}
             />
             <span
               className="pointer-events-none absolute -top-1.5 right-6 w-4 h-2.5 rounded-full"
               style={{
-                backgroundColor: bgRgba,
+                backgroundColor: style.bgColor,
                 borderTop: `${Math.max(1, style.borderWidth)}px solid ${style.borderColor}`,
               }}
             />
@@ -253,7 +379,7 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
         {/* Speaker header row */}
         {style.showSpeakerName && (
           <div
-            className={`flex items-center gap-2 mb-1 ${
+            className={`relative z-10 flex items-center gap-2 mb-1 ${
               style.textAlign === 'center' ? 'justify-center' : 'justify-between'
             }`}
           >
@@ -288,7 +414,7 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
 
         {/* Message body */}
         <p
-          className="m-0 break-words leading-snug"
+          className="relative z-10 m-0 break-words leading-snug"
           style={{
             fontFamily: font.cssFamily,
             fontSize: `${compact ? Math.min(13, style.fontSize) : style.fontSize}px`,
@@ -311,7 +437,7 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
         {/* Optional footer hint / multi-line counter */}
         {(lineCounter || actionHint) && !compact && (
           <div
-            className="mt-1.5 flex items-center justify-between gap-3 text-[10px] opacity-65"
+            className="relative z-10 mt-1.5 flex items-center justify-between gap-3 text-[10px] opacity-65"
             style={{
               fontFamily: "'Plus Jakarta Sans', sans-serif",
               color: style.textColor,
@@ -339,12 +465,12 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
         >
           <path
             d="M2,0 L9,9.5 L16,0"
-            fill={bgRgba}
+            fill={style.bgColor}
             stroke={style.borderColor}
             strokeWidth={Math.max(1, style.borderWidth)}
             strokeLinejoin="round"
           />
-          <rect x="2" y="0" width="14" height="2.4" fill={bgRgba} />
+          <rect x="2" y="0" width="14" height="2.4" fill={style.bgColor} />
         </svg>
       )}
 
@@ -358,12 +484,12 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
         >
           <path
             d="M4,0 C6,6 9,11 17,12.5 C12.5,8.5 13,4 16,0"
-            fill={bgRgba}
+            fill={style.bgColor}
             stroke={style.borderColor}
             strokeWidth={Math.max(1, style.borderWidth)}
             strokeLinejoin="round"
           />
-          <rect x="4" y="0" width="12" height="2.4" fill={bgRgba} />
+          <rect x="4" y="0" width="12" height="2.4" fill={style.bgColor} />
         </svg>
       )}
 
@@ -372,14 +498,14 @@ export const ChatBubbleView: React.FC<ChatBubbleViewProps> = ({
           <span
             className="w-2.5 h-2.5 rounded-full block"
             style={{
-              backgroundColor: bgRgba,
+              backgroundColor: style.bgColor,
               border: `${Math.max(1, Math.min(2, style.borderWidth))}px solid ${style.borderColor}`,
             }}
           />
           <span
             className="w-1.5 h-1.5 rounded-full block -translate-x-1"
             style={{
-              backgroundColor: bgRgba,
+              backgroundColor: style.bgColor,
               border: `${Math.max(1, Math.min(2, style.borderWidth))}px solid ${style.borderColor}`,
             }}
           />
@@ -428,10 +554,22 @@ export const BottomChatPanelView: React.FC<BottomChatPanelViewProps> = ({
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const useChar = settings.panelUseCharacterStyle;
-  const font = useMemo(
-    () => getChatFontOption(useChar ? charStyle.fontFamily : settings.panelTheme === 'parchment' ? 'serif' : settings.panelTheme === 'retro' ? 'pixel' : 'sans'),
-    [useChar, charStyle.fontFamily, settings.panelTheme]
-  );
+  const resolvedFontId = useChar
+    ? charStyle.fontFamily
+    : settings.panelFontFamily ??
+      (settings.panelTheme === 'parchment'
+        ? 'garamond'
+        : settings.panelTheme === 'retro'
+        ? 'pixel'
+        : settings.panelTheme === 'sciFi'
+        ? 'tactical'
+        : settings.panelTheme === 'comic'
+        ? 'comic'
+        : settings.panelTheme === 'wood'
+        ? 'cinzel'
+        : 'sans');
+
+  const font = useMemo(() => getChatFontOption(resolvedFontId), [resolvedFontId]);
 
   const { visibleText, isTyping, revealAll } = useTypewriterText(
     text,
@@ -444,9 +582,75 @@ export const BottomChatPanelView: React.FC<BottomChatPanelViewProps> = ({
   const borderColor = useChar ? charStyle.borderColor : settings.panelBorderColor;
   const textColor = useChar ? charStyle.textColor : settings.panelTextColor;
   const speakerColor = charStyle.speakerColor;
-  const opacity = settings.panelOpacity;
+  const opacity = Math.max(0.15, Math.min(1, settings.panelOpacity));
   const isRetro = settings.panelTheme === 'retro' || (useChar && charStyle.shape === 'sharp');
-  const isComic = useChar && (charStyle.shape === 'comic' || charStyle.shape === 'shout');
+  const isComic =
+    settings.panelTheme === 'comic' ||
+    (useChar &&
+      (charStyle.shape === 'comic' ||
+        charStyle.shape === 'shout' ||
+        charStyle.shape === 'graphicNovel'));
+
+  const panelTexture =
+    (useChar ? charStyle.surfaceTexture : undefined) ??
+    settings.panelTexture ??
+    (settings.panelTheme === 'parchment'
+      ? 'parchment'
+      : settings.panelTheme === 'sciFi'
+      ? 'circuitTech'
+      : settings.panelTheme === 'comic'
+      ? 'comicHalftone'
+      : settings.panelTheme === 'wood'
+      ? 'wood'
+      : 'smooth');
+
+  const panelShape: HudWidgetShape =
+    settings.panelShape ??
+    (isRetro
+      ? 'sharp'
+      : settings.panelTheme === 'sciFi'
+      ? 'chamfer'
+      : settings.panelTheme === 'comic'
+      ? 'slant'
+      : 'rounded');
+
+  const panelSurface = useMemo(
+    () =>
+      buildSurfaceVisualStyles({
+        surfaceTexture: panelTexture,
+        shape: panelShape,
+        bgHex: bgColor,
+        borderHex: borderColor,
+        borderStyle: settings.panelTheme === 'sciFi' ? 'glowing' : settings.panelTheme === 'wood' ? 'ornate' : 'solid',
+        borderWidth: isRetro || isComic ? 2.5 : 1.5,
+        cornerRadius: isRetro ? 4 : 16,
+        edgeWear: (useChar ? charStyle.edgeWear : undefined) ?? settings.panelEdgeWear ?? 0,
+        burnedEdges: (useChar ? charStyle.burnedEdges : undefined) ?? settings.panelBurnedEdges ?? 0,
+        paperTears: (useChar ? charStyle.paperTears : undefined) ?? settings.panelPaperTears ?? 0,
+        glowIntensity: settings.panelTheme === 'sciFi' ? 0.55 : 0,
+        glowHex: borderColor,
+        shadowDepth: 0.6,
+        opacity,
+        seed: 23,
+      }),
+    [
+      panelTexture,
+      panelShape,
+      bgColor,
+      borderColor,
+      settings.panelTheme,
+      settings.panelEdgeWear,
+      settings.panelBurnedEdges,
+      settings.panelPaperTears,
+      isRetro,
+      isComic,
+      useChar,
+      charStyle.edgeWear,
+      charStyle.burnedEdges,
+      charStyle.paperTears,
+      opacity,
+    ]
+  );
 
   const panelRadius = isRetro ? '4px' : '16px';
   const panelShadow = isComic
@@ -454,12 +658,13 @@ export const BottomChatPanelView: React.FC<BottomChatPanelViewProps> = ({
     : '0 14px 36px -8px rgba(0, 0, 0, 0.52)';
 
   const hasMoreLines = lineIndex + 1 < totalLines;
-  const initials = speaker
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? '')
-    .join('') || '?';
+  const initials =
+    speaker
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? '')
+      .join('') || '?';
 
   const handlePanelClick = () => {
     if (isTyping) {
@@ -476,6 +681,10 @@ export const BottomChatPanelView: React.FC<BottomChatPanelViewProps> = ({
   return (
     <div
       className={`w-full ${previewMode ? '' : 'max-w-2xl mx-auto maker-panel-rise'}`}
+      style={{
+        opacity,
+        filter: panelSurface.usesClipPath ? panelSurface.outerStyle.filter : undefined,
+      }}
       onClick={(e) => e.stopPropagation()}
     >
       {/* Optional collapsible recent dialogue history */}
@@ -507,21 +716,26 @@ export const BottomChatPanelView: React.FC<BottomChatPanelViewProps> = ({
       {/* Bottom Chat Panel Body */}
       <div
         onClick={previewMode ? undefined : handlePanelClick}
-        className={`relative w-full ${previewMode ? '' : 'cursor-pointer'}`}
+        className={`relative w-full overflow-hidden ${previewMode ? '' : 'cursor-pointer'}`}
         style={{
-          backgroundColor: hexToRgba(bgColor, opacity),
+          ...panelSurface.surfaceStyle,
           color: textColor,
-          borderStyle: 'solid',
-          borderWidth: `${isRetro || isComic ? 2.5 : 1.5}px`,
-          borderColor,
-          borderRadius: panelRadius,
-          boxShadow: panelShadow,
+          boxShadow: panelSurface.usesClipPath
+            ? panelSurface.surfaceStyle.boxShadow
+            : [panelShadow, panelSurface.surfaceStyle.boxShadow].filter(Boolean).join(', '),
+          filter: panelSurface.wearFilterUrl,
           padding: settings.panelCompact ? '12px 16px' : '16px 20px',
           outline: isRetro ? `2px solid ${hexToRgba(bgColor, opacity)}` : undefined,
           outlineOffset: isRetro ? '-5px' : undefined,
         }}
       >
-        <div className="flex items-start gap-3.5">
+        {panelSurface.burnOverlayStyle && (
+          <span
+            className="pointer-events-none absolute inset-0 z-[1]"
+            style={panelSurface.burnOverlayStyle}
+          />
+        )}
+        <div className="relative z-10 flex items-start gap-3.5">
           {/* Speaker portrait / emblem */}
           {settings.panelShowPortrait && (
             <div

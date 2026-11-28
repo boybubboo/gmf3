@@ -66,9 +66,9 @@ export function createDefaultGrassConfig(): GrassFieldConfig {
   return {
     enabled: true,
     quality: 'lush',
-    viewDistance: 74,
+    viewDistance: 60,
     bladeHeight: 0.44,
-    bladeWidth: 0.072,
+    bladeWidth: 0.076,
     windWaveStrength: 1.0,
     tipGlow: 0.68,
     interactiveParting: true,
@@ -738,7 +738,8 @@ function createGrassNodeMaterial(opts: {
   const vSide = varying(float());
   const vWaveCrest = varying(float());
   const vColorVar = varying(float());
-  const vSpeciesMix = varying(float());
+  const vMeadowVar = varying(float());
+  const vDualBlend = varying(float());
   const vCloudShade = varying(float());
   const vGroundTint = varying(vec3());
   const vWorldPos = varying(vec3());
@@ -762,70 +763,33 @@ function createGrassNodeMaterial(opts: {
     const jitter = gHash22Tsl(hashSeed).sub(0.5);
     // Wide cross-cell jitter lets blades mingle across grid lines so no square lattice ever forms
     const rawWorldXZ = baseCell.add(0.5).add(jitter.mul(1.52)).mul(uCellSpacing);
-
-    // Domain-warped 2x2 Voronoi clump field (irregular organic tufts, no square clump grid)
-    const warpX = gNoise2DTsl(rawWorldXZ.mul(0.28).add(vec2(5.2, 1.3))).sub(0.5);
-    const warpZ = gNoise2DTsl(rawWorldXZ.mul(0.28).add(vec2(18.7, 9.4))).sub(0.5);
-    const warpedXZ = rawWorldXZ.add(vec2(warpX, warpZ).mul(1.35));
-    const clumpGridScale = float(0.58);
-    const warpedScaled = warpedXZ.mul(clumpGridScale);
-    const baseClump = floor(warpedScaled.sub(0.5));
-
-    const evalSite = (ox: number, oz: number) => {
-      const c = baseClump.add(vec2(ox, oz));
-      const h = gHash22Tsl(c);
-      const w = gHash21Tsl(c.add(vec2(7.7, 23.1)));
-      const siteScaled = c.add(0.14).add(h.mul(0.72));
-      const diffScaled = siteScaled.sub(warpedScaled);
-      const d2 = dot(diffScaled, diffScaled).mul(mix(0.68, 1.42, w));
-      return { diffScaled, h, w, d2 };
-    };
-
-    const s00 = evalSite(0, 0);
-    const s10 = evalSite(1, 0);
-    const s01 = evalSite(0, 1);
-    const s11 = evalSite(1, 1);
-
-    const pickA = s00.d2.lessThanEqual(s10.d2);
-    const aDiff = select(pickA, s00.diffScaled, s10.diffScaled);
-    const aHash = select(pickA, s00.h, s10.h);
-    const aW = select(pickA, s00.w, s10.w);
-    const aD2 = min(s00.d2, s10.d2);
-
-    const pickB = s01.d2.lessThanEqual(s11.d2);
-    const bDiff = select(pickB, s01.diffScaled, s11.diffScaled);
-    const bHash = select(pickB, s01.h, s11.h);
-    const bW = select(pickB, s01.w, s11.w);
-    const bD2 = min(s01.d2, s11.d2);
-
-    const pickBest = aD2.lessThanEqual(bD2);
-    const clumpDiffXZ = select(pickBest, aDiff, bDiff).div(clumpGridScale);
-    const clumpHash = select(pickBest, aHash, bHash);
-    const clumpWeight = select(pickBest, aW, bW);
-
-    const clumpCenterXZ = rawWorldXZ.add(clumpDiffXZ);
-    const clumpDist = length(clumpDiffXZ);
-    const bladePullRnd = gHash21Tsl(hashSeed.add(vec2(29.4, 51.8)));
-    const clumpPull = clamp(uTuftClumpiness, 0.0, 1.0)
-      .mul(0.66)
-      .mul(mix(0.62, 1.0, clumpWeight))
-      .mul(mix(0.45, 1.0, bladePullRnd));
-    const worldXZ = mix(rawWorldXZ, clumpCenterXZ, clumpPull);
-
     const clipPos = vec4(2.0, 2.0, 2.0, 1.0).toVar();
 
-    const insideWorld = abs(worldXZ.x)
+    // Early bounds & LOD range rejection BEFORE any clumping, noise, or texture fetches
+    const insideWorld = abs(rawWorldXZ.x)
       .lessThanEqual(uWorldRadius.sub(1.5))
-      .and(abs(worldXZ.y).lessThanEqual(uWorldRadius.sub(1.5)));
-
-    const toBladeXZ = worldXZ.sub(vec2(uCameraPos.x, uCameraPos.z));
-    const distXZ = length(toBladeXZ);
+      .and(abs(rawWorldXZ.y).lessThanEqual(uWorldRadius.sub(1.5)));
+    const rawDistXZ = length(rawWorldXZ.sub(vec2(uCameraPos.x, uCameraPos.z)));
     const insideLodRange =
       opts.innerStart > 0.0
-        ? distXZ.lessThanEqual(uLodOuterEnd).and(distXZ.greaterThanEqual(uLodInnerStart))
-        : distXZ.lessThanEqual(uLodOuterEnd);
+        ? rawDistXZ.lessThanEqual(uLodOuterEnd.add(2.0)).and(rawDistXZ.greaterThanEqual(max(float(0.0), uLodInnerStart.sub(2.0))))
+        : rawDistXZ.lessThanEqual(uLodOuterEnd.add(2.0));
 
     If(insideWorld.and(insideLodRange), () => {
+      // Fast single-cell organic tuft clumping (3 hashes instead of 20-hash 2x2 domain-warped Voronoi)
+      const clumpGridScale = float(0.58);
+      const clumpCell = floor(rawWorldXZ.mul(clumpGridScale));
+      const clumpHash = gHash22Tsl(clumpCell);
+      const clumpCenterXZ = clumpCell.add(0.16).add(clumpHash.mul(0.68)).div(clumpGridScale);
+      const clumpDiffXZ = clumpCenterXZ.sub(rawWorldXZ);
+      const clumpDist = length(clumpDiffXZ);
+      const bladePullRnd = gHash21Tsl(hashSeed.add(vec2(29.4, 51.8)));
+      const clumpPull = clamp(uTuftClumpiness, 0.0, 1.0)
+        .mul(0.62)
+        .mul(mix(0.48, 1.0, bladePullRnd));
+      const worldXZ = mix(rawWorldXZ, clumpCenterXZ, clumpPull);
+      const distXZ = length(worldXZ.sub(vec2(uCameraPos.x, uCameraPos.z)));
+
       const worldNormUv = clamp(
         worldXZ.add(vec2(uWorldRadius, uWorldRadius)).div(uWorldRadius.mul(2.0)),
         0.0,
@@ -840,83 +804,83 @@ function createGrassNodeMaterial(opts: {
 
       const terrainY = float(tData.r);
       const grassMask = float(tData.g);
-      const densityRnd = float(gHash21Tsl(hashSeed.add(vec2(17.3, 5.9))));
-      // Organic meadow density drift + tuft gap thinning so solid preset fields never blanket evenly
-      const meadowDrift = gNoise2DTsl(worldXZ.mul(0.15).add(vec2(3.1, 8.7)))
-        .mul(0.62)
-        .add(gNoise2DTsl(worldXZ.mul(0.42).add(vec2(19.4, 2.3))).mul(0.38));
-      const clumpAffinity = float(1.0).sub(smoothstep(0.22, 1.12, clumpDist));
-      const baseNaturalDensity = mix(0.76, 1.0, smoothstep(0.16, 0.78, meadowDrift));
-      const clumpGapMod = mix(
-        0.42,
-        1.0,
-        clamp(clumpAffinity.mul(0.72).add(meadowDrift.mul(0.28)), 0.0, 1.0)
-      );
-      const organicDensity = mix(
-        baseNaturalDensity,
-        clumpGapMod,
-        clamp(uTuftClumpiness, 0.0, 1.0).mul(0.68)
-      );
-      const maskKeep = grassMask
-        .greaterThanEqual(0.08)
-        .and(densityRnd.lessThanEqual(smoothstep(0.06, 0.72, grassMask).mul(organicDensity)));
 
-      If(maskKeep, () => {
-        const rootClip = cameraProjectionMatrix
-          .mul(cameraViewMatrix)
-          .mul(vec4(worldXZ.x, terrainY, worldXZ.y, 1.0));
-
-        const inClip = rootClip.w.greaterThanEqual(-0.9).and(
-          rootClip.w.lessThanEqual(2.2).or(
-            abs(rootClip.x)
-              .lessThanEqual(rootClip.w.mul(1.25).add(1.0))
-              .and(rootClip.y.lessThanEqual(rootClip.w.mul(1.25).add(1.0)))
-              .and(rootClip.y.greaterThanEqual(rootClip.w.mul(1.9).add(2.4).negate()))
-          )
+      If(grassMask.greaterThanEqual(0.08), () => {
+        const densityRnd = float(gHash21Tsl(hashSeed.add(vec2(17.3, 5.9))));
+        // Single shared organic meadow noise drives density drift, LOD breakup, height variation & species patches
+        const meadowNoise = gNoise2DTsl(worldXZ.mul(0.14).add(vec2(3.1, 8.7)));
+        const clumpAffinity = float(1.0).sub(smoothstep(0.22, 1.12, clumpDist));
+        const baseNaturalDensity = mix(0.76, 1.0, smoothstep(0.16, 0.78, meadowNoise));
+        const clumpGapMod = mix(
+          0.42,
+          1.0,
+          clamp(clumpAffinity.mul(0.72).add(meadowNoise.mul(0.28)), 0.0, 1.0)
+        );
+        const organicDensity = mix(
+          baseNaturalDensity,
+          clumpGapMod,
+          clamp(uTuftClumpiness, 0.0, 1.0).mul(0.68)
+        );
+        const maskKeep = densityRnd.lessThanEqual(
+          smoothstep(0.06, 0.72, grassMask).mul(organicDensity)
         );
 
-        If(inClip, () => {
-          const clumpNoise = gNoise2DTsl(worldXZ.mul(0.14));
-          const bladeRnd = gHash21Tsl(hashSeed.add(vec2(43.1, 88.4)));
+        If(maskKeep, () => {
+          const rootClip = cameraProjectionMatrix
+            .mul(cameraViewMatrix)
+            .mul(vec4(worldXZ.x, terrainY, worldXZ.y, 1.0));
 
-          // Break up circular LOD arcs with low-frequency meadow patch wobble + per-blade scatter
-          const organicDist = distXZ
-            .add(clumpNoise.sub(0.5).mul(6.8))
-            .add(bladeRnd.sub(0.5).mul(2.4));
-
-          const fadeIn = hasInnerFade
-            ? smoothstep(uLodInnerStart, uLodInnerEnd, organicDist)
-            : float(1.0);
-          const fadeOut = float(1.0).sub(smoothstep(uLodOuterStart, uLodOuterEnd, organicDist));
-          const baseFade = fadeIn.mul(fadeOut);
-
-          // Soft diffuse stochastic fade: stagger each blade's dissolve window instead of shrinking all at one line
-          const staggerOffset = bladeRnd.mul(0.68).add(clumpNoise.mul(0.12));
-          const lodScale = smoothstep(
-            staggerOffset,
-            min(float(1.0), staggerOffset.add(0.32)),
-            baseFade
+          const inClip = rootClip.w.greaterThanEqual(-0.9).and(
+            rootClip.w.lessThanEqual(2.2).or(
+              abs(rootClip.x)
+                .lessThanEqual(rootClip.w.mul(1.25).add(1.0))
+                .and(rootClip.y.lessThanEqual(rootClip.w.mul(1.25).add(1.0)))
+                .and(rootClip.y.greaterThanEqual(rootClip.w.mul(1.9).add(2.4).negate()))
+            )
           );
 
-          If(lodScale.greaterThanEqual(0.03), () => {
-            const groundSample = texture(opts.groundColorTex, tUv).rgb;
-            const trailUv = worldNormUv
-              .mul(uTrailTexSize.sub(1.0))
-              .add(0.5)
-              .div(uTrailTexSize);
-            const trailData = texture(opts.trailTex, trailUv);
-            const trampleAmt = float(trailData.r);
+          If(inClip, () => {
+            const clumpNoise = meadowNoise;
+            const bladeRnd = gHash21Tsl(hashSeed.add(vec2(43.1, 88.4)));
 
-            // Dual species selection: Carex / Tall Sedge vs Lush Short Lawn
-            const speciesPatch = gNoise2DTsl(worldXZ.mul(0.11).add(vec2(12.3, 4.7)));
-            const isCarex = smoothstep(
-              float(0.68).sub(uCarexMix.mul(0.65)),
-              float(0.95).sub(uCarexMix.mul(0.5)),
-              speciesPatch.mul(0.62).add(bladeRnd.mul(0.38))
-            ).mul(clamp(uCarexMix.mul(1.35), 0.0, 1.0));
+            // Break up circular LOD arcs with low-frequency meadow patch wobble + per-blade scatter
+            const organicDist = distXZ
+              .add(clumpNoise.sub(0.5).mul(6.8))
+              .add(bladeRnd.sub(0.5).mul(2.4));
 
-            const clumpHeightSpan = mix(0.14, 0.54, clamp(uTuftClumpiness, 0.0, 1.0));
-            const clumpScaledMul = float(1.0).sub(clumpHeightSpan.mul(0.45)).add(clumpHash.y.mul(clumpHeightSpan));
+            const fadeIn = hasInnerFade
+              ? smoothstep(uLodInnerStart, uLodInnerEnd, organicDist)
+              : float(1.0);
+            const fadeOut = float(1.0).sub(smoothstep(uLodOuterStart, uLodOuterEnd, organicDist));
+            const baseFade = fadeIn.mul(fadeOut);
+
+            // Soft diffuse stochastic fade: stagger each blade's dissolve window instead of shrinking all at one line
+            const staggerOffset = bladeRnd.mul(0.68).add(clumpNoise.mul(0.12));
+            const lodScale = smoothstep(
+              staggerOffset,
+              min(float(1.0), staggerOffset.add(0.32)),
+              baseFade
+            );
+
+            If(lodScale.greaterThanEqual(0.03), () => {
+              const groundSample = texture(opts.groundColorTex, tUv).rgb;
+              const trailUv = worldNormUv
+                .mul(uTrailTexSize.sub(1.0))
+                .add(0.5)
+                .div(uTrailTexSize);
+              const trailData = texture(opts.trailTex, trailUv);
+              const trampleAmt = float(trailData.r);
+
+              // Dual species selection: Carex / Tall Sedge vs Lush Short Lawn (reuses meadowNoise + clumpHash)
+              const speciesPatch = clamp(meadowNoise.mul(0.68).add(clumpHash.y.mul(0.32)), 0.0, 1.0);
+              const isCarex = smoothstep(
+                float(0.68).sub(uCarexMix.mul(0.65)),
+                float(0.95).sub(uCarexMix.mul(0.5)),
+                speciesPatch.mul(0.62).add(bladeRnd.mul(0.38))
+              ).mul(clamp(uCarexMix.mul(1.35), 0.0, 1.0));
+
+              const clumpHeightSpan = mix(0.14, 0.54, clamp(uTuftClumpiness, 0.0, 1.0));
+              const clumpScaledMul = float(1.0).sub(clumpHeightSpan.mul(0.45)).add(clumpHash.y.mul(clumpHeightSpan));
 
             const borderShrink = smoothstep(0.08, 0.65, grassMask);
             const tallPatchBoost = clamp(grassMask.sub(1.0).div(0.8), 0.0, 1.0);
@@ -989,8 +953,8 @@ function createGrassNodeMaterial(opts: {
 
             const waveCoord = worldXZ.mul(0.052).sub(windDir.mul(uTime.mul(wSpeed).mul(0.62)));
             const macroWave = gNoise2DTsl(waveCoord)
-              .mul(0.65)
-              .add(gNoise2DTsl(waveCoord.mul(2.15).add(vec2(4.2, 1.7))).mul(0.35));
+              .mul(0.75)
+              .add(sin(waveCoord.x.mul(2.4).add(waveCoord.y.mul(1.9))).mul(0.125).add(0.125));
             const wavePulse = smoothstep(0.28, 0.84, macroWave);
 
             const phase = worldXZ.x.mul(0.24).add(worldXZ.y.mul(0.19)).add(bladeRnd.mul(6.283));
@@ -1065,7 +1029,11 @@ function createGrassNodeMaterial(opts: {
             vSide.assign(side);
             vWaveCrest.assign(wavePulse.mul(clamp(uWindStrength.mul(0.85).add(0.35), 0.0, 1.35)));
             vColorVar.assign(clumpNoise.mul(0.65).add(bladeRnd.mul(0.35)));
-            vSpeciesMix.assign(isCarex);
+            // Hoist per-fragment meadow variation & dual-tone patch blend to vertex shader (saves 12 hashes/fragment!)
+            const dappleV = sin(worldXZ.x.mul(0.09).add(sin(worldXZ.y.mul(0.07)).mul(1.2))).mul(0.5);
+            vMeadowVar.assign(float(0.95).add(dappleV.mul(0.11)).add(clumpNoise.sub(0.5).mul(0.09)));
+            const patchNoiseV = gNoise2DTsl(worldXZ.mul(float(0.045).mul(uMixNoiseScale)));
+            vDualBlend.assign(smoothstep(0.22, 0.78, patchNoiseV.mul(0.72).add(isCarex.mul(0.28))));
             vCloudShade.assign(createDriftingCloudShadowNode(vec2(worldPos.x, worldPos.z)));
             vGroundTint.assign(groundSample);
             vWorldPos.assign(worldPos);
@@ -1073,6 +1041,7 @@ function createGrassNodeMaterial(opts: {
             vBladeNormal.assign(bladeN);
 
             clipPos.assign(cameraProjectionMatrix.mul(cameraViewMatrix).mul(vec4(worldPos, 1.0)));
+          });
           });
         });
       });
@@ -1082,14 +1051,8 @@ function createGrassNodeMaterial(opts: {
   })();
 
   mat.colorNode = Fn(() => {
-    const worldXZFrag = vec2(vWorldPos.x, vWorldPos.z);
-    const dapple1 = gNoise2DTsl(worldXZFrag.mul(0.048).add(vec2(2.7, 9.1))).sub(0.5);
-    const dapple2 = gNoise2DTsl(worldXZFrag.mul(0.13).add(vec2(14.3, 6.4))).sub(0.5);
-    const meadowVar = float(0.95).add(dapple1.mul(0.12)).add(dapple2.mul(0.07));
-
-    // Dual-tone noise-driven blend between primary and secondary grass palette colors
-    const patchNoise = gNoise2DTsl(vec2(vWorldPos.x, vWorldPos.z).mul(float(0.045).mul(uMixNoiseScale)));
-    const dualBlend = smoothstep(0.22, 0.78, patchNoise.mul(0.72).add(vSpeciesMix.mul(0.28)));
+    const meadowVar = vMeadowVar;
+    const dualBlend = vDualBlend;
     const customRoot = mix(uPrimaryCol.mul(0.62), uSecondaryCol.mul(0.62), dualBlend);
     const customMid = mix(uPrimaryCol, uSecondaryCol, dualBlend);
     const customTip = mix(uPrimaryCol.mul(1.24), uSecondaryCol.mul(1.28), dualBlend);
@@ -1274,30 +1237,30 @@ export function getLodTierSpec(quality: GrassQuality): LodTierSpec {
       };
     case 'dense':
       return {
-        nearCellsPerSide: 26,
-        nearSpacing: GRASS_CHUNK_SIZE / 26, // ~0.692m
+        nearCellsPerSide: 22,
+        nearSpacing: GRASS_CHUNK_SIZE / 22, // ~0.818m
         nearBladesPerCell: 3,
-        farCellsPerSide: 13,
-        farSpacing: GRASS_CHUNK_SIZE / 13, // ~1.385m
+        farCellsPerSide: 11,
+        farSpacing: GRASS_CHUNK_SIZE / 11, // ~1.636m
         farBladesPerCell: 2,
       };
     case 'ultra':
       return {
-        nearCellsPerSide: 32,
-        nearSpacing: GRASS_CHUNK_SIZE / 32, // 0.5625m
+        nearCellsPerSide: 28,
+        nearSpacing: GRASS_CHUNK_SIZE / 28, // ~0.643m
         nearBladesPerCell: 3,
-        farCellsPerSide: 16,
-        farSpacing: GRASS_CHUNK_SIZE / 16, // 1.125m
+        farCellsPerSide: 14,
+        farSpacing: GRASS_CHUNK_SIZE / 14, // ~1.286m
         farBladesPerCell: 2,
       };
     case 'lush':
     default:
       return {
-        nearCellsPerSide: 22,
-        nearSpacing: GRASS_CHUNK_SIZE / 22, // ~0.818m
+        nearCellsPerSide: 15,
+        nearSpacing: GRASS_CHUNK_SIZE / 15, // 1.20m
         nearBladesPerCell: 2,
-        farCellsPerSide: 11,
-        farSpacing: GRASS_CHUNK_SIZE / 11, // ~1.636m
+        farCellsPerSide: 8,
+        farSpacing: GRASS_CHUNK_SIZE / 8, // 2.25m
         farBladesPerCell: 2,
       };
   }
@@ -1622,8 +1585,9 @@ export class StylizedGrassSystem {
     this.nearEnd = nearEnd;
     this.farStart = farStart;
 
-    this.nearBaseBlade = createNearBladeGeometry(1.06);
-    this.farBaseBlade = createFarTuftCardGeometry(1.0);
+    const isLushTier = resolved.quality === 'lush';
+    this.nearBaseBlade = createNearBladeGeometry(isLushTier ? 1.24 : 1.14);
+    this.farBaseBlade = createFarTuftCardGeometry(isLushTier ? 1.14 : 1.06);
 
     const nearInst = buildChunkInstancedGeometry(
       this.nearBaseBlade,

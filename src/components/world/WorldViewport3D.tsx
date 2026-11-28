@@ -64,6 +64,7 @@ import {
   buildIslandMesh,
   buildWeatherParticles,
   computeAtmosphereState,
+  computeEffectivePixelRatio,
   createMakerRenderer,
   detectSoftwareGl,
   disposeObject3D,
@@ -409,6 +410,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     ndc: THREE.Vector2;
     raycaster: THREE.Raycaster;
     fallbackPlane: THREE.Plane;
+    sideScrollerPlane: THREE.Plane;
     hitPt: THREE.Vector3;
   } | null>(null);
 
@@ -629,11 +631,13 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     scene.add(sun.target);
     let sunCsm: CsmShadowHandle | null = attachSunCSM(sun, {
       isSoftwareGl,
-      cascades: 3,
-      maxFar: 220,
-      lightMargin: 90,
-      mapSize: 1024,
+      cascades: 2,
+      maxFar: 175,
+      lightMargin: 75,
+      mapSize: 768,
     });
+    let cachedAtmoLevelRef: GameLevel | null = null;
+    let cachedAtmoState: ReturnType<typeof computeAtmosphereState> | null = null;
 
     let envTex: THREE.Texture | null = null;
     let postPipeline: PostProcessingPipeline | null = null;
@@ -912,17 +916,20 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       precompileObject: async (obj: THREE.Object3D) => {
         const curRefs = sceneRefs.current;
         if (!curRefs || !curRefs.rendererInitialized || disposed) return;
+        // Skip incremental sub-container compileAsync while the render loop is running;
+        // WebGPURenderer r187 compiles new node materials on demand during render() without
+        // wiping the scene's shared RenderList or clobbering RenderTarget/MRT across frame yields.
+        if (obj !== scene) return;
         compileChain = compileChain.then(async () => {
           const activeRefs = sceneRefs.current;
           if (disposed || !activeRefs?.rendererInitialized) return;
           try {
             if (activeRefs.postPipeline) {
               await activeRefs.postPipeline.precompileAsync(
-                propsRef.current.project.postProcessing,
-                obj
+                propsRef.current.project.postProcessing
               );
             } else {
-              await activeRefs.renderer.compileAsync(obj, camera, scene);
+              await activeRefs.renderer.compileAsync(scene, camera);
             }
           } catch {
             // ignore compile skips if object was disposed mid-flight
@@ -950,6 +957,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
     const _waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -IslandTerrain.waterLevel);
+    const _sideScrollerPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
     const _planeHit = new THREE.Vector3();
     const _worldNormal = new THREE.Vector3();
 
@@ -1109,11 +1117,30 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
     const raycastGround = (clientX: number, clientY: number): THREE.Vector3 | null => {
       const refs = sceneRefs.current;
-      if (!refs || refs.groundMeshes.length === 0) return null;
+      if (!refs) return null;
       updatePointer(clientX, clientY);
       raycaster.setFromCamera(pointerNdc, camera);
       const curState = propsRef.current;
-      const isWm = curState.worldEditorScope === 'worldMap';
+      const isWm =
+        curState.worldEditorScope === 'worldMap' &&
+        getEnvironmentType(curState.level) === 'openWorld';
+
+      if (getEnvironmentType(curState.level) === 'sideScroller') {
+        const hits =
+          refs.groundMeshes.length > 0
+            ? raycaster.intersectObjects(refs.groundMeshes, false)
+            : [];
+        if (hits[0]?.point) return hits[0].point;
+        if (raycaster.ray.intersectPlane(_sideScrollerPlane, _planeHit)) {
+          _planeHit.x = Math.max(-54, Math.min(54, _planeHit.x));
+          _planeHit.y = Math.max(-3, Math.min(22, _planeHit.y));
+          _planeHit.z = 0;
+          return _planeHit;
+        }
+        return null;
+      }
+
+      if (refs.groundMeshes.length === 0) return null;
 
       // When hand-painting inside an existing cave (moss/puddles/crystals/etc.), intersect its floor plane directly
       const isCavePaintBrush =
@@ -1171,8 +1198,10 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       excludeEntityId?: string | null
     ): { x: number; y: number; z: number; elevationY: number } | null => {
       const refs = sceneRefs.current;
-      if (!refs || refs.groundMeshes.length === 0) return null;
+      if (!refs) return null;
       const curLevel = propsRef.current.level;
+      const isSideScroller = getEnvironmentType(curLevel) === 'sideScroller';
+      if (!isSideScroller && refs.groundMeshes.length === 0) return null;
       const snap = propsRef.current.gridSnap ?? 0;
       const shouldStack = Boolean(propsRef.current.isPlacingBuildingBlock || excludeEntityId);
 
@@ -1312,6 +1341,20 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
             }
           }
         }
+      }
+
+      // 2.5D Side-Scroller: place/move anywhere in the Hero Lane vertical plane (Z = 0)
+      if (isSideScroller) {
+        if (raycaster.ray.intersectPlane(_sideScrollerPlane, _planeHit)) {
+          const clampedX = Math.max(-54, Math.min(54, _planeHit.x));
+          const clampedY = Math.max(-3, Math.min(22, _planeHit.y));
+          const x = snap > 0 ? Math.round(clampedX / snap) * snap : clampedX;
+          const y = snap > 0 ? Math.round(clampedY / snap) * snap : clampedY;
+          const groundY = sampleLevelHeight(curLevel, x, 0);
+          const elevationY = Number((y - groundY).toFixed(3));
+          return { x, y, z: 0, elevationY };
+        }
+        return null;
       }
 
       const groundHits = raycaster.intersectObjects(refs.groundMeshes, false);
@@ -1582,7 +1625,10 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
       if (curTool === 'terrain') return;
 
-      if (propsRef.current.worldEditorScope === 'worldMap') {
+      if (
+        propsRef.current.worldEditorScope === 'worldMap' &&
+        getEnvironmentType(curLevel) === 'openWorld'
+      ) {
         return;
       }
 
@@ -1683,7 +1729,9 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       }
 
       if (curTool === 'terrain' && refs) {
-        const isWorldMapEdit = propsRef.current.worldEditorScope === 'worldMap';
+        const isWorldMapEdit =
+          propsRef.current.worldEditorScope === 'worldMap' &&
+          getEnvironmentType(propsRef.current.level) === 'openWorld';
         const existingCaveHover =
           !isWorldMapEdit && curBrush === 'carveCave'
             ? findExistingCaveHitOnPlane(e.clientX, e.clientY)
@@ -1745,6 +1793,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
       if (activeMode === 'dragEntity' && activeEntityId) {
         if (!movedFar) return;
+        const isSideScroller = getEnvironmentType(propsRef.current.level) === 'sideScroller';
         if (activeEntityId === HERO_START_ENTITY_ID) {
           const hit = raycastGround(e.clientX, e.clientY);
           if (hit) {
@@ -1757,7 +1806,12 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
           return;
         }
         const draggedEnt = propsRef.current.level.entities.find((item) => item.id === activeEntityId);
-        const useSnapStack = Boolean(draggedEnt?.buildingBlock || draggedEnt?.kind === 'door' || (propsRef.current.gridSnap ?? 0) > 0);
+        const useSnapStack = Boolean(
+          isSideScroller ||
+            draggedEnt?.buildingBlock ||
+            draggedEnt?.kind === 'door' ||
+            (propsRef.current.gridSnap ?? 0) > 0
+        );
         if (useSnapStack) {
           const hit = raycastPlacementSurface(
             e.clientX,
@@ -1766,7 +1820,8 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
           );
           if (hit) {
             const bp = levelWorldToBoard(propsRef.current.level, hit.x, hit.z);
-            const keepElev = draggedEnt?.buildingBlock ? hit.elevationY : draggedEnt?.elevationY;
+            const keepElev =
+              isSideScroller || draggedEnt?.buildingBlock ? hit.elevationY : draggedEnt?.elevationY;
             propsRef.current.onMoveEntity(activeEntityId, bp, keepElev);
           }
         } else {
@@ -1783,7 +1838,13 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         const dx = e.clientX - dragStartX;
         const nextScale = Math.max(0.4, Math.min(2.6, startVal + dx * 0.008));
         propsRef.current.onScaleEntity(activeEntityId, Number(nextScale.toFixed(2)));
-      } else if (refs && curTool === 'add' && (propsRef.current.isPlacingBuildingBlock || (propsRef.current.gridSnap ?? 0) > 0)) {
+      } else if (
+        refs &&
+        curTool === 'add' &&
+        (propsRef.current.isPlacingBuildingBlock ||
+          (propsRef.current.gridSnap ?? 0) > 0 ||
+          getEnvironmentType(propsRef.current.level) === 'sideScroller')
+      ) {
         const hit = raycastPlacementSurface(e.clientX, e.clientY, null);
         if (hit) {
           const [gw, gh, gd] = propsRef.current.placementGhostSize ?? [2, 2, 2];
@@ -1884,7 +1945,10 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
       if (!movedFar && wasMode === 'none') {
         const { tool: curTool, level: curLevel, activeWorldDomain: domMode } = propsRef.current;
-        if (propsRef.current.worldEditorScope === 'worldMap') {
+        if (
+          propsRef.current.worldEditorScope === 'worldMap' &&
+          getEnvironmentType(curLevel) === 'openWorld'
+        ) {
           if (curTool !== 'terrain') {
             const hit = raycastGround(e.clientX, e.clientY);
             if (hit && propsRef.current.worldMap) {
@@ -2065,6 +2129,9 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     let lastCompactFps = -1;
     let weatherSyncTimer = 0;
     let lastAnimShadowTime = -1;
+    let adaptiveScale = 1.0;
+    let lowFpsStreak = 0;
+    let highFpsStreak = 0;
 
     function afterDraw(cb: () => void) {
       const gl =
@@ -2349,12 +2416,15 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
           refs.wildlifeSystem.update(dt, t);
         }
         if (refs?.islandHandles?.volumetricAtmosphere) {
-          const atmo = computeAtmosphereState(curLevel);
+          if (cachedAtmoLevelRef !== curLevel || !cachedAtmoState) {
+            cachedAtmoLevelRef = curLevel;
+            cachedAtmoState = computeAtmosphereState(curLevel);
+          }
           refs.islandHandles.volumetricAtmosphere.update(
             refs.camera,
             dt,
             t,
-            atmo,
+            cachedAtmoState,
             refs.controls.target
           );
         }
@@ -2433,6 +2503,42 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
               if (compactMsTextRef.current) {
                 compactMsTextRef.current.textContent = `${frameMs.toFixed(0)}ms`;
               }
+            }
+          }
+          // Adaptive FPS governor for World Editor viewport (never disables fog/atmosphere)
+          if (!isSoftwareGl && !postPipeline?.isPrecompiling()) {
+            if (fps < 42) {
+              lowFpsStreak++;
+              highFpsStreak = 0;
+              if (lowFpsStreak >= 3 && adaptiveScale > 0.72) {
+                lowFpsStreak = 0;
+                adaptiveScale = adaptiveScale > 0.88 ? 0.82 : 0.72;
+                refs?.islandHandles?.grassSystem?.setDynamicViewScale(adaptiveScale);
+                if (adaptiveScale <= 0.82) {
+                  sunCsm?.setQualityTier('performance');
+                }
+                const cw = container?.clientWidth || 800;
+                const ch = container?.clientHeight || 600;
+                renderer.setPixelRatio(computeEffectivePixelRatio(cw, ch, isSoftwareGl, adaptiveScale));
+                renderer.setSize(cw, ch, false);
+                postPipeline?.setSize(cw, ch);
+              }
+            } else if (fps >= 55 && adaptiveScale < 1) {
+              highFpsStreak++;
+              lowFpsStreak = 0;
+              if (highFpsStreak >= 8) {
+                highFpsStreak = 0;
+                adaptiveScale = adaptiveScale < 0.76 ? 0.82 : 1.0;
+                refs?.islandHandles?.grassSystem?.setDynamicViewScale(adaptiveScale);
+                if (adaptiveScale >= 1.0) {
+                  sunCsm?.setQualityTier('balanced');
+                }
+                const cw = container?.clientWidth || 800;
+                const ch = container?.clientHeight || 600;
+                applyContainerResize(cw, ch);
+              }
+            } else {
+              lowFpsStreak = Math.max(0, lowFpsStreak - 1);
             }
           }
           perfFrames = 0;
@@ -2681,17 +2787,14 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       scene.fog = null;
       scene.clear();
       const preCapturedGl =
-        isIOSDevice() && typeof renderer.getContext === 'function'
-          ? renderer.getContext()
-          : null;
+        typeof renderer.getContext === 'function' ? renderer.getContext() : null;
       try {
         renderer.dispose();
       } catch {
         // ignore if device already lost
       }
-      if (isIOSDevice()) {
-        forceReleaseRendererContext(renderer, preCapturedGl);
-      }
+      forceReleaseRendererContext(renderer, preCapturedGl);
+      container.innerHTML = '';
     };
   }, []);
 
@@ -4031,12 +4134,13 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
   const raycastClientToGround = (clientX: number, clientY: number): THREE.Vector3 | null => {
     const refs = sceneRefs.current;
-    if (!refs || refs.groundMeshes.length === 0) return null;
+    if (!refs) return null;
     if (!dragRaycastScratchRef.current) {
       dragRaycastScratchRef.current = {
         ndc: new THREE.Vector2(),
         raycaster: new THREE.Raycaster(),
         fallbackPlane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+        sideScrollerPlane: new THREE.Plane(new THREE.Vector3(0, 0, 1), 0),
         hitPt: new THREE.Vector3(),
       };
     }
@@ -4047,6 +4151,18 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
       -((clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
     );
     scratch.raycaster.setFromCamera(scratch.ndc, refs.camera);
+
+    if (getEnvironmentType(propsRef.current.level) === 'sideScroller') {
+      if (scratch.raycaster.ray.intersectPlane(scratch.sideScrollerPlane, scratch.hitPt)) {
+        scratch.hitPt.x = Math.max(-54, Math.min(54, scratch.hitPt.x));
+        scratch.hitPt.y = Math.max(-3, Math.min(22, scratch.hitPt.y));
+        scratch.hitPt.z = 0;
+        return scratch.hitPt;
+      }
+      return null;
+    }
+
+    if (refs.groundMeshes.length === 0) return null;
     const hits = scratch.raycaster.intersectObjects(refs.groundMeshes, false);
     if (hits[0]?.point) return hits[0].point;
 
@@ -4164,12 +4280,17 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
     if (platformerModId && propsRef.current.onDropPlatformerModule) {
       e.preventDefault();
+      const curLevel = propsRef.current.level;
       const hit = raycastClientToGround(e.clientX, e.clientY);
       const boardPos = hit
-        ? levelWorldToBoard(propsRef.current.level, hit.x, hit.z)
+        ? levelWorldToBoard(curLevel, hit.x, hit.z)
         : { x: 0.5, y: 0.5 };
-      const envNow = getEnvironmentType(propsRef.current.level);
-      const elev = hit && envNow === 'sideScroller' ? Math.max(-3, Math.min(20, hit.y)) : undefined;
+      const envNow = getEnvironmentType(curLevel);
+      const groundY = hit ? sampleLevelHeight(curLevel, hit.x, hit.z) : 0;
+      const elev =
+        hit && envNow === 'sideScroller'
+          ? Number(Math.max(-4, Math.min(22, hit.y - groundY)).toFixed(2))
+          : undefined;
       propsRef.current.onDropPlatformerModule(platformerModId, boardPos, elev);
       return;
     }

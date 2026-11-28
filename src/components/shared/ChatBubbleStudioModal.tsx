@@ -32,6 +32,7 @@ import type {
   LevelEntity,
 } from '../../types/maker';
 import { AudioEngine } from '../../utils/audio';
+import { HUD_SURFACE_TEXTURES, HUD_WIDGET_SHAPES } from '../../utils/hudMaterials';
 import { BottomChatPanelView, ChatBubbleView } from './ChatBubbleRenderer';
 import { DialogueVoiceEditor } from './DialogueVoiceEditor';
 import { FieldLabel } from './MakerUI';
@@ -939,14 +940,14 @@ export const ChatBubbleStudioModal: React.FC<ChatBubbleStudioModalProps> = ({
 
                     <label className="block space-y-1">
                       <div className="flex justify-between text-[11px] font-semibold">
-                        <span>Bubble Opacity</span>
+                        <span>Bubble Opacity (Ghost Back)</span>
                         <span className="tabular-nums text-slate-500">
                           {Math.round(activeStyle.opacity * 100)}%
                         </span>
                       </div>
                       <input
                         type="range"
-                        min={0.45}
+                        min={0.1}
                         max={1}
                         step={0.01}
                         value={activeStyle.opacity}
@@ -959,6 +960,137 @@ export const ChatBubbleStudioModal: React.FC<ChatBubbleStudioModalProps> = ({
                         className="w-full accent-[#7C5CFF]"
                       />
                     </label>
+
+                    {/* Surface Material Texture */}
+                    <div className="space-y-1.5 pt-2">
+                      <span className="text-[11px] font-semibold text-slate-500 dark:text-[#949BB0]">
+                        Surface Material Texture
+                      </span>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                        {HUD_SURFACE_TEXTURES.map((tex) => {
+                          const selected = (activeStyle.surfaceTexture ?? 'smooth') === tex.id;
+                          return (
+                            <button
+                              key={tex.id}
+                              type="button"
+                              onClick={() =>
+                                updateBubbleStyle((prev) => ({
+                                  ...prev,
+                                  presetId: undefined,
+                                  surfaceTexture: tex.id,
+                                }))
+                              }
+                              className={`px-2 py-1.5 rounded-lg border text-[10px] font-bold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+                                selected
+                                  ? 'border-[#7C5CFF] bg-[#7C5CFF]/15 text-[#7C5CFF]'
+                                  : 'border-slate-200/70 dark:border-white/[0.08] bg-slate-50 dark:bg-[#1B1F2B] text-slate-600 dark:text-[#949BB0]'
+                              }`}
+                            >
+                              <span
+                                className="w-3.5 h-3.5 rounded shrink-0 border border-black/20"
+                                style={{ background: tex.previewBg }}
+                              />
+                              <span className="truncate">{tex.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Organic Wear, Burned Edges, Paper Tears & 3D Depth */}
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                      <label className="space-y-1">
+                        <div className="flex justify-between text-[11px] font-semibold">
+                          <span>Organic Edge Wear</span>
+                          <span className="tabular-nums text-slate-500">
+                            {Math.round((activeStyle.edgeWear ?? 0) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={activeStyle.edgeWear ?? 0}
+                          onChange={(e) =>
+                            updateBubbleStyle(
+                              (prev) => ({ ...prev, presetId: undefined, edgeWear: Number(e.target.value) }),
+                              false
+                            )
+                          }
+                          className="w-full accent-[#7C5CFF]"
+                        />
+                      </label>
+
+                      <label className="space-y-1">
+                        <div className="flex justify-between text-[11px] font-semibold">
+                          <span>Burned / Scorched Edges</span>
+                          <span className="tabular-nums text-slate-500">
+                            {Math.round((activeStyle.burnedEdges ?? 0) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={activeStyle.burnedEdges ?? 0}
+                          onChange={(e) =>
+                            updateBubbleStyle(
+                              (prev) => ({ ...prev, presetId: undefined, burnedEdges: Number(e.target.value) }),
+                              false
+                            )
+                          }
+                          className="w-full accent-[#7C5CFF]"
+                        />
+                      </label>
+
+                      <label className="space-y-1">
+                        <div className="flex justify-between text-[11px] font-semibold">
+                          <span>Torn Paper Edges</span>
+                          <span className="tabular-nums text-slate-500">
+                            {Math.round((activeStyle.paperTears ?? 0) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={activeStyle.paperTears ?? 0}
+                          onChange={(e) =>
+                            updateBubbleStyle(
+                              (prev) => ({ ...prev, presetId: undefined, paperTears: Number(e.target.value) }),
+                              false
+                            )
+                          }
+                          className="w-full accent-[#7C5CFF]"
+                        />
+                      </label>
+
+                      <label className="space-y-1">
+                        <div className="flex justify-between text-[11px] font-semibold">
+                          <span>3D Extrusion Depth</span>
+                          <span className="tabular-nums text-slate-500">
+                            {Math.round((activeStyle.depth3d ?? 0) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={activeStyle.depth3d ?? 0}
+                          onChange={(e) =>
+                            updateBubbleStyle(
+                              (prev) => ({ ...prev, presetId: undefined, depth3d: Number(e.target.value) }),
+                              false
+                            )
+                          }
+                          className="w-full accent-[#7C5CFF]"
+                        />
+                      </label>
+                    </div>
                   </section>
 
                   {/* 5. Dynamic Motion & Proximity */}
@@ -1120,6 +1252,12 @@ export const ChatBubbleStudioModal: React.FC<ChatBubbleStudioModalProps> = ({
                                 panelBorderColor: theme.borderColor,
                                 panelTextColor: theme.textColor,
                                 panelOpacity: theme.opacity,
+                                panelTexture: theme.texture ?? 'smooth',
+                                panelShape: theme.shape ?? 'rounded',
+                                panelBurnedEdges: theme.burnedEdges ?? 0,
+                                panelPaperTears: theme.paperTears ?? 0,
+                                panelEdgeWear: theme.edgeWear ?? 0,
+                                panelFontFamily: theme.fontFamily ?? 'sans',
                               }))
                             }
                             className={`p-3 rounded-xl border text-left transition-all ${
@@ -1195,14 +1333,14 @@ export const ChatBubbleStudioModal: React.FC<ChatBubbleStudioModalProps> = ({
 
                     <label className="block space-y-1">
                       <div className="flex justify-between text-[11px] font-semibold">
-                        <span>Panel Opacity</span>
+                        <span>Panel Opacity (Ghost Back)</span>
                         <span className="tabular-nums text-slate-500">
                           {Math.round(chatSettings.panelOpacity * 100)}%
                         </span>
                       </div>
                       <input
                         type="range"
-                        min={0.65}
+                        min={0.15}
                         max={1}
                         step={0.01}
                         value={chatSettings.panelOpacity}
@@ -1215,6 +1353,121 @@ export const ChatBubbleStudioModal: React.FC<ChatBubbleStudioModalProps> = ({
                         className="w-full accent-[#7C5CFF]"
                       />
                     </label>
+
+                    {/* Panel Material & Shape */}
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <label className="space-y-1">
+                        <span className="text-[11px] font-semibold text-slate-500 dark:text-[#949BB0]">
+                          Panel Material
+                        </span>
+                        <select
+                          value={chatSettings.panelTexture ?? 'smooth'}
+                          onChange={(e) =>
+                            updateChatSettings((s) => ({
+                              ...s,
+                              panelTexture: e.target.value as typeof s.panelTexture,
+                            }))
+                          }
+                          className="w-full px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-[#1F2430] text-xs font-semibold"
+                        >
+                          {HUD_SURFACE_TEXTURES.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[11px] font-semibold text-slate-500 dark:text-[#949BB0]">
+                          Panel Shape
+                        </span>
+                        <select
+                          value={chatSettings.panelShape ?? 'rounded'}
+                          onChange={(e) =>
+                            updateChatSettings((s) => ({
+                              ...s,
+                              panelShape: e.target.value as typeof s.panelShape,
+                            }))
+                          }
+                          className="w-full px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-[#1F2430] text-xs font-semibold"
+                        >
+                          {HUD_WIDGET_SHAPES.map((sh) => (
+                            <option key={sh.id} value={sh.id}>
+                              {sh.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <label className="space-y-1">
+                        <div className="flex justify-between text-[10px] font-semibold">
+                          <span>Wear</span>
+                          <span className="tabular-nums text-slate-500">
+                            {Math.round((chatSettings.panelEdgeWear ?? 0) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={chatSettings.panelEdgeWear ?? 0}
+                          onChange={(e) =>
+                            updateChatSettings(
+                              (s) => ({ ...s, panelEdgeWear: Number(e.target.value) }),
+                              false
+                            )
+                          }
+                          className="w-full accent-[#7C5CFF]"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <div className="flex justify-between text-[10px] font-semibold">
+                          <span>Burned</span>
+                          <span className="tabular-nums text-slate-500">
+                            {Math.round((chatSettings.panelBurnedEdges ?? 0) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={chatSettings.panelBurnedEdges ?? 0}
+                          onChange={(e) =>
+                            updateChatSettings(
+                              (s) => ({ ...s, panelBurnedEdges: Number(e.target.value) }),
+                              false
+                            )
+                          }
+                          className="w-full accent-[#7C5CFF]"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <div className="flex justify-between text-[10px] font-semibold">
+                          <span>Tears</span>
+                          <span className="tabular-nums text-slate-500">
+                            {Math.round((chatSettings.panelPaperTears ?? 0) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={chatSettings.panelPaperTears ?? 0}
+                          onChange={(e) =>
+                            updateChatSettings(
+                              (s) => ({ ...s, panelPaperTears: Number(e.target.value) }),
+                              false
+                            )
+                          }
+                          className="w-full accent-[#7C5CFF]"
+                        />
+                      </label>
+                    </div>
                   </section>
 
                   <section className="space-y-3 pt-4 border-t border-slate-200/70 dark:border-white/[0.08]">

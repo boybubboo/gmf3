@@ -2208,10 +2208,10 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     scene.add(sun.target);
     let sunCsm: CsmShadowHandle | null = attachSunCSM(sun, {
       isSoftwareGl,
-      cascades: 3,
-      maxFar: 185,
-      lightMargin: 85,
-      mapSize: 1024,
+      cascades: 2,
+      maxFar: 165,
+      lightMargin: 75,
+      mapSize: 768,
     });
     const heroFootIK = new CharacterFootIKController();
     let prevHeroYawForIK = 0;
@@ -2381,15 +2381,17 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     let islandAbort: AbortController | null = null;
     let islandHandlesRef: IslandSceneHandles | null = null;
     let currentAtmoRef: ComputedAtmosphere | null = null;
+    let navMeshBuildTimer: number | null = null;
+    const _scratchBox3 = new THREE.Box3();
+    const _scratchVec3 = new THREE.Vector3();
+    const _scratchPuffMat4 = new THREE.Matrix4();
 
     const bootAndRun = async () => {
-      if (isIOS) {
-        // Allow iOS Safari/WebKit to reclaim the unmounted editor WebGL/WebGPU buffers before allocating Play Mode GPU memory
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-        );
-        if (disposed) return;
-      }
+      // Allow unmounted editor WebGL/WebGPU buffers & React commit to settle before allocating Play Mode GPU memory
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+      if (disposed) return;
       let initOk = false;
       const initHardwareWebGLFallback = async () => {
         if (disposed) return false;
@@ -2602,7 +2604,13 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       }
       if (!isSoftwareGl) {
         navMeshEngine = new PlayNavMeshEngine();
-        void navMeshEngine.buildForLevel(activeLevel);
+        // Defer Recast WASM NavMesh baking until after initial PlayMode frames settle
+        navMeshBuildTimer = window.setTimeout(() => {
+          navMeshBuildTimer = null;
+          if (!disposed && navMeshEngine) {
+            void navMeshEngine.buildForLevel(activeLevel);
+          }
+        }, 450);
       }
       // Yield one frame between terrain mesh construction and entity construction
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -2803,7 +2811,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       // Driving vehicle rig (active in Driving mode; swaps live on car/driver change)
       let activeCarId: CarPresetId = drivingCfgRef.current.carId;
       let activeDriverId: DriverTypeId = drivingCfgRef.current.driverId;
-      let activeCustomKey: string = JSON.stringify(drivingCfgRef.current.customVehicle ?? null);
+      let activeCustomVehicleRef = drivingCfgRef.current.customVehicle ?? null;
       let carFlightTimer = 0;
       let carRig: CarRig | null = null;
       if (isDriving) {
@@ -2963,10 +2971,18 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         scene.add(portalMesh);
       }
 
-      // Runtime entities
+      // Runtime entities (time-sliced across animation frames to prevent 150ms+ PlayMode entry spikes)
       let playWallTorchLightCount = 0;
       let playSavePlinthLightCount = 0;
-      const runtimeEntities: RuntimeEntity[] = activeLevel.entities.map((ent) => {
+      const runtimeEntities: RuntimeEntity[] = [];
+      let entityChunkStartMs = performance.now();
+      for (let entIdx = 0; entIdx < activeLevel.entities.length; entIdx++) {
+        if (entIdx > 0 && performance.now() - entityChunkStartMs >= 8) {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          if (disposed) return;
+          entityChunkStartMs = performance.now();
+        }
+        const ent = activeLevel.entities[entIdx];
         let customInst: CustomModelInstance | null = null;
         let fxRuntime: FxEmitterRuntime | null = null;
         let mesh: THREE.Group;
@@ -3125,8 +3141,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           if (quadrupedRig) {
             barHeight = Math.max(1.85, quadrupedRig.topHeight + (quadrupedRig.canFly ? 1.4 : 0.45));
           } else if (!baddieRig) {
-            const box = new THREE.Box3().setFromObject(mesh);
-            const modelH = box.max.y - wy;
+            _scratchBox3.setFromObject(mesh);
+            const modelH = _scratchBox3.max.y - wy;
             if (Number.isFinite(modelH) && modelH > 0.4) {
               barHeight = THREE.MathUtils.clamp(modelH + 0.36, 1.85, 3.6);
             }
@@ -3196,8 +3212,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         );
         let headHeight = ent.isBoss ? 2.55 : ent.kind === 'sign' ? 1.55 : 1.95;
         if (ent.kind === 'npc' || ent.kind === 'baddie' || ent.kind === 'sign') {
-          const box = new THREE.Box3().setFromObject(mesh);
-          const h = box.max.y - (wy + extraY);
+          _scratchBox3.setFromObject(mesh);
+          const h = _scratchBox3.max.y - (wy + extraY);
           if (Number.isFinite(h) && h > 0.45) {
             headHeight = THREE.MathUtils.clamp(h + 0.15, 1.35, 3.8);
           }
@@ -3234,7 +3250,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           customInst.setCustomAnimations(mergedCustomPresets, mergedCustomDefaults);
         }
 
-        return {
+        runtimeEntities.push({
           id: ent.id,
           kind: ent.kind,
           name: ent.name,
@@ -3378,8 +3394,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           motionBlend: 0,
           motionElapsed: 0,
           motionKey: '',
-        };
-      });
+        });
+      }
 
       activeRuntimeEntities = runtimeEntities;
 
@@ -4872,9 +4888,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       let lastCompactFps = -1;
       let cachedHotbarKey = '';
       let cachedHotbarItems: HUDState['hotbarItems'] = [];
-      let cachedBaddieKey = '';
-      let cachedBaddiePoints: BoardPoint[] = [];
       let cachedHudKey = '';
+      let cachedDriveHudKey = '';
+      const hasVisibleTimerWidget = Boolean(
+        activeProject.hud?.widgets?.some((w) => w.kind === 'timer')
+      );
       let lastPubBuddyCount = -1;
       let cachedRecruitedBuddyIds: string[] = [];
       let lastPubCheckpointCount = -1;
@@ -5691,17 +5709,17 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
           if (isDriving && carRig) {
             const cfgNow = drivingCfgRef.current;
-            const currentCustomKey = JSON.stringify(cfgNow.customVehicle ?? null);
+            const nextCustomVehicleRef = cfgNow.customVehicle ?? null;
             if (
               cfgNow.carId !== activeCarId ||
               cfgNow.driverId !== activeDriverId ||
-              currentCustomKey !== activeCustomKey
+              nextCustomVehicleRef !== activeCustomVehicleRef
             ) {
               scene.remove(carRig.group);
               disposeObject3D(carRig.group);
               activeCarId = cfgNow.carId;
               activeDriverId = cfgNow.driverId;
-              activeCustomKey = currentCustomKey;
+              activeCustomVehicleRef = nextCustomVehicleRef;
               carRig = buildCarModel(activeCarId, activeDriverId, cfgNow.customVehicle);
               applyVisualStyleToObject(carRig.group, style);
               scene.add(carRig.group);
@@ -8483,8 +8501,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   stump.position.set(bestTree.x, bestTree.y, bestTree.z);
                   scene.add(stump);
                   stump.updateMatrixWorld(true);
-                  const stumpBox = new THREE.Box3().setFromObject(stump);
-                  const stumpTopOffset = Math.max(0.28, stumpBox.max.y - bestTree.y);
+                  _scratchBox3.setFromObject(stump);
+                  const stumpTopOffset = Math.max(0.28, _scratchBox3.max.y - bestTree.y);
                   choppedStumps.push({
                     id: bestTree.id,
                     x: bestTree.x,
@@ -8938,11 +8956,10 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 im.instanceMatrix.needsUpdate = true;
               }
               if (tr.canopyPuffMeshes && tr.canopyPuffIndices && tr.canopyPuffLocalMatrices) {
-                const puffWorld = new THREE.Matrix4();
                 for (const pm of tr.canopyPuffMeshes) {
                   for (let pi = 0; pi < tr.canopyPuffIndices.length; pi++) {
-                    puffWorld.multiplyMatrices(_treeDummy.matrix, tr.canopyPuffLocalMatrices[pi]);
-                    pm.setMatrixAt(tr.canopyPuffIndices[pi], puffWorld);
+                    _scratchPuffMat4.multiplyMatrices(_treeDummy.matrix, tr.canopyPuffLocalMatrices[pi]);
+                    pm.setMatrixAt(tr.canopyPuffIndices[pi], _scratchPuffMat4);
                   }
                   pm.instanceMatrix.needsUpdate = true;
                 }
@@ -13692,13 +13709,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   let fallbackSeatH = 0.44 * (rt.entityScale ?? 1);
                   let fallbackSeatFwd = 0.14 * (rt.entityScale ?? 1);
                   if (!rt.interactionCalibrations?.sit) {
-                    const entBox = new THREE.Box3().setFromObject(rt.mesh);
-                    if (!entBox.isEmpty()) {
-                      fallbackSeatH = THREE.MathUtils.clamp(entBox.max.y - baseY - 0.03, 0.24, 1.35);
-                      const entSize = new THREE.Vector3();
-                      entBox.getSize(entSize);
+                    _scratchBox3.setFromObject(rt.mesh);
+                    if (!_scratchBox3.isEmpty()) {
+                      fallbackSeatH = THREE.MathUtils.clamp(_scratchBox3.max.y - baseY - 0.03, 0.24, 1.35);
+                      _scratchBox3.getSize(_scratchVec3);
                       fallbackSeatFwd = THREE.MathUtils.clamp(
-                        Math.min(entSize.x, entSize.z) * 0.34,
+                        Math.min(_scratchVec3.x, _scratchVec3.z) * 0.34,
                         0.14,
                         0.72
                       );
@@ -14018,38 +14034,38 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           if (Math.abs(snapX - lastShadowSnapX) > 0.25 || Math.abs(snapZ - lastShadowSnapZ) > 0.25) {
             lastShadowSnapX = snapX;
             lastShadowSnapZ = snapZ;
-            sun.target.position.set(snapX, 0, snapZ);
-            sun.position.set(snapX + _sunOffset.x, _sunOffset.y, snapZ + _sunOffset.z);
             if (!isSoftwareGl && sun.castShadow) {
               lastShadowUpdateTime = gameElapsed;
-              sun.shadow.needsUpdate = true;
+              if (sunCsm) {
+                // CSM cascades track the camera frustum; only mark near cascade dirty when hero moves
+                sunCsm.markDirty(false);
+              } else {
+                sun.target.position.set(snapX, 0, snapZ);
+                sun.position.set(snapX + _sunOffset.x, _sunOffset.y, snapZ + _sunOffset.z);
+                sun.shadow.needsUpdate = true;
+              }
             }
-          } else if (!isSoftwareGl && sun.castShadow && gameElapsed - lastShadowUpdateTime >= 0.045) {
+          } else if (!isSoftwareGl && sun.castShadow && !sunCsm && gameElapsed - lastShadowUpdateTime >= 0.28) {
             lastShadowUpdateTime = gameElapsed;
             sun.shadow.needsUpdate = true;
           }
 
-          // Sync HUD smoothly (~9Hz)
+          // Sync HUD smoothly (~6Hz check, only triggers React re-render when visible HUD values change)
           hudSyncTimer += dt;
-          if (hudSyncTimer >= 0.11) {
+          if (hudSyncTimer >= 0.16) {
             hudSyncTimer = 0;
             const mins = Math.floor(gameElapsed / 60);
             const secs = Math.floor(gameElapsed % 60);
             const timeText = `${mins}:${secs.toString().padStart(2, '0')}`;
             let boss: RuntimeEntity | undefined;
-            let bKey = '';
             let aliveBaddies = 0;
             let totalBaddies = 0;
-            const nextBaddiePts: BoardPoint[] = [];
             for (let ri = 0; ri < runtimeEntities.length; ri++) {
               const r = runtimeEntities[ri];
               if (r.kind === 'baddie') totalBaddies++;
               if (r.kind === 'baddie' && r.alive && r.aiState !== 'dying') {
                 aliveBaddies++;
                 if (r.isBoss) boss = r;
-                const bp = levelWorldToBoard(activeLevel, r.x, r.z);
-                bKey += `${Math.round(bp.x * 400)},${Math.round(bp.y * 400)};`;
-                nextBaddiePts.push(bp);
               }
             }
             if (isRoguelikeLevel && aliveBaddies !== lastRoguelikeBaddiesLeft) {
@@ -14060,21 +14076,26 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 portalUnlocked: aliveBaddies === 0,
               });
             }
-            if (bKey !== cachedBaddieKey) {
-              cachedBaddieKey = bKey;
-              cachedBaddiePoints = nextBaddiePts;
-            }
             if (isDriving) {
-              setDriveHud({
-                speedKmh: Math.round(Math.hypot(carVelX, carVelZ) * 4.2),
-                boost: Math.round(carBoost),
-                drifting: carWasDrifting,
-                airborne: heroY > floorY + 0.35,
-                checkpointsHit: carCheckpointsHit,
-                checkpointsTotal: drivingCheckpointsTotal,
-                flightSeconds: Math.ceil(carFlightTimer),
-                hasWings: Boolean(carRig?.hasPermanentWings),
-              });
+              const spdKmh = Math.round(Math.hypot(carVelX, carVelZ) * 4.2);
+              const boostRnd = Math.round(carBoost);
+              const airborneNow = heroY > floorY + 0.35;
+              const flightSec = Math.ceil(carFlightTimer);
+              const hasWingsNow = Boolean(carRig?.hasPermanentWings);
+              const driveKey = `${spdKmh}|${boostRnd}|${carWasDrifting ? 1 : 0}|${airborneNow ? 1 : 0}|${carCheckpointsHit}/${drivingCheckpointsTotal}|${flightSec}|${hasWingsNow ? 1 : 0}`;
+              if (driveKey !== cachedDriveHudKey) {
+                cachedDriveHudKey = driveKey;
+                setDriveHud({
+                  speedKmh: spdKmh,
+                  boost: boostRnd,
+                  drifting: carWasDrifting,
+                  airborne: airborneNow,
+                  checkpointsHit: carCheckpointsHit,
+                  checkpointsTotal: drivingCheckpointsTotal,
+                  flightSeconds: flightSec,
+                  hasWings: hasWingsNow,
+                });
+              }
             }
 
             const stacks = inventoryStacksRef.current;
@@ -14105,14 +14126,16 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               cachedHotbarItems = nextHotbar;
             }
 
-            const heroPt = levelWorldToBoard(activeLevel, heroX, heroZ);
             const stamRound = Math.round((stamina / maxStamina) * 100);
             const energyRound = Math.round(energy);
             const magicRound = Math.round(magic);
             const flashHp = hitInvuln > 0.7;
-            const hudKey = `${health}/${maxHealth}|${stamRound}|${energyRound}|${magicRound}|${coins}|${keys}|${timeText}|${Math.round(heroPt.x * 400)},${Math.round(heroPt.y * 400)}|${cachedBaddieKey}|${flashHp ? 1 : 0}|${boss?.health ?? ''}|${recruitedBuddyIds.length}|${bagCount}|${cachedHotbarKey}`;
+            // Exclude hero/baddie board coordinates (minimap is rendered by PersistentMinimapHUD via live telemetry)
+            const timePart = hasVisibleTimerWidget ? timeText : '';
+            const hudKey = `${health}/${maxHealth}|${stamRound}|${energyRound}|${magicRound}|${coins}|${keys}|${timePart}|${flashHp ? 1 : 0}|${boss?.health ?? ''}|${recruitedBuddyIds.length}|${bagCount}|${cachedHotbarKey}`;
             if (hudKey !== cachedHudKey) {
               cachedHudKey = hudKey;
+              const heroPt = levelWorldToBoard(activeLevel, heroX, heroZ);
               setHudState({
                 health,
                 maxHealth,
@@ -14125,7 +14148,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 objectives: staticObjectives,
                 heroPoint: heroPt,
                 portalPoint: portalBoardPoint,
-                baddiePoints: cachedBaddiePoints,
+                baddiePoints: [],
                 flashHealth: flashHp,
                 bossName: boss?.name,
                 bossHealth: boss?.health,
@@ -15062,23 +15085,51 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           }
 
-          // Adaptive FPS governor: adjust grass view distance cleanly without resizing render targets mid-walk
-          if (!pausedNow && !isSoftwareGl) {
-            if (fps < 36) {
+          // Adaptive FPS governor: gently tune dynamic resolution & CSM shadow tier when GPU-bound (never disables fog/atmosphere)
+          if (!pausedNow && !isSoftwareGl && !postPipeline?.isPrecompiling()) {
+            if (fps < 42) {
               lowFpsStreak++;
               highFpsStreak = 0;
               if (lowFpsStreak >= 3 && adaptiveScale > 0.7) {
                 lowFpsStreak = 0;
-                adaptiveScale = adaptiveScale > 0.88 ? 0.85 : 0.7;
+                adaptiveScale = adaptiveScale > 0.88 ? 0.82 : 0.7;
                 islandHandles.grassSystem?.setDynamicViewScale(adaptiveScale);
+                if (adaptiveScale <= 0.82) {
+                  sunCsm?.setQualityTier('performance');
+                }
+                const effResScale = liveQualityValuesRef.current.resolutionScale * adaptiveScale;
+                applyLiveRendererQuality(
+                  renderer,
+                  sun,
+                  postPipeline,
+                  container?.clientWidth || 800,
+                  container?.clientHeight || 600,
+                  isSoftwareGl,
+                  effResScale,
+                  liveQualityValuesRef.current.shadowQuality
+                );
               }
-            } else if (fps >= 52 && adaptiveScale < 1) {
+            } else if (fps >= 55 && adaptiveScale < 1) {
               highFpsStreak++;
               lowFpsStreak = 0;
               if (highFpsStreak >= 8) {
                 highFpsStreak = 0;
-                adaptiveScale = adaptiveScale < 0.8 ? 0.85 : 1;
+                adaptiveScale = adaptiveScale < 0.76 ? 0.82 : 1;
                 islandHandles.grassSystem?.setDynamicViewScale(adaptiveScale);
+                if (adaptiveScale >= 1) {
+                  sunCsm?.setQualityTier(liveQualityValuesRef.current.terrainQuality);
+                }
+                const effResScale = liveQualityValuesRef.current.resolutionScale * adaptiveScale;
+                applyLiveRendererQuality(
+                  renderer,
+                  sun,
+                  postPipeline,
+                  container?.clientWidth || 800,
+                  container?.clientHeight || 600,
+                  isSoftwareGl,
+                  effResScale,
+                  liveQualityValuesRef.current.shadowQuality
+                );
               }
             } else {
               lowFpsStreak = Math.max(0, lowFpsStreak - 1);
@@ -15106,6 +15157,32 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       }
       if (disposed) return;
 
+      // Apply final renderer pixelRatio & shadow settings BEFORE precompiling so RenderTargets are not immediately invalidated
+      liveQualityTargetRef.current = {
+        renderer,
+        sun,
+        postPipeline,
+        container,
+        isSoftwareGl,
+      };
+      if (pendingResize) {
+        const next = pendingResize;
+        pendingResize = null;
+        applyContainerResize(next.w, next.h);
+      }
+      applyLiveRendererQuality(
+        renderer,
+        sun,
+        postPipeline,
+        container.clientWidth || 800,
+        container.clientHeight || 600,
+        isSoftwareGl,
+        liveQualityValuesRef.current.resolutionScale,
+        liveQualityValuesRef.current.shadowQuality
+      );
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (disposed) return;
+
       // Snap camera to hero spawn and trigger initial shadow pass before precompiling GPU pipelines
       const initCamYaw = inputRef.current.cameraYaw;
       const initCamDist = inputRef.current.cameraDistance;
@@ -15129,29 +15206,14 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         // ignore if fallback adapter skips precompile
       }
       if (disposed) return;
-
-      liveQualityTargetRef.current = {
-        renderer,
-        sun,
-        postPipeline,
-        container,
-        isSoftwareGl,
-      };
-      if (pendingResize) {
-        const next = pendingResize;
+      const postCompileResize = pendingResize as { w: number; h: number } | null;
+      if (postCompileResize) {
         pendingResize = null;
-        applyContainerResize(next.w, next.h);
+        applyContainerResize(postCompileResize.w, postCompileResize.h);
       }
-      applyLiveRendererQuality(
-        renderer,
-        sun,
-        postPipeline,
-        container.clientWidth || 800,
-        container.clientHeight || 600,
-        isSoftwareGl,
-        liveQualityValuesRef.current.resolutionScale,
-        liveQualityValuesRef.current.shadowQuality
-      );
+
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (disposed) return;
 
       perfWindowStart = performance.now();
       tick();
@@ -15161,10 +15223,15 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
     return () => {
       disposed = true;
+      if (navMeshBuildTimer !== null) {
+        window.clearTimeout(navMeshBuildTimer);
+        navMeshBuildTimer = null;
+      }
       sameLevelTravelFnRef.current = null;
       liveStatsGetterRef.current = null;
       liveGrantCurrencyRef.current = () => {};
       chestOpeningLockRef.current = false;
+      chestEntriesByEntityRef.current.clear();
       setIsChestOpeningAnim(false);
       setActiveChestLoot(null);
       islandAbort?.abort();
@@ -15188,9 +15255,11 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       window.removeEventListener('pointercancel', onPointerUp);
       dom.removeEventListener('wheel', onWheel);
       timer.dispose();
+      islandHandlesRef?.chunkedTerrain?.dispose();
       islandHandlesRef?.volumetricAtmosphere?.dispose();
       islandHandlesRef?.grassSystem?.dispose();
       islandHandlesRef = null;
+      currentAtmoRef = null;
       wildlifeSystem?.dispose();
       wildlifeSystem = null;
       worldInteract?.dispose();
@@ -15203,33 +15272,36 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       for (const fx of activeFxRuntimes) {
         fx.dispose();
       }
+      activeFxRuntimes.length = 0;
       monsterVfx.dispose();
       heroEffects.dispose();
       for (const rt of activeRuntimeEntities) {
         rt.hpBar?.tex.dispose();
       }
+      activeRuntimeEntities.length = 0;
       scentPuffGeo.dispose();
       sonarRingGeo.dispose();
       revealBeaconGeo.dispose();
       sunCsm?.dispose();
       sunCsm = null;
       postPipeline?.dispose();
+      postPipeline = null;
       envTex?.dispose();
+      envTex = null;
       disposeObject3D(scene);
       scene.background = null;
       scene.environment = null;
       scene.fog = null;
       scene.clear();
       const preCapturedGl =
-        isIOS && typeof renderer.getContext === 'function' ? renderer.getContext() : null;
+        typeof renderer.getContext === 'function' ? renderer.getContext() : null;
       try {
         renderer.dispose();
       } catch {
         // ignore if device already lost
       }
-      if (isIOS) {
-        forceReleaseRendererContext(renderer, preCapturedGl);
-      }
+      forceReleaseRendererContext(renderer, preCapturedGl);
+      container.innerHTML = '';
     };
   }, [
     currentLevel?.id,

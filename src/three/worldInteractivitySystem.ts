@@ -213,7 +213,8 @@ function createOrganicRockGeometry(
 function buildDistressedStoneCubeMesh(
   halfSize: number,
   seed: number,
-  sharedMats: THREE.Material[]
+  sharedMats: THREE.Material[],
+  sharedGeos: THREE.BufferGeometry[]
 ): THREE.Group {
   const grp = new THREE.Group();
   const s = halfSize * 2;
@@ -321,6 +322,7 @@ function buildDistressedStoneCubeMesh(
     grp.add(mMesh);
   }
 
+  sharedGeos.push(coreGeo, rimGeo, pillarGeo, runeGeo, mossGeo);
   return grp;
 }
 
@@ -330,7 +332,8 @@ function buildDistressedStoneCubeMesh(
  */
 function buildAncientFloorSwitchMesh(
   halfSize: number,
-  sharedMats: THREE.Material[]
+  sharedMats: THREE.Material[],
+  sharedGeos: THREE.BufferGeometry[]
 ): THREE.Group {
   const grp = new THREE.Group();
   const s = halfSize * 2.15;
@@ -349,15 +352,18 @@ function buildAncientFloorSwitchMesh(
   });
   sharedMats.push(rimMat, plateMat);
 
-  const outer = new THREE.Mesh(new THREE.BoxGeometry(s, 0.1, s), rimMat);
+  const outerGeo = new THREE.BoxGeometry(s, 0.1, s);
+  const outer = new THREE.Mesh(outerGeo, rimMat);
   outer.position.y = 0.04;
   outer.receiveShadow = true;
 
-  const inner = new THREE.Mesh(new THREE.BoxGeometry(s * 0.72, 0.12, s * 0.72), plateMat);
+  const innerGeo = new THREE.BoxGeometry(s * 0.72, 0.12, s * 0.72);
+  const inner = new THREE.Mesh(innerGeo, plateMat);
   inner.position.y = 0.06;
   inner.name = 'switch-plate';
   inner.receiveShadow = true;
 
+  sharedGeos.push(outerGeo, innerGeo);
   grp.add(outer, inner);
   return grp;
 }
@@ -766,11 +772,16 @@ export class WorldInteractivitySystem {
         if (Math.hypot(existing.x - bx, existing.z - bz) < 11) return false;
       }
 
-      const cubeMesh = buildDistressedStoneCubeMesh(halfSize, 900 + idx * 71, this.ownedMats);
+      const cubeMesh = buildDistressedStoneCubeMesh(
+        halfSize,
+        900 + idx * 71,
+        this.ownedMats,
+        this.ownedGeos
+      );
       cubeMesh.position.set(bx, h0, bz);
       this.group.add(cubeMesh);
 
-      const switchMesh = buildAncientFloorSwitchMesh(halfSize, this.ownedMats);
+      const switchMesh = buildAncientFloorSwitchMesh(halfSize, this.ownedMats, this.ownedGeos);
       switchMesh.position.set(swX, h1, swZ);
       this.group.add(switchMesh);
 

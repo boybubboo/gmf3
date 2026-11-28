@@ -1333,6 +1333,7 @@ function createMonsterCoatTextures(coat: CharacterSurfaceCoatConfig): {
     tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(3.2, 3.2);
     if (isColor) tex.colorSpace = THREE.SRGBColorSpace;
+    tex.userData.ownedByMaterial = true;
     tex.needsUpdate = true;
     return tex;
   };
@@ -2052,6 +2053,7 @@ function createWingMembraneTexture(
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.userData.ownedByMaterial = true;
   tex.needsUpdate = true;
   return tex;
 }

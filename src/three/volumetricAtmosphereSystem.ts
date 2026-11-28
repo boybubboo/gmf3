@@ -29,6 +29,7 @@ import type { ComputedAtmosphere } from './islandScene';
 const _camPos = new THREE.Vector3();
 const _camFwd = new THREE.Vector3();
 const _sunDir = new THREE.Vector3();
+const _antiSunDir = new THREE.Vector3();
 const _shaftOffset = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
@@ -98,9 +99,10 @@ export class VolumetricAtmosphereSystem {
   private readonly dustPositions: Float32Array;
   private readonly dustOffsets: Float32Array;
   private readonly dustSpeeds: Float32Array;
-  private readonly dustCount = 420;
+  private readonly dustCount = 220;
   private readonly dustRadius = 24.0;
   private readonly dustHeightSpan = 14.0;
+  private dustAccumDt = 0;
 
   private qualityTier: TerrainQualityTier = 'balanced';
   private isDungeon = false;
@@ -237,10 +239,10 @@ export class VolumetricAtmosphereSystem {
       }
     }
 
-    const beamCount = isSoftwareGl ? 5 : 12;
-    const beamRadii = [4.2, 7.5, 5.8, 9.2, 6.4, 8.1, 5.2, 11.0, 7.0, 8.8, 6.0, 10.5];
-    const beamLengths = [110, 140, 125, 155, 115, 135, 145, 160, 120, 150, 130, 140];
-    const beamAngles = [0, 0.45, 0.95, 1.45, 2.1, 2.65, 3.2, 3.8, 4.35, 4.9, 5.4, 5.9];
+    const beamCount = isSoftwareGl ? 4 : 6;
+    const beamRadii = [5.2, 8.2, 6.4, 9.6, 7.0, 10.5];
+    const beamLengths = [115, 140, 125, 150, 130, 145];
+    const beamAngles = [0, 1.05, 2.1, 3.15, 4.2, 5.25];
 
     for (let i = 0; i < beamCount; i++) {
       const topR = (beamRadii[i % beamRadii.length] ?? 6) * 0.28;
@@ -348,49 +350,56 @@ export class VolumetricAtmosphereSystem {
       focusZ + _shaftOffset.z * 0.6
     );
 
-    _quat.setFromUnitVectors(_up, _sunDir.clone().negate());
+    _antiSunDir.copy(_sunDir).negate();
+    _quat.setFromUnitVectors(_up, _antiSunDir);
     this.shaftsGroup.quaternion.copy(_quat);
 
     if (this.dustPoints.visible && this.dustPositions) {
-      const posAttr = this.dustGeo.getAttribute('position') as THREE.BufferAttribute;
-      const positions = posAttr.array as Float32Array;
-      const speeds = this.dustSpeeds;
-      const offsets = this.dustOffsets;
-      const r = this.dustRadius;
-      const hSpan = this.dustHeightSpan;
+      this.dustAccumDt += dt;
+      if (this.dustAccumDt >= 0.032) {
+        const stepDt = this.dustAccumDt;
+        this.dustAccumDt = 0;
+        const posAttr = this.dustGeo.getAttribute('position') as THREE.BufferAttribute;
+        const positions = posAttr.array as Float32Array;
+        const speeds = this.dustSpeeds;
+        const offsets = this.dustOffsets;
+        const r = this.dustRadius;
+        const hSpan = this.dustHeightSpan;
 
-      const windX = this.uWind.value.x * 0.8;
-      const windZ = this.uWind.value.y * 0.8;
+        const windX = this.uWind.value.x * 0.8;
+        const windZ = this.uWind.value.y * 0.8;
+        const stepScale = stepDt * 60;
 
-      for (let i = 0; i < this.dustCount; i++) {
-        const idx = i * 3;
-        const spd = speeds[i] ?? 0.6;
-        const ox = offsets[idx] ?? 0;
-        const oy = offsets[idx + 1] ?? 0;
-        const oz = offsets[idx + 2] ?? 0;
+        for (let i = 0; i < this.dustCount; i++) {
+          const idx = i * 3;
+          const spd = speeds[i] ?? 0.6;
+          const ox = offsets[idx] ?? 0;
+          const oy = offsets[idx + 1] ?? 0;
+          const oz = offsets[idx + 2] ?? 0;
 
-        let px = positions[idx] + (Math.sin(timeSec * spd + ox) * 0.08 + windX * 0.04) * dt * 60;
-        let py = positions[idx + 1] + (Math.cos(timeSec * spd * 0.7 + oy) * 0.05 + 0.012) * dt * 60;
-        let pz = positions[idx + 2] + (Math.sin(timeSec * spd * 0.8 + oz) * 0.08 + windZ * 0.04) * dt * 60;
+          let px = positions[idx] + (Math.sin(timeSec * spd + ox) * 0.08 + windX * 0.04) * stepScale;
+          let py = positions[idx + 1] + (Math.cos(timeSec * spd * 0.7 + oy) * 0.05 + 0.012) * stepScale;
+          let pz = positions[idx + 2] + (Math.sin(timeSec * spd * 0.8 + oz) * 0.08 + windZ * 0.04) * stepScale;
 
-        const relX = px - focusX;
-        const relY = py - (focusY + 2.5);
-        const relZ = pz - focusZ;
+          const relX = px - focusX;
+          const relY = py - (focusY + 2.5);
+          const relZ = pz - focusZ;
 
-        if (relX > r) px = focusX - r;
-        else if (relX < -r) px = focusX + r;
+          if (relX > r) px = focusX - r;
+          else if (relX < -r) px = focusX + r;
 
-        if (relY > hSpan * 0.5) py = focusY + 2.5 - hSpan * 0.5;
-        else if (relY < -hSpan * 0.5) py = focusY + 2.5 + hSpan * 0.5;
+          if (relY > hSpan * 0.5) py = focusY + 2.5 - hSpan * 0.5;
+          else if (relY < -hSpan * 0.5) py = focusY + 2.5 + hSpan * 0.5;
 
-        if (relZ > r) pz = focusZ - r;
-        else if (relZ < -r) pz = focusZ + r;
+          if (relZ > r) pz = focusZ - r;
+          else if (relZ < -r) pz = focusZ + r;
 
-        positions[idx] = px;
-        positions[idx + 1] = py;
-        positions[idx + 2] = pz;
+          positions[idx] = px;
+          positions[idx + 1] = py;
+          positions[idx + 2] = pz;
+        }
+        posAttr.needsUpdate = true;
       }
-      posAttr.needsUpdate = true;
     }
   }
 

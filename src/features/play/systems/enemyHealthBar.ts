@@ -204,6 +204,7 @@ export function createEnemyHealthBar(
   canvas.height = 112;
   const ctx = canvas.getContext('2d');
   const tex = new THREE.CanvasTexture(canvas);
+  tex.userData.ownedByMaterial = true;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
@@ -292,6 +293,7 @@ export function spawnEvaporatingDamageNumber(
   }
 
   const tex = new THREE.CanvasTexture(canvas);
+  tex.userData.ownedByMaterial = true;
   tex.colorSpace = THREE.SRGBColorSpace;
   const mat = new THREE.MeshBasicMaterial({
     map: tex,

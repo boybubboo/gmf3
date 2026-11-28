@@ -10,9 +10,7 @@ import {
   dot,
   exponentialHeightFogFactor,
   float,
-  floor,
   fog,
-  fract,
   materialEmissive,
   max,
   min,
@@ -264,33 +262,21 @@ export function syncBotwSceneFog(
   return fogDensity;
 }
 
-const _h2 = (p: any) => {
-  const s = fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))).mul(43758.5453));
-  return fract(s.x.add(s.y));
-};
-
-const _vNoise2D = (p: any) => {
-  const i = floor(p);
-  const f = fract(p);
-  const t = f.mul(f).mul(vec2(3.0).sub(f.mul(2.0)));
-  const a = _h2(i);
-  const b = _h2(i.add(vec2(1.0, 0.0)));
-  const c = _h2(i.add(vec2(0.0, 1.0)));
-  const d = _h2(i.add(vec2(1.0, 1.0)));
-  return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
-};
-
 /**
  * Returns a gentle world-space drifting cloud-shadow multiplier `[1 - strength .. 1.0]`
  * evaluated along XZ coordinates so terrain and grass gently breathe with passing sunlight.
  */
 export function createDriftingCloudShadowNode(worldXZ: any) {
   const u = getSharedBotwUniforms();
-  const drift = vec2(u.uTime.mul(0.011), u.uTime.mul(0.0065));
-  const uv = worldXZ.mul(0.022).sub(drift);
-  const n1 = _vNoise2D(uv);
-  const n2 = _vNoise2D(uv.mul(2.1).add(vec2(3.7, 8.2)));
-  const cloud = smoothstep(0.46, 0.8, n1.mul(0.68).add(n2.mul(0.32)));
+  const drift = vec2(u.uTime.mul(0.065), u.uTime.mul(0.038));
+  const uv = worldXZ.mul(0.135).sub(drift);
+  const w1 = sin(uv.x.add(sin(uv.y.mul(0.82)).mul(1.15))).mul(
+    cos(uv.y.mul(0.94).sub(uv.x.mul(0.37)))
+  );
+  const w2 = cos(uv.x.mul(1.72).sub(uv.y.mul(1.48)).add(2.1)).mul(
+    sin(uv.y.mul(1.61).add(uv.x.mul(0.88)).sub(0.7))
+  );
+  const cloud = smoothstep(0.08, 0.76, w1.mul(0.65).add(w2.mul(0.35)).mul(0.5).add(0.5));
   return float(1.0).sub(cloud.mul(u.uCloudShadowStrength));
 }
 
