@@ -225,9 +225,10 @@ export function createDefaultPostProcessingConfig(): PostProcessingConfig {
     godRaysIntensity: 0.52,
     volumetricFogEnabled: true,
     volumetricFogDensity: 1.0,
-    volumetricFogHeight: 3.2,
-    volumetricFogSoftness: 8.0,
-    volumetricFogNoise: 0.85,
+    volumetricFogHeight: 2.2,
+    volumetricFogSoftness: 8.5,
+    volumetricFogSharpness: 0.3,
+    volumetricFogNoise: 0.95,
     volumetricFogPatchiness: 0.45,
     volumetricFogSpeed: 0.75,
     atmosphericDust: 0.5,
@@ -284,13 +285,16 @@ export function resolvePostProcessingConfig(
     merged.volumetricFogDensity = 1.0;
   }
   if (cfg.volumetricFogHeight === undefined) {
-    merged.volumetricFogHeight = 3.2;
+    merged.volumetricFogHeight = 2.2;
   }
   if (cfg.volumetricFogSoftness === undefined) {
-    merged.volumetricFogSoftness = 8.0;
+    merged.volumetricFogSoftness = 8.5;
+  }
+  if (cfg.volumetricFogSharpness === undefined) {
+    merged.volumetricFogSharpness = 0.3;
   }
   if (cfg.volumetricFogNoise === undefined) {
-    merged.volumetricFogNoise = 0.85;
+    merged.volumetricFogNoise = 0.95;
   }
   if (cfg.volumetricFogPatchiness === undefined) {
     merged.volumetricFogPatchiness = 0.45;

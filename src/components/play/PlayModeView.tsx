@@ -15,6 +15,11 @@ import {
   type WorldInteractivityCallbacks,
 } from '../../three/worldInteractivitySystem';
 import {
+  PlatformerWorldController,
+  type PlatformerStepInput,
+  type PlatformerStepResult,
+} from '../../three/platformerRuntime';
+import {
   Anvil,
   Backpack,
   Camera,
@@ -693,6 +698,16 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     names: [] as string[],
     celebrating: false,
     celebrationBannerOpen: false,
+  });
+  const [platformerHud, setPlatformerHud] = useState({
+    visible: false,
+    starCoinsCount: 0,
+    starTotal: 0,
+    oxygenActive: false,
+    oxygenPct: 100,
+    sizeScale: 1,
+    hasLantern: false,
+    activeControlMode: 'none',
   });
   const [storyStats, setStoryStats] = useState({ puzzlesSolved: 0, crittersWarmed: 0 });
   const [chapterBannerVisible, setChapterBannerVisible] = useState(false);
@@ -1637,6 +1652,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     misfitPowerQueued: false,
     vultureExitQueued: false,
     carResetQueued: false,
+    dashQueued: false,
     emoteType: '' as '' | 'wave' | 'dance',
     emoteTimer: 0,
     cameraYaw:
@@ -2006,6 +2022,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         const nextView = order[(order.indexOf(curView) + 1) % order.length];
         setDrivingCfg((prev) => ({ ...prev, cameraView: nextView }));
         showToastGlobal(`Camera: ${getDrivingCameraView(nextView).name}`);
+      } else if ((e.code === 'KeyC' || e.code === 'KeyZ') && !e.repeat && currentLevel?.gameplayMode !== 'driving') {
+        inputRef.current.dashQueued = true;
       } else if (e.code === 'KeyH') {
         inputRef.current.healQueued = true;
       } else if (e.code === 'KeyT' && !e.repeat) {
@@ -2208,6 +2226,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
     let worldInteract: WorldInteractivitySystem | null = null;
     let navMeshEngine: PlayNavMeshEngine | null = null;
     let rapierPhysics: HybridRapierPhysicsWorld | null = null;
+    let platformerCtrlHandle: PlatformerWorldController | null = null;
     const rapierTumblingIds = new Set<string>();
     const _aimRaycaster = new THREE.Raycaster();
     const _aimNdc = new THREE.Vector2();
@@ -2765,6 +2784,18 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       let mechSpringCooldownUntil = 0;
       let mechWarpCooldownUntil = 0;
       let heroInSecretRoom = false;
+      let platformerVelX = 0;
+      let airDashTimer = 0;
+      let airDashVX = 0;
+      let airDashVY = 0;
+      let canAirDash = true;
+      let isGroundPounding = false;
+      let isWallSliding = false;
+      let wallSlideDir: -1 | 0 | 1 = 0;
+      let jumpCountSeq = 0;
+      let prevJumpHeldFrame = false;
+      let lastPlatformerHudKey = '';
+      let platTimeDilation = 1.0;
 
       heroRoot.position.set(heroX, heroY, heroZ);
       scene.add(heroRoot);
@@ -3352,6 +3383,78 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
       activeRuntimeEntities = runtimeEntities;
 
+      const platformerEntries = runtimeEntities
+        .filter((r) => Boolean(r.sourceEntity?.platformerAddon))
+        .map((r) => ({ entity: r.sourceEntity!, mesh: r.mesh }));
+      const platformerCtrl = new PlatformerWorldController(scene, activeLevel, platformerEntries);
+      platformerCtrlHandle = platformerCtrl;
+      const platStepInp: PlatformerStepInput = {
+        heroX: 0,
+        heroY: 0,
+        heroZ: 0,
+        heroVelX: 0,
+        heroVelY: 0,
+        heroRadius: 0.48,
+        heroHeight: 1.75,
+        heroFacingSign: 1,
+        moveX: 0,
+        moveZ: 0,
+        jumpJustPressed: false,
+        jumpHeld: false,
+        dropHeld: false,
+        interactJustPressed: false,
+        interactHeld: false,
+        isDashing: false,
+        isGroundPounding: false,
+        coinsCount: 0,
+        keysCount: 0,
+        timeElapsed: 0,
+        jumpCountSeq: 0,
+      };
+      const platStepOut: PlatformerStepResult = {
+        floorY: -999,
+        carryDX: 0,
+        carryDY: 0,
+        carryDZ: 0,
+        wallPushX: 0,
+        wallContactDir: 0,
+        surfaceFriction: 'normal',
+        conveyorVX: 0,
+        speedBoostVX: 0,
+        gravityScale: 1,
+        gravitySign: 1,
+        inWaterZone: false,
+        waterSurfaceY: 0,
+        oxygenPct: 100,
+        oxygenActive: false,
+        windAccelX: 0,
+        windAccelY: 0,
+        sizeScale: 1,
+        hasLantern: false,
+        climbCandidate: null,
+        activeControlMode: 'none',
+        hasOverridePos: false,
+        overrideX: 0,
+        overrideY: 0,
+        overrideZ: 0,
+        hasOverrideVel: false,
+        overrideVX: 0,
+        overrideVY: 0,
+        timeDilation: 1,
+        refillAirMoves: false,
+        bounceHeroVY: 0,
+        damageHero: 0,
+        collectCoins: 0,
+        starCoinsMask: 0,
+        starCoinsCount: 0,
+        bpmPulseNorm: 0,
+        risingTideY: null,
+        checkpointReached: null,
+        goalReached: null,
+        toastMessage: null,
+        soundEvent: null,
+      };
+
       // Pre-warm a Boss Reward Chest mesh at boot so its TSL/WebGPU shaders compile during initial scene precompile
       let prewarmedBossChestMesh: THREE.Group | null = (() => {
         const templateChestEnt: LevelEntity = {
@@ -3764,9 +3867,26 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
       // Interactive World Physics: Organic throwable rocks & boulders, pushable distressed stone puzzle cubes,
       // grabbable wall torches anywhere, and pooled 3D debris for destructible flora/props
+      const pickupRockScatterIds = new Set<string>();
+      const flushPickupRockScatterHides = () => {
+        if (pickupRockScatterIds.size === 0 || islandHandles.harvestableScatter.length === 0) return;
+        for (let hi = 0; hi < islandHandles.harvestableScatter.length; hi++) {
+          const hs = islandHandles.harvestableScatter[hi];
+          if (!pickupRockScatterIds.has(hs.id)) continue;
+          hs.collected = true;
+          for (const be of hs.batchedEntries) {
+            hideBatchEntry(be, hs.x, hs.y - 60, hs.z);
+          }
+          pickupRockScatterIds.delete(hs.id);
+        }
+      };
       if (!isDriving) {
         worldInteract = new WorldInteractivitySystem(activeLevel, heroX, heroZ, scene, collisionCtx);
         scene.add(worldInteract.group);
+        for (const pr of worldInteract.rocks) {
+          if (pr.scatterId) pickupRockScatterIds.add(pr.scatterId);
+        }
+        flushPickupRockScatterHides();
         for (const rt of runtimeEntities) {
           if (!rt.alive) continue;
           const lname = rt.name.toLowerCase();
@@ -4424,6 +4544,21 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       const _cutCurrLook = new THREE.Vector3(heroX, heroY + 1.15, heroZ);
       const _cutBaseCamPos = new THREE.Vector3();
       const _cutBaseCamLook = new THREE.Vector3();
+      const _volFogColorScratch = new THREE.Color('#B8CDE0');
+      const _volFogInscatterScratch = new THREE.Color('#FFE8BC');
+      const _volFogCfgScratch = {
+        enabled: true,
+        density: 1.0,
+        height: 2.2,
+        softness: 8.5,
+        sharpness: 0.3,
+        noise: 0.95,
+        patchiness: 0.45,
+        speed: 0.75,
+        wind: 0.45,
+        fogColor: _volFogColorScratch,
+        inscatterColor: _volFogInscatterScratch,
+      };
 
       // Live Camera Cutaways & Skit Sequencer runtime state
       interface ActiveCutawayState {
@@ -4887,6 +5022,10 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       let climbAnchorX = 0;
       let climbAnchorZ = 0;
       let climbMaxY = 12;
+      let climbingMonkeyBars = false;
+      let monkeyBarMinX = 0;
+      let monkeyBarMaxX = 0;
+      let monkeyBarHoldY = 0;
       let climbPhase = 0;
       let prevHeroFloorY = heroY;
       let isClimbingStairs = false;
@@ -4943,6 +5082,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       function tick() {
         if (disposed) return;
         try {
+        flushPickupRockScatterHides();
         timer.update();
         const dt = Math.min(0.05, timer.getDelta());
         const inp = inputRef.current;
@@ -4956,8 +5096,9 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
         }
 
         if (!pausedNow) {
-          // Brief crisp micro-hitstop freezes combat motion for a tactile melee impact punch
-          const simDt = hitStopTimer > 0 ? dt * 0.14 : dt;
+          // Brief crisp micro-hitstop or Ori-style Bash slow-mo freezes motion crisply
+          const baseDt = hitStopTimer > 0 ? dt * 0.14 : dt;
+          const simDt = baseDt * platTimeDilation;
           hitStopTimer = Math.max(0, hitStopTimer - dt);
 
           gameElapsed += simDt;
@@ -6082,6 +6223,22 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 };
               }
             }
+            if (!climbCandidate && platStepOut.climbCandidate) {
+              const cc = platStepOut.climbCandidate;
+              climbCandidate = {
+                kind: 'entity',
+                label:
+                  cc.kind === 'monkeyBars'
+                    ? 'Monkey Bars'
+                    : cc.kind === 'grate'
+                    ? 'Climb Grate'
+                    : 'Ladder',
+                anchorX: cc.anchorX,
+                anchorZ: heroZ,
+                maxY: cc.maxY,
+                dist: Math.abs(cc.anchorX - heroX),
+              };
+            }
           }
 
           const climbPromptKey = isClimbing
@@ -6120,6 +6277,13 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               climbAnchorX = climbCandidate.anchorX;
               climbAnchorZ = climbCandidate.anchorZ;
               climbMaxY = climbCandidate.maxY;
+              climbingMonkeyBars =
+                climbCandidate.label === 'Monkey Bars' && Boolean(platStepOut.climbCandidate);
+              if (climbingMonkeyBars && platStepOut.climbCandidate) {
+                monkeyBarMinX = platStepOut.climbCandidate.minY;
+                monkeyBarMaxX = platStepOut.climbCandidate.maxY;
+                monkeyBarHoldY = platStepOut.climbCandidate.anchorY;
+              }
               heroVelY = 0;
               airborneTimer = 0;
               jumpsUsed = 0;
@@ -6135,6 +6299,13 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 climbAnchorX = climbCandidate.anchorX;
                 climbAnchorZ = climbCandidate.anchorZ;
                 climbMaxY = climbCandidate.maxY;
+                climbingMonkeyBars =
+                  climbCandidate.label === 'Monkey Bars' && Boolean(platStepOut.climbCandidate);
+                if (climbingMonkeyBars && platStepOut.climbCandidate) {
+                  monkeyBarMinX = platStepOut.climbCandidate.minY;
+                  monkeyBarMaxX = platStepOut.climbCandidate.maxY;
+                  monkeyBarHoldY = platStepOut.climbCandidate.anchorY;
+                }
                 heroVelY = 0;
                 airborneTimer = 0;
                 jumpsUsed = 0;
@@ -6178,37 +6349,50 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             const sideInput = THREE.MathUtils.clamp(moveX, -1, 1);
             const climbSpeed = 3.8 * heroEnvEval.climbSpeedMult * energySpeedMult;
 
-            if (climbKind === 'tree' || climbKind === 'entity') {
-              heroYaw = Math.atan2(climbAnchorX - heroX, climbAnchorZ - heroZ);
-              if (env === 'sideScroller') {
-                heroX = THREE.MathUtils.damp(heroX, climbAnchorX, 10, dt);
+            if (climbingMonkeyBars) {
+              heroY = THREE.MathUtils.damp(heroY, monkeyBarHoldY, 16, dt);
+              if (Math.abs(sideInput) > 0.08) {
+                heroYaw = sideInput > 0 ? Math.PI * 0.5 : -Math.PI * 0.5;
+                heroX += sideInput * 4.4 * dt;
+                climbPhase += Math.abs(sideInput) * dt * 8.5;
               }
-            }
-            if (Math.abs(vertInput) > 0.1) {
-              heroY += vertInput * climbSpeed * dt;
-              climbPhase += Math.abs(vertInput) * dt * 8.5;
-            }
-            if (Math.abs(sideInput) > 0.1) {
-              if (env === 'sideScroller') {
-                heroX += sideInput * 2.2 * dt;
-                if (Math.abs(heroX - climbAnchorX) > 1.25) {
-                  isClimbing = false;
+              if (heroX < monkeyBarMinX - 0.35 || heroX > monkeyBarMaxX + 0.35 || vertInput < -0.35) {
+                isClimbing = false;
+                climbingMonkeyBars = false;
+              }
+            } else {
+              if (climbKind === 'tree' || climbKind === 'entity') {
+                heroYaw = Math.atan2(climbAnchorX - heroX, climbAnchorZ - heroZ);
+                if (env === 'sideScroller') {
+                  heroX = THREE.MathUtils.damp(heroX, climbAnchorX, 10, dt);
                 }
-              } else {
-                const tanX = Math.cos(heroYaw);
-                const tanZ = -Math.sin(heroYaw);
-                const [sx, sz] = resolveHorizontalCollision(
-                  activeLevel,
-                  heroX + tanX * sideInput * 1.45 * dt,
-                  heroZ + tanZ * sideInput * 1.45 * dt,
-                  0.55,
-                  false,
-                  collisionCtx
-                );
-                heroX = sx;
-                heroZ = sz;
               }
-              climbPhase += Math.abs(sideInput) * dt * 5.0;
+              if (Math.abs(vertInput) > 0.1) {
+                heroY += vertInput * climbSpeed * dt;
+                climbPhase += Math.abs(vertInput) * dt * 8.5;
+              }
+              if (Math.abs(sideInput) > 0.1) {
+                if (env === 'sideScroller') {
+                  heroX += sideInput * 2.2 * dt;
+                  if (Math.abs(heroX - climbAnchorX) > 1.25) {
+                    isClimbing = false;
+                  }
+                } else {
+                  const tanX = Math.cos(heroYaw);
+                  const tanZ = -Math.sin(heroYaw);
+                  const [sx, sz] = resolveHorizontalCollision(
+                    activeLevel,
+                    heroX + tanX * sideInput * 1.45 * dt,
+                    heroZ + tanZ * sideInput * 1.45 * dt,
+                    0.55,
+                    false,
+                    collisionCtx
+                  );
+                  heroX = sx;
+                  heroZ = sz;
+                }
+                climbPhase += Math.abs(sideInput) * dt * 5.0;
+              }
             }
 
             heroVelY = 0;
@@ -6223,14 +6407,16 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               inp.jumpQueued = false;
               inp.jumpPressQueuedCount = 0;
               isClimbing = false;
+              climbingMonkeyBars = false;
               airJumpPresses = 1;
               secondJumpHoldTime = 0;
               heroVelY = 8.8;
               heroKnockVX -= Math.sin(heroYaw) * 2.8;
               heroKnockVZ -= Math.cos(heroYaw) * 2.8;
               AudioEngine.playSound(activeLevel.audio.jump);
-            } else if (vertInput < -0.1 && heroY <= floorY + 0.1) {
+            } else if (!climbingMonkeyBars && vertInput < -0.1 && heroY <= floorY + 0.1) {
               isClimbing = false;
+              climbingMonkeyBars = false;
               heroY = floorY;
             } else if (
               climbKind === 'mountain' &&
@@ -6599,7 +6785,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             ) {
               nearStairSurface = true;
             }
-            if (entData.kind !== 'platform') continue;
+            if (entData.kind !== 'platform' || entData.platformerAddon) continue;
             const rt = runtimeEntities.find((r) => r.id === entData.id);
             if (!rt) continue;
             const [sx, sz] = levelBoardToWorld(activeLevel, entData.position);
@@ -6646,6 +6832,151 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
           }
 
+          // Modular Platformer Runtime Controller step (moving shuttles, cannons, vines, switches, enemies, next-gen tech, flow)
+          const platTuning = platformerCtrl.tuning;
+          const jumpHeldNowPre =
+            inp.keys.has('Space') ||
+            inp.keys.has('ShiftLeft') ||
+            inp.keys.has('ShiftRight') ||
+            (env === 'sideScroller' && !isClimbing && (inp.keys.has('KeyW') || inp.keys.has('ArrowUp'))) ||
+            inp.jumpPointerDown;
+          if (platformerCtrl.hasPlatformerModules) {
+            platStepInp.heroX = heroX;
+            platStepInp.heroY = heroY;
+            platStepInp.heroZ = heroZ;
+            platStepInp.heroVelX = (heroX - prevHeroX) / Math.max(0.004, simDt) + platformerVelX;
+            platStepInp.heroVelY = heroVelY;
+            platStepInp.heroRadius = 0.48 * platStepOut.sizeScale;
+            platStepInp.heroHeight = 1.75 * platStepOut.sizeScale;
+            platStepInp.heroFacingSign = Math.sin(heroYaw) >= 0 ? 1 : -1;
+            platStepInp.moveX = moveX;
+            platStepInp.moveZ = moveZ;
+            platStepInp.jumpJustPressed = inp.jumpQueued || inp.jumpPressQueuedCount > 0;
+            platStepInp.jumpHeld = jumpHeldNowPre;
+            platStepInp.dropHeld = sideDropThrough;
+            platStepInp.interactJustPressed = inp.interactQueued;
+            platStepInp.interactHeld = useHeld;
+            platStepInp.isDashing = airDashTimer > 0;
+            platStepInp.isGroundPounding = isGroundPounding;
+            platStepInp.coinsCount = coins;
+            platStepInp.keysCount = keys;
+            platStepInp.timeElapsed = gameElapsed;
+            platStepInp.jumpCountSeq = jumpCountSeq;
+
+            platformerCtrl.step(dt, platStepInp, platStepOut);
+            platTimeDilation = platStepOut.timeDilation;
+
+            // Carry platform movement delta & solid door/gate wall pushout
+            if (platStepOut.activeControlMode === 'none') {
+              heroX += platStepOut.carryDX + platStepOut.wallPushX;
+              heroY += platStepOut.carryDY;
+              heroZ += platStepOut.carryDZ;
+            }
+            if (platStepOut.hasOverridePos) {
+              heroX = platStepOut.overrideX;
+              heroY = platStepOut.overrideY;
+              heroZ = platStepOut.overrideZ;
+            }
+            if (platStepOut.hasOverrideVel) {
+              platformerVelX = platStepOut.overrideVX;
+              heroVelY = platStepOut.overrideVY;
+            }
+            if (platStepOut.floorY > -900) {
+              floorY = Math.max(floorY, platStepOut.floorY);
+            }
+            if (platStepOut.refillAirMoves) {
+              jumpsUsed = Math.min(jumpsUsed, 1);
+              canAirDash = true;
+            }
+            if (platStepOut.bounceHeroVY > 0) {
+              heroVelY = platStepOut.bounceHeroVY;
+              isGroundPounding = false;
+            }
+            if (platStepOut.collectCoins > 0) {
+              coins += platStepOut.collectCoins;
+            }
+            if (platStepOut.damageHero > 0 && hitInvuln <= 0) {
+              health -= platStepOut.damageHero;
+              hitInvuln = 1.0;
+              shakeTimer = 0.25;
+              if (health <= 0) triggerHeroDeath();
+            }
+            if (platStepOut.checkpointReached) {
+              respawnX = platStepOut.checkpointReached.x;
+              respawnZ = platStepOut.checkpointReached.z;
+              respawnYaw = heroYaw;
+              spawnCombatSparks(respawnX, platStepOut.checkpointReached.y + 1.2, respawnZ, '#20B46A', 14, 5.2);
+              showToast(`Checkpoint: ${platStepOut.checkpointReached.label}`);
+            }
+            if (platStepOut.goalReached) {
+              AudioEngine.playSound('fanfare');
+              setFinished(true);
+            }
+            if (platStepOut.soundEvent) {
+              AudioEngine.playSound(platStepOut.soundEvent);
+            }
+            if (platStepOut.toastMessage) {
+              showToast(platStepOut.toastMessage);
+            }
+
+            // Apply surface modifiers: Conveyor, Speed Boost, Ice slide momentum, Sticky dampen, Wind
+            if (platStepOut.conveyorVX !== 0) {
+              heroX += platStepOut.conveyorVX * simDt;
+            }
+            if (platStepOut.speedBoostVX !== 0) {
+              platformerVelX = platStepOut.speedBoostVX;
+            }
+            if (platStepOut.surfaceFriction === 'ice') {
+              platformerVelX = THREE.MathUtils.damp(platformerVelX + moveX * 9.5 * simDt, 0, 1.35, simDt);
+            } else {
+              platformerVelX = THREE.MathUtils.damp(platformerVelX, 0, 7.5, simDt);
+            }
+            if (Math.abs(platformerVelX) > 0.08 && platStepOut.activeControlMode === 'none') {
+              heroX += platformerVelX * simDt;
+            }
+            if (platStepOut.windAccelX !== 0 || platStepOut.windAccelY !== 0) {
+              platformerVelX += platStepOut.windAccelX * simDt * 0.45;
+              heroVelY += platStepOut.windAccelY * simDt;
+            }
+
+            // Air-Dash (horizontal or omnidirectional)
+            if (inp.dashQueued) {
+              inp.dashQueued = false;
+              if (platTuning.airDash && canAirDash && airDashTimer <= 0 && platStepOut.activeControlMode === 'none') {
+                canAirDash = false;
+                airDashTimer = 0.16;
+                isGroundPounding = false;
+                const dirX = Math.abs(moveX) > 0.12 ? Math.sign(moveX) : Math.sin(heroYaw) >= 0 ? 1 : -1;
+                const dirY = platTuning.dashMode === 'omni' ? -moveZ : 0;
+                const dLen = Math.max(1, Math.hypot(dirX, dirY));
+                airDashVX = (dirX / dLen) * 18.5;
+                airDashVY = (dirY / dLen) * 15.0;
+                AudioEngine.playSound('whoosh');
+                spawnCombatSparks(heroX, heroY + 0.85, heroZ, '#22D3EE', 10, 5.2);
+              }
+            }
+            if (airDashTimer > 0) {
+              airDashTimer = Math.max(0, airDashTimer - dt);
+              heroX += airDashVX * dt;
+              heroVelY = airDashVY;
+            }
+
+            // Ground-Pound dive (Down held in mid-air)
+            if (
+              platTuning.groundPound &&
+              !isGroundPounding &&
+              !isClimbing &&
+              !isSwimming &&
+              heroY > floorY + 0.8 &&
+              (inp.keys.has('KeyS') || inp.keys.has('ArrowDown')) &&
+              platStepOut.activeControlMode === 'none'
+            ) {
+              isGroundPounding = true;
+              heroVelY = -22.5;
+              AudioEngine.playSound('whoosh');
+            }
+          }
+
           isClimbingStairs =
             nearStairSurface &&
             effectiveMoveMag > 0.08 &&
@@ -6681,8 +7012,22 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             isSwimming = false;
           }
 
-          // Coyote time & jump buffering so jumping while running/swimming NEVER drops an input
-          const grounded = !isSwimming && heroVelY <= 0.25 && heroY <= floorY + 0.14;
+          // Wall-Slide detection when touching a wall/gate/block while falling
+          wallSlideDir = platStepOut.wallContactDir;
+          isWallSliding =
+            platTuning.wallSlideJump &&
+            wallSlideDir !== 0 &&
+            heroY > floorY + 0.35 &&
+            heroVelY < -0.25 &&
+            Math.abs(moveX) > 0.1 &&
+            Math.sign(moveX) === wallSlideDir;
+
+          // Coyote time, Jump Buffering & Variable Jump Height tuning
+          const grounded =
+            !isSwimming &&
+            !platStepOut.inWaterZone &&
+            heroVelY <= 0.25 &&
+            heroY <= floorY + 0.14;
           const upJumpHeld =
             env === 'sideScroller' && !climbCandidate && !isClimbing && (inp.keys.has('KeyW') || inp.keys.has('ArrowUp'));
           const jumpHeld =
@@ -6694,14 +7039,32 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           const freshJumpPresses = inp.jumpPressQueuedCount;
           inp.jumpPressQueuedCount = 0;
 
-          if (grounded || isSwimming) {
-            coyoteTimer = 0.14;
+          if (grounded || isSwimming || platStepOut.inWaterZone) {
+            coyoteTimer = (platTuning.coyoteMs ?? 140) / 1000;
             jumpsUsed = 0;
             airJumpPresses = 0;
             secondJumpHoldTime = 0;
+            canAirDash = true;
+            if (isGroundPounding) {
+              isGroundPounding = false;
+              shakeTimer = Math.max(shakeTimer, 0.16);
+              spawnCombatSparks(heroX, floorY + 0.2, heroZ, '#F59E0B', 10, 4.8);
+              AudioEngine.playSound('hit');
+            }
           } else {
             coyoteTimer = Math.max(0, coyoteTimer - dt);
           }
+
+          // Variable Jump Height: release jump early to cut upward arc crisply
+          if (
+            prevJumpHeldFrame &&
+            !jumpHeld &&
+            heroVelY > 2.2 &&
+            platStepOut.activeControlMode === 'none'
+          ) {
+            heroVelY *= THREE.MathUtils.clamp(platTuning.variableJumpCut ?? 0.48, 0.2, 1.0);
+          }
+          prevJumpHeldFrame = jumpHeld;
 
           if (freshJumpPresses > 0) {
             airJumpPresses += freshJumpPresses;
@@ -6717,14 +7080,17 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
           if (inp.jumpQueued) {
             inp.jumpQueued = false;
-            jumpBufferTimer = 0.15;
+            jumpBufferTimer = (platTuning.jumpBufferMs ?? 150) / 1000;
           } else {
             jumpBufferTimer = Math.max(0, jumpBufferTimer - dt);
           }
 
-          const isSideSwim = env === 'sideScroller' && Boolean(sideCfgInit?.swimPhysics);
-          const maxJumps = enabledSet.has('doubleJump') ? 2 : enabledSet.has('jump') ? 1 : 0;
-          if ((jumpBufferTimer > 0 || (isSideSwim && upJumpHeld)) && maxJumps > 0) {
+          const isSideSwim =
+            (env === 'sideScroller' && Boolean(sideCfgInit?.swimPhysics)) || platStepOut.inWaterZone;
+          const allowDoubleJump = enabledSet.has('doubleJump') || platTuning.doubleJump;
+          const maxJumps = allowDoubleJump ? 2 : enabledSet.has('jump') ? 1 : 0;
+          const stickJumpMult = platStepOut.surfaceFriction === 'sticky' ? 0.58 : 1.0;
+          if ((jumpBufferTimer > 0 || (isSideSwim && upJumpHeld)) && maxJumps > 0 && platStepOut.activeControlMode === 'none') {
             if (isSideSwim) {
               heroVelY = 7.4;
               jumpsUsed = 0;
@@ -6732,6 +7098,16 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               jumpBufferTimer = 0;
               AudioEngine.playSound('splash');
               spawnCombatSparks(heroX, heroY + 0.8, heroZ, '#BAE6FD', 4, 2.2);
+            } else if (isWallSliding) {
+              // Wall-Jump away from wall
+              heroVelY = 10.8 * heroEnvEval.jumpMult;
+              platformerVelX = -wallSlideDir * 10.5;
+              jumpsUsed = 1;
+              coyoteTimer = 0;
+              jumpBufferTimer = 0;
+              jumpCountSeq++;
+              AudioEngine.playSound(activeLevel.audio.jump);
+              spawnCombatSparks(heroX, heroY + 0.6, heroZ, '#E2E8F0', 6, 3.2);
             } else if (isSwimming) {
               isSwimming = false;
               swimReenterCooldown = 0.36;
@@ -6740,14 +7116,16 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
               airJumpPresses = Math.max(1, airJumpPresses);
               coyoteTimer = 0;
               jumpBufferTimer = 0;
+              jumpCountSeq++;
               AudioEngine.playSound(activeLevel.audio.jump);
               AudioEngine.playSound('splash');
             } else if (coyoteTimer > 0) {
-              heroVelY = 10.6 * heroEnvEval.jumpMult;
+              heroVelY = 10.6 * heroEnvEval.jumpMult * stickJumpMult * platStepOut.gravitySign;
               jumpsUsed = 1;
               airJumpPresses = Math.max(1, airJumpPresses);
               coyoteTimer = 0;
               jumpBufferTimer = 0;
+              jumpCountSeq++;
               AudioEngine.playSound(activeLevel.audio.jump);
             } else if (jumpsUsed < maxJumps) {
               heroVelY = 10.0 * heroEnvEval.jumpMult;
@@ -6867,23 +7245,79 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             } else {
               airborneTimer += dt;
             }
-          } else {
+          } else if (platStepOut.activeControlMode === 'none') {
             const wasGroundedOnSlope = jumpsUsed === 0 && heroVelY <= 0.1 && heroY <= floorY + 0.48;
             const gravAccel =
               env === 'sideScroller' && sideCfgInit?.swimPhysics
                 ? 8.2 * (sideCfgInit.gravityScale ?? 0.48)
-                : 19.5 * (env === 'sideScroller' ? sideCfgInit?.gravityScale ?? 1 : 1);
-            heroVelY -= gravAccel * dt;
-            if (env === 'sideScroller' && sideCfgInit?.swimPhysics) {
+                : 19.5 *
+                  (env === 'sideScroller' ? sideCfgInit?.gravityScale ?? 1 : 1) *
+                  platStepOut.gravityScale *
+                  platStepOut.gravitySign;
+            if (airDashTimer <= 0) {
+              heroVelY -= gravAccel * dt;
+            }
+            if (isWallSliding) {
+              heroVelY = Math.max(-2.6, heroVelY);
+            }
+            if ((env === 'sideScroller' && sideCfgInit?.swimPhysics) || platStepOut.inWaterZone) {
               heroVelY = Math.max(-4.2, heroVelY);
             }
             heroY += heroVelY * dt;
+            // Glide Hover toggle (gentle descent when holding jump in mid-air if enabled)
+            if (
+              platformerCtrl.tuning.glideHover &&
+              (inp.keys.has('Space') ||
+                inp.keys.has('ShiftLeft') ||
+                inp.keys.has('ShiftRight') ||
+                (env === 'sideScroller' && (inp.keys.has('KeyW') || inp.keys.has('ArrowUp'))) ||
+                inp.jumpPointerDown) &&
+              heroVelY < -2.4 &&
+              !isGroundPounding &&
+              platStepOut.gravitySign > 0
+            ) {
+              heroVelY = -2.4;
+            }
+            // Ledge-Grab / Mantle assist onto nearby waist/chest-height platform edges
+            if (
+              env === 'sideScroller' &&
+              platformerCtrl.tuning.ledgeMantle &&
+              platStepOut.gravitySign > 0 &&
+              !isGroundPounding &&
+              Math.abs(moveX) > 0.15 &&
+              heroY > floorY + 0.3 &&
+              heroVelY > -3.5 &&
+              heroVelY < 4.5
+            ) {
+              const dirSign = Math.sign(moveX);
+              const aheadLedgeY = sampleSideScrollerSurfaceAtY(
+                activeLevel,
+                heroX + dirSign * 0.78,
+                heroZ,
+                heroY + 1.4,
+                false
+              );
+              if (aheadLedgeY > heroY + 0.18 && aheadLedgeY <= heroY + 1.38) {
+                heroY = aheadLedgeY + 0.04;
+                heroX += dirSign * 0.34;
+                heroVelY = 1.4;
+                jumpsUsed = 0;
+              }
+            }
             // Follow mild downhill slopes smoothly while running so character never bounces into false jump glitches!
-            if (heroVelY <= 0 && (heroY <= floorY || (wasGroundedOnSlope && heroY <= floorY + 0.42))) {
+            if (
+              platStepOut.gravitySign > 0 &&
+              heroVelY <= 0 &&
+              (heroY <= floorY || (wasGroundedOnSlope && heroY <= floorY + 0.42))
+            ) {
               heroY = floorY;
               heroVelY = 0;
               jumpsUsed = 0;
               airborneTimer = 0;
+            } else if (platStepOut.gravitySign < 0 && heroY >= floorY + 9.5) {
+              heroY = floorY + 9.5;
+              heroVelY = 0;
+              jumpsUsed = 0;
             } else {
               airborneTimer += dt;
             }
@@ -6999,6 +7433,12 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           liveHeroYawRef.current = heroYaw;
           heroRoot.position.set(heroX, heroY, heroZ);
           heroRoot.rotation.y = heroYaw;
+          heroRoot.rotation.z = platStepOut.gravitySign < 0 ? Math.PI : 0;
+          if (platformerCtrl.hasPlatformerModules) {
+            const baseHeroScale = heroCustom ? 1 : activeProject.heroModelScale ?? 1;
+            const targetScale = baseHeroScale * platStepOut.sizeScale;
+            heroRoot.scale.setScalar(THREE.MathUtils.damp(heroRoot.scale.x, targetScale, 10, dt));
+          }
 
           // Real-time 2-bone Foot-Planting IK, slope alignment, turn banking & breathing layer
           const ikGroundedNow =
@@ -7211,18 +7651,20 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 ? locoVelocityRatio
                 : 1);
             heroCustom.update(simDt, spd);
-            // Apply subtle pelvis slope drop, landing squash, breathing & turn banking to custom GLB rigs
-            if (heroKnockdownPhase === 'none' && !isSwimming && !isClimbing) {
-              heroCustom.group.position.y =
-                heroIKTargets.pelvisDropY + heroIKTargets.breathLift * 0.4;
-              heroCustom.group.rotation.z =
-                heroIKTargets.bankRollRad + heroIKTargets.slopeRollRad * 0.4;
-              if (heroCustom.group.children[0]) {
-                heroCustom.group.children[0].rotation.x += heroIKTargets.slopePitchRad * 0.45;
-              }
-            } else {
-              heroCustom.group.position.y = 0;
-              heroCustom.group.rotation.z = 0;
+            // Apply subtle pelvis slope drop, landing squash, breathing & turn banking additive to heroY
+            const customGrounded = heroKnockdownPhase === 'none' && !isSwimming && !isClimbing;
+            const customIkDropY =
+              customGrounded && ikGroundedNow
+                ? heroIKTargets.pelvisDropY + heroIKTargets.breathLift * 0.4
+                : 0;
+            heroCustom.group.position.y = heroY + customIkDropY;
+            heroCustom.group.rotation.z =
+              (platStepOut.gravitySign < 0 ? Math.PI : 0) +
+              (customGrounded
+                ? heroIKTargets.bankRollRad + heroIKTargets.slopeRollRad * 0.4
+                : 0);
+            if (customGrounded && heroCustom.group.children[0]) {
+              heroCustom.group.children[0].rotation.x += heroIKTargets.slopePitchRad * 0.45;
             }
           } else if (heroRig) {
             heroRig.shadowDisc.visible = !isSwimming && !isClimbing;
@@ -8119,7 +8561,14 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 let bestRockDist = 2.45;
                 for (let hi = 0; hi < islandHandles.harvestableScatter.length; hi++) {
                   const hs = islandHandles.harvestableScatter[hi];
-                  if (hs.collected || hs.scatterKind !== 'rock') continue;
+                  if (
+                    hs.collected ||
+                    hs.scatterKind !== 'rock' ||
+                    hs.rockClass === 'largeBoulder' ||
+                    hs.rockClass === 'pebble'
+                  ) {
+                    continue;
+                  }
                   const dx = hs.x - heroX;
                   const dz = hs.z - heroZ;
                   const d = Math.hypot(dx, dz);
@@ -8133,6 +8582,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   chopDidStrike = true;
                   wearHeldDurability(1);
                   bestRock.collected = true;
+                  if (bestRock.group) bestRock.group.visible = false;
                   for (const be of bestRock.batchedEntries) {
                     hideBatchEntry(be, bestRock.x, bestRock.y - 60, bestRock.z);
                   }
@@ -8207,6 +8657,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
                 if (hs.hp <= 0) {
                   hs.collected = true;
+                  if (hs.group) hs.group.visible = false;
                   for (const be of hs.batchedEntries) {
                     hideBatchEntry(be, hs.x, hs.y - 60, hs.z);
                   }
@@ -9536,6 +9987,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                   if (hs.collected || hs.scatterKind === 'rock') continue;
                   if (Math.hypot(hs.x - ix, hs.z - iz) <= smashR) {
                     hs.collected = true;
+                    if (hs.group) hs.group.visible = false;
                     for (const be of hs.batchedEntries) {
                       hideBatchEntry(be, hs.x, hs.y - 60, hs.z);
                     }
@@ -13146,6 +13598,7 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             if (canWalkCollect || canInteractCollect) {
               if (canInteractCollect) interactConsumed = true;
               nearestScatter.collected = true;
+              if (nearestScatter.group) nearestScatter.group.visible = false;
               for (const be of nearestScatter.batchedEntries) {
                 hideBatchEntry(be, nearestScatter.x, nearestScatter.y - 60, nearestScatter.z);
               }
@@ -13284,18 +13737,21 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
             }
             for (let hi = 0; hi < islandHandles.harvestableScatter.length; hi++) {
               const hs = islandHandles.harvestableScatter[hi];
-              if (hs.collected || hs.scatterKind !== 'rock' || hs.size < 0.45) continue;
+              if (hs.collected || hs.scatterKind !== 'rock') continue;
+              const isSitBoulder =
+                hs.rockClass === 'largeBoulder' || (!hs.rockClass && hs.size >= 0.45);
+              if (!isSitBoulder) continue;
               const d = Math.hypot(hs.x - heroX, hs.z - heroZ);
               if (d <= 2.15 && Math.abs(heroY - hs.y) < 2.2) {
                 if (!nearestSitTarget || d < nearestSitTarget.dist) {
                   nearestSitTarget = {
-                    label: 'Smooth River Stone',
+                    label: hs.rockClass === 'largeBoulder' ? 'Large Boulder' : 'Smooth River Stone',
                     x: hs.x,
                     y: hs.y,
                     z: hs.z,
                     dist: d,
-                    seatHeight: Math.max(0.24, hs.size * 0.52),
-                    seatForward: Math.max(0.32, hs.size * 0.56),
+                    seatHeight: Math.max(0.28, hs.size * 0.56),
+                    seatForward: Math.max(0.32, hs.size * 0.58),
                     entityYaw: 0,
                   };
                 }
@@ -13533,8 +13989,10 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                     pz = heroZ + (Math.random() - 0.5) * 120;
                   }
                 } else {
-                  const isRain = kind === 'rain';
-                  py -= wDt * (isRain ? 18 : 3.2);
+                  const isStorm = kind === 'storm';
+                  const isRain = kind === 'rain' || isStorm;
+                  py -= wDt * (isStorm ? 26 : isRain ? 18 : 3.2);
+                  px += isStorm ? wDt * 7.5 : isRain ? wDt * 1.4 : Math.sin(gameElapsed + i) * wDt * 0.5;
                   if (py < -2) {
                     py = 24;
                     px = heroX + (Math.random() - 0.5) * 120;
@@ -13679,6 +14137,27 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
                 bagCount,
                 hotbarItems: cachedHotbarItems,
               });
+            }
+            if (platformerCtrl.hasPlatformerModules) {
+              const pHudKey = `${platStepOut.starCoinsCount}/${platformerCtrl.starTotal}|${platStepOut.oxygenActive ? 1 : 0}:${Math.round(platStepOut.oxygenPct)}|${platStepOut.sizeScale.toFixed(2)}|${platStepOut.hasLantern ? 1 : 0}|${platStepOut.activeControlMode}`;
+              if (pHudKey !== lastPlatformerHudKey) {
+                lastPlatformerHudKey = pHudKey;
+                setPlatformerHud({
+                  visible:
+                    platformerCtrl.starTotal > 0 ||
+                    platStepOut.oxygenActive ||
+                    Math.abs(platStepOut.sizeScale - 1) > 0.05 ||
+                    platStepOut.hasLantern ||
+                    platStepOut.activeControlMode !== 'none',
+                  starCoinsCount: platStepOut.starCoinsCount,
+                  starTotal: platformerCtrl.starTotal,
+                  oxygenActive: platStepOut.oxygenActive,
+                  oxygenPct: Math.round(platStepOut.oxygenPct),
+                  sizeScale: platStepOut.sizeScale,
+                  hasLantern: platStepOut.hasLantern,
+                  activeControlMode: platStepOut.activeControlMode,
+                });
+              }
             }
           }
 
@@ -14499,8 +14978,32 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
 
         try {
           if (postPipeline) {
+            if (currentAtmoRef) {
+              _volFogColorScratch.copy(currentAtmoRef.fogColor);
+              if (currentAtmoRef.nightFactor > 0.55) {
+                _volFogInscatterScratch.set('#A4C4E8');
+              } else {
+                _volFogInscatterScratch
+                  .copy(currentAtmoRef.horizonColor)
+                  .lerp(currentAtmoRef.sunColor, 0.55 + currentAtmoRef.warmGlow * 0.35);
+              }
+            } else if (scene.fog instanceof THREE.FogExp2) {
+              _volFogColorScratch.copy(scene.fog.color);
+              _volFogInscatterScratch.copy(scene.fog.color).lerp(sun.color, 0.55);
+            }
+            _volFogCfgScratch.enabled = activeLevel.volumetricFogEnabled ?? true;
+            _volFogCfgScratch.density = activeLevel.volumetricFogDensity ?? 1.0;
+            _volFogCfgScratch.height = activeLevel.volumetricFogHeight ?? 2.2;
+            _volFogCfgScratch.softness = activeLevel.volumetricFogSoftness ?? 8.5;
+            _volFogCfgScratch.sharpness = activeLevel.volumetricFogSharpness ?? 0.3;
+            _volFogCfgScratch.noise = activeLevel.volumetricFogNoise ?? 0.95;
+            _volFogCfgScratch.patchiness = activeLevel.volumetricFogPatchiness ?? 0.45;
+            _volFogCfgScratch.speed = activeLevel.volumetricFogSpeed ?? 0.75;
+            _volFogCfgScratch.wind = activeLevel.wind ?? 0.45;
+
             postPipeline.render({
               config: activeProject.postProcessing,
+              volumetricFog: _volFogCfgScratch,
               sunPosition: _sunOffset,
               sunColor: sun.color,
               sunIntensity: sun.intensity,
@@ -14674,6 +15177,8 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
       setWorldActionPrompt(null);
       setGlidePrompt(null);
       liveQualityTargetRef.current = null;
+      platformerCtrlHandle?.dispose();
+      platformerCtrlHandle = null;
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
       ro.disconnect();
@@ -15334,6 +15839,37 @@ export const PlayModeView: React.FC<{ store: MakerStore }> = ({ store }) => {
           </div>
         );
       })()}
+
+      {/* Platformer Add-On Status Strip (Star Coins, Underwater Oxygen, Size Shift, Lantern) */}
+      {controlsActive && platformerHud.visible && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 pointer-events-none">
+          <div className="px-3.5 py-1.5 rounded-xl bg-[#11141D]/90 border border-white/15 text-white text-xs font-bold flex items-center gap-2.5 shadow-lg whitespace-nowrap">
+            {platformerHud.starTotal > 0 && (
+              <span className="text-[#FACC15] font-extrabold tabular-nums">
+                ★ {platformerHud.starCoinsCount}/{platformerHud.starTotal}
+              </span>
+            )}
+            {platformerHud.oxygenActive && (
+              <span className="text-[#38BDF8] font-extrabold tabular-nums">
+                O2 {platformerHud.oxygenPct}%
+              </span>
+            )}
+            {Math.abs(platformerHud.sizeScale - 1) > 0.05 && (
+              <span className="text-[#EC4899] font-extrabold">
+                {platformerHud.sizeScale < 0.8 ? 'Mini (0.5x)' : 'Giant (1.6x)'}
+              </span>
+            )}
+            {platformerHud.hasLantern && (
+              <span className="text-amber-300 font-bold">Lantern Lit</span>
+            )}
+            {platformerHud.activeControlMode !== 'none' && (
+              <span className="text-emerald-300 font-bold uppercase text-[10px]">
+                {platformerHud.activeControlMode}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Buddies Quest Progress Strip & Tavern Feast Celebration */}
       {controlsActive && isBuddiesMode && buddyHud.total > 0 && (

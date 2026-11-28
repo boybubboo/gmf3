@@ -239,7 +239,38 @@ export interface CustomAssetMeta {
   defaultScale: number;
   animSpeed: number;
   thumbnailDataUrl?: string;
+  /** Distinguishes Flower Maker assets from foliage plants within category: 'plant' */
+  plantSubKind?: 'plant' | 'flower';
+  /** Parametric flower recipe when authored via Flower Maker */
+  flowerRecipe?: FlowerMakerRecipe;
   createdAt: string;
+}
+
+export interface FlowerMakerRecipe {
+  id?: string;
+  name: string;
+  petalCount: number; // 3..18
+  petalShape: 'petalRound' | 'petalPointed' | 'petalRuffled' | 'petalOrchid';
+  colorMode: 'single' | 'gradient';
+  primaryColor: string;
+  secondaryColor: string;
+  petalPattern: PlantLeafPatternId;
+  textureNoise: number; // 0..1
+  petalLength: number; // 0.3..1.1
+  petalWidth: number; // 0.2..0.9
+  petalDroop: number; // -0.45..0.65
+  petalCup: number; // 0..0.9
+  petalRuffle: number; // 0..1
+  stamenColor: string;
+  stamenSize: number; // 0.4..1.8
+  stemHeight: number; // 0.45..2.2
+  stemColor: string;
+  stemDroop: number; // 0..0.65
+  leafColor: string;
+  leafCountMin: number; // 0..8
+  leafCountMax: number; // 0..10
+  leafScale: number; // 0.5..1.5
+  seed: number;
 }
 
 export type PlantLeafPatternId =
@@ -295,6 +326,9 @@ export interface PlantPartConfig {
   tatter?: number;
   /** Procedural rib/vein relief amplitude (0..1) */
   veinDepth?: number;
+  /** Organic grain/speckle noise strength on procedural petal/leaf surface texture (0..1) */
+  textureNoise?: number;
+  noiseSeed?: number;
   doubleSided?: boolean;
 }
 
@@ -658,7 +692,10 @@ export type SkyPresetId =
   | 'storm'
   | 'cave';
 
-export type WeatherKind = 'none' | 'fireflies' | 'leaves' | 'rain' | 'snow';
+export type WeatherKind = 'none' | 'fireflies' | 'leaves' | 'rain' | 'storm' | 'snow';
+
+export type MoonVisibilityMode = 'auto' | 'always' | 'off';
+export type StarTintMode = 'natural' | 'cool' | 'warm';
 
 export type VistaPresetId =
   | 'alpineValley'
@@ -1563,6 +1600,145 @@ export interface LevelEntity {
   // WebGPU r187 pipeline & zero-stutter material variant overrides
   meshletEnabled?: boolean;
   materialVariant?: EntityMaterialVariant;
+  // Modular Platformer Add-On configuration
+  platformerAddon?: PlatformerAddonConfig;
+}
+
+export type PlatformerAddonCategory =
+  | 'platforms'
+  | 'traversal'
+  | 'environment'
+  | 'puzzles'
+  | 'hazards'
+  | 'nextgen'
+  | 'flow';
+
+export type PlatformerModuleId =
+  | 'shuttlePlatform'
+  | 'elevatorPlatform'
+  | 'orbitPlatform'
+  | 'splinePlatform'
+  | 'crumblingPlatform'
+  | 'oneWayPlatform'
+  | 'seesawPlatform'
+  | 'rhythmPlatform'
+  | 'iceSurface'
+  | 'stickySurface'
+  | 'conveyorBelt'
+  | 'speedBoostPad'
+  | 'breakableBlock'
+  | 'barrelCannon'
+  | 'swingVine'
+  | 'grappleAnchor'
+  | 'bounceSpring'
+  | 'wallSpring'
+  | 'grindRail'
+  | 'climbLadder'
+  | 'monkeyBars'
+  | 'boostRing'
+  | 'windTunnel'
+  | 'waterZone'
+  | 'lowGravityZone'
+  | 'gravityFlipPad'
+  | 'warpPortal'
+  | 'shadowZone'
+  | 'lanternPickup'
+  | 'triggerSwitch'
+  | 'shootTarget'
+  | 'lockedDoor'
+  | 'followerKey'
+  | 'pushCrate'
+  | 'starGateway'
+  | 'retractSpikes'
+  | 'spikePendulum'
+  | 'firebar'
+  | 'thwompBlock'
+  | 'enemyPatroller'
+  | 'enemyFlyer'
+  | 'enemyCharger'
+  | 'enemyTurret'
+  | 'enemySpiked'
+  | 'dashCrystal'
+  | 'bashLantern'
+  | 'ghostEchoPad'
+  | 'slingshotWeb'
+  | 'sizeShiftGate'
+  | 'checkpointFlag'
+  | 'coinTrail'
+  | 'starCoin'
+  | 'secretWall'
+  | 'finishGoal';
+
+export interface PlatformerAddonConfig {
+  moduleId: PlatformerModuleId;
+  category: PlatformerAddonCategory;
+  width?: number;
+  height?: number;
+  depth?: number;
+  speed?: number;
+  pauseSec?: number;
+  distance?: number;
+  triggerOnStep?: boolean;
+  motionPattern?: 'shuttle' | 'elevator' | 'circular' | 'figure8' | 'spline';
+  waypoints?: [number, number, number][];
+  crumbleDelay?: number;
+  respawnSec?: number;
+  tiltStiffness?: number;
+  beatDivision?: 1 | 2 | 4;
+  phaseOffset?: number;
+  toggleOnJump?: boolean;
+  friction?: number;
+  conveyorSpeed?: number;
+  breakBy?: 'any' | 'groundPound' | 'dash' | 'headBonk' | 'giant';
+  cannonAngleDeg?: number;
+  cannonPower?: number;
+  cannonAutoRotate?: boolean;
+  cannonRotateSpeed?: number;
+  ropeLength?: number;
+  bounceForce?: number;
+  bounceAngleDeg?: number;
+  superBounceBonus?: number;
+  railType?: 'rail' | 'zipline';
+  climbType?: 'ladder' | 'grate' | 'monkeyBars';
+  windDirX?: number;
+  windDirY?: number;
+  windForce?: number;
+  gravityMode?: 'lowG' | 'zeroG' | 'flipCeiling';
+  gravityScale?: number;
+  oxygenEnabled?: boolean;
+  oxygenMaxSec?: number;
+  channelId?: string;
+  colorTag?: string;
+  switchType?: 'plate' | 'lever' | 'target';
+  timerSec?: number;
+  requiredTokens?: number;
+  tokenType?: 'coins' | 'stars' | 'keys';
+  firebarCount?: number;
+  patrolRange?: number;
+  sizeMode?: 'shrink' | 'grow' | 'toggle';
+  starIndex?: 1 | 2 | 3;
+  goalType?: 'flagpole' | 'tape' | 'secretExit';
+  requiresLantern?: boolean;
+}
+
+export interface PlatformerMovementConfig {
+  coyoteMs: number;
+  jumpBufferMs: number;
+  variableJumpCut: number;
+  doubleJump: boolean;
+  wallSlideJump: boolean;
+  airDash: boolean;
+  dashMode: 'horizontal' | 'omni';
+  groundPound: boolean;
+  ledgeMantle: boolean;
+  glideHover: boolean;
+  bpm: number;
+  rhythmPulseEnabled: boolean;
+  risingTideEnabled: boolean;
+  risingTideType: 'lava' | 'toxic' | 'water';
+  risingTideSpeed: number;
+  risingTideMinY: number;
+  risingTideMaxY: number;
 }
 
 export interface LevelObjective {
@@ -1648,7 +1824,10 @@ export type WorldDomainId =
   | 'grass'
   | 'dirtRoads'
   | 'flora'
-  | 'buildings';
+  | 'particleFx'
+  | 'buildings'
+  | 'platformerKit'
+  | 'atmosphere';
 
 export type WorldViewMode = '3d' | '2d';
 
@@ -1724,14 +1903,52 @@ export type TerrainBrush =
   | 'scatterTree'
   | 'scatterRock'
   | 'scatterFlower'
+  | 'scatterPlant'
   | 'scatterCustom';
 
 export type TerrainBrushFalloff = 'smooth' | 'dome' | 'peak' | 'plateau';
+
+export type RockSizeClass = 'largeBoulder' | 'boulder' | 'rock' | 'pebble';
+export type RockPatternKind = 'solid' | 'speckled' | 'stratified' | 'marbled' | 'mossyCracks';
+export type RockShapeKind = 'mixed' | 'crag' | 'cobble' | 'slab' | 'blocky';
+
+export interface RockTierScaleRange {
+  minSize: number;
+  maxSize: number;
+}
+
+export interface RockScatterStyleConfig {
+  enabledTiers: Record<RockSizeClass, boolean>;
+  tierScales: Record<RockSizeClass, RockTierScaleRange>;
+  colorMode: 'single' | 'gradient';
+  primaryColor: string;
+  secondaryColor: string;
+  colorVariation: number; // 0..1
+  pattern: RockPatternKind;
+  patternNoise: number; // 0..1
+  shape: RockShapeKind;
+  shapeVariation: number; // 0..1
+}
+
+export interface FloraScatterSettings {
+  rocks: RockScatterStyleConfig;
+  flowerSlots: [string, string, string, string];
+  flowerEnabledSlots?: [boolean, boolean, boolean, boolean];
+  flowerPaintAll: boolean;
+  activeFlowerSlot: number;
+  plantSlots: [string, string, string, string];
+  plantEnabledSlots?: [boolean, boolean, boolean, boolean];
+  plantPaintAll: boolean;
+  activePlantSlot: number;
+}
 
 export interface TerrainBrushOptions {
   strength?: number; // 0.1..1.5 (default 0.65)
   falloff?: TerrainBrushFalloff;
   flattenHeight?: number | null;
+  rockConfig?: RockScatterStyleConfig;
+  botanicalVariantKey?: string;
+  botanicalVariantKeys?: string[];
 }
 
 export interface ScatterItem {
@@ -1743,6 +1960,7 @@ export interface ScatterItem {
     | 'birch'
     | 'rock'
     | 'flower'
+    | 'plant'
     | 'bush'
     | 'berryBush'
     | 'fern'
@@ -1753,6 +1971,17 @@ export interface ScatterItem {
     | 'tallGrass'
     | 'custom';
   customAssetId?: string;
+  /** References a built-in premade flower/plant preset ID (e.g. 'flower:meadowBlossom', 'plant:bananaClump') */
+  botanicalPresetId?: string;
+  /** Gameplay tier & sculpted visual overrides for scattered rocks */
+  rockClass?: RockSizeClass;
+  rockPrimaryColor?: string;
+  rockSecondaryColor?: string;
+  rockColorHex?: string;
+  rockPattern?: RockPatternKind;
+  rockPatternNoise?: number;
+  rockShape?: Exclude<RockShapeKind, 'mixed'>;
+  rockShapeVariation?: number;
   x: number;
   z: number;
   size: number;
@@ -1966,6 +2195,7 @@ export interface TerrainData {
   waterBodies?: WaterBodyConfig[];
   dirtAndRoadConfig?: DirtAndRoadConfig;
   roads?: RoadSpline[];
+  floraScatterSettings?: FloraScatterSettings;
   /** True when created from scratch or synced from WorldMapData (removes circular shore cutoff) */
   freeformWorld?: boolean;
   /** Half-extent in meters for Lands larger than the default 156m island window */
@@ -2240,6 +2470,7 @@ export interface SideScrollerConfig {
   layers: SideScrollerLayersConfig;
   gravityScale?: number;
   swimPhysics?: boolean;
+  movementTuning?: PlatformerMovementConfig;
 }
 
 export interface GameLevel {
@@ -2255,11 +2486,46 @@ export interface GameLevel {
   sunAngle: number;
   timeOfDay?: number; // 0..24 hours
   autoCycleTime?: boolean;
-  cloudDensity?: number; // 0..1
+  // Expanded Sun controls
+  sunVisible?: boolean;
+  sunSize?: number; // 0.4..2.4 (default 1.0)
+  sunGlow?: number; // 0..2.0 (default 1.0)
+  sunElevation?: number; // optional manual override -10..85 deg
   sunIntensityScale?: number; // 0.3..1.8
   ambientIntensityScale?: number; // 0.3..1.8
   atmosphereWarmth?: number; // -0.5..0.5
+  // Expanded Moon controls
+  moonMode?: MoonVisibilityMode; // 'auto' | 'always' | 'off'
+  moonPhase?: number; // 0..1 (0=new, 0.25=quarter, 0.5=full, 0.75=waning)
+  moonSize?: number; // 0.4..2.6 (default 1.0)
+  moonGlow?: number; // 0..2.0 (default 0.95)
+  moonColor?: string; // hex tint (default '#DDE8FF')
+  moonAngle?: number; // 0..360 azimuth deg
+  moonElevation?: number; // 5..80 elevation deg
+  // Expanded Starfield controls
   starIntensity?: number; // 0..1.5
+  starDensity?: number; // 0.1..1.5 (default 0.85)
+  starSize?: number; // 0.4..2.4 (default 1.0)
+  starTwinkle?: number; // 0..2.0 (default 0.85)
+  starTint?: StarTintMode; // 'natural' | 'cool' | 'warm'
+  // Aurora Borealis controls
+  auroraEnabled?: boolean;
+  auroraIntensity?: number; // 0..2.0 (default 1.0)
+  auroraSpeed?: number; // 0..2.5 (default 0.85)
+  auroraHeight?: number; // 0.12..0.75 (default 0.34)
+  auroraSpread?: number; // 0.2..1.5 (default 0.75)
+  auroraColorA?: string; // lower curtain hex (default '#34D399')
+  auroraColorB?: string; // upper crown hex (default '#8B5CF6')
+  // Expanded Cloud & Storm Cloud controls
+  cloudDensity?: number; // 0..1
+  cloudOpacity?: number; // 0..1 (default 0.88)
+  cloudSoftness?: number; // 0..1 edge feather & resolution smoothness (default 0.68)
+  cloudHeight?: number; // -20..60 altitude offset in meters (default 0)
+  cloudSpeed?: number; // 0..3.0 drift speed multiplier (default 1.0)
+  cloudScale?: number; // 0.5..2.0 cloud scale (default 1.0)
+  stormClouds?: boolean; // explicit toggle; auto-active when weather === 'storm' or sky === 'storm'
+  stormIntensity?: number; // 0..1 thunderhead darkness & billowing (default 0.85)
+  stormLightning?: boolean; // soft periodic cloud-internal sheet lightning glow
   cameraMode?: CameraMode;
   fog: number;
   hasStart: boolean;
@@ -2283,10 +2549,12 @@ export interface GameLevel {
   volumetricFogEnabled?: boolean;
   volumetricFogDensity?: number; // 0..2.0 (default 1.0)
   volumetricFogHeight?: number; // -10..40 (elevation offset)
-  volumetricFogSoftness?: number; // Transition thickness / edge softness in meters (1..25, default 8.0)
+  volumetricFogSoftness?: number; // Transition spread thickness in meters (1..25, default 8.0)
+  volumetricFogSharpness?: number; // Edge blur (0) to crisp sculpted wisps (1)
   volumetricFogNoise?: number; // Boundary noise amplitude (0..2.0, default 0.85)
   volumetricFogPatchiness?: number; // Fog separation into patches / banks (0..1.0, default 0.45)
   volumetricFogSpeed?: number; // Fog movement & drift speed (0.1..3.0, default 0.75)
+  platformerTuning?: PlatformerMovementConfig;
   godRaysEnabled?: boolean;
   godRaysIntensity?: number; // 0..1.5 (default 0.75)
   atmosphericDust?: number; // 0..1.0 (default 0.5)
@@ -2374,6 +2642,7 @@ export interface PostProcessingConfig {
   volumetricFogDensity?: number; // 0..2.0
   volumetricFogHeight?: number; // -10..40
   volumetricFogSoftness?: number; // 1..25m
+  volumetricFogSharpness?: number; // 0..1.0
   volumetricFogNoise?: number; // 0..2.0
   volumetricFogPatchiness?: number; // 0..1.0
   volumetricFogSpeed?: number; // 0.1..3.0

@@ -13,6 +13,7 @@ import type {
   LevelEntity,
   GameLevel,
   GameProject,
+  PlatformerModuleId,
   StoryCameraShot,
   TerrainBrush,
   TerrainBrushFalloff,
@@ -120,6 +121,7 @@ import { isSavePlinthEntity } from '../../utils/worldMapFog';
 
 import { FX_DRAG_MIME } from './FxLibraryPanel';
 import { MAKER_ASSET_DRAG_MIME } from './LeftAssetsPanel';
+import { PLATFORMER_MODULE_DRAG_MIME } from '../../data/platformerCatalog';
 
 export interface TerrainBrushStrokeMeta {
   isStart: boolean;
@@ -217,6 +219,8 @@ function getBrushAccentHex(brush: TerrainBrush): string {
       return '#BAE6FD';
     case 'weatherClear':
       return '#E2E8F0';
+    case 'scatterPlant':
+      return '#10B981';
     default:
       return '#F59E0B';
   }
@@ -307,6 +311,7 @@ interface WorldViewport3DProps {
   onAddAtPoint: (pos: { x: number; y: number }, elevationY?: number) => void;
   onDropFxTemplate?: (templateId: string, pos: { x: number; y: number }) => void;
   onDropCustomAsset?: (assetId: string, pos: { x: number; y: number }, elevationY?: number) => void;
+  onDropPlatformerModule?: (moduleId: PlatformerModuleId, pos: { x: number; y: number }, elevationY?: number) => void;
   onPickBuildingCurvePoint?: (worldXZ: [number, number]) => void;
 }
 
@@ -358,6 +363,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
   onAddAtPoint,
   onDropFxTemplate,
   onDropCustomAsset,
+  onDropPlatformerModule,
   onPickBuildingCurvePoint,
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -365,6 +371,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
   const [texInvalidationTick, setTexInvalidationTick] = useState(0);
   const [sculptFinalizeNonce, setSculptFinalizeNonce] = useState(0);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [dragKind, setDragKind] = useState<'fx' | 'asset' | 'platformer' | null>(null);
   const [shiftHeld, setShiftHeld] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const shiftHeldRef = useRef(false);
@@ -443,6 +450,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     onAddAtPoint,
     onDropFxTemplate,
     onDropCustomAsset,
+    onDropPlatformerModule,
     onPickBuildingCurvePoint,
     buildingCurveGuide,
     cameraAngleLocked,
@@ -489,6 +497,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     onAddAtPoint,
     onDropFxTemplate,
     onDropCustomAsset,
+    onDropPlatformerModule,
     onPickBuildingCurvePoint,
     buildingCurveGuide,
     cameraAngleLocked,
@@ -629,6 +638,21 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     let envTex: THREE.Texture | null = null;
     let postPipeline: PostProcessingPipeline | null = null;
     const _sunDirScratch = new THREE.Vector3();
+    const _volFogColorScratch = new THREE.Color('#B8CDE0');
+    const _volFogInscatterScratch = new THREE.Color('#FFE8BC');
+    const _volFogCfgScratch = {
+      enabled: true,
+      density: 1.0,
+      height: 2.2,
+      softness: 8.5,
+      sharpness: 0.3,
+      noise: 0.95,
+      patchiness: 0.45,
+      speed: 0.75,
+      wind: 0.45,
+      fogColor: _volFogColorScratch,
+      inscatterColor: _volFogInscatterScratch,
+    };
 
     const islandContainer = new THREE.Group();
     const entitiesContainer = new THREE.Group();
@@ -2135,7 +2159,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
           if (refs.hasDynamicShadows) {
             for (let ei = 0; ei < curLevel.entities.length; ei++) {
               const ent = curLevel.entities[ei];
-              if (ent.kind !== 'platform' || !ent.platformRunning) continue;
+              if (ent.kind !== 'platform' || !ent.platformRunning || ent.platformerAddon) continue;
               const grp = refs.entityGroups.get(ent.id);
               if (!grp) continue;
               const [sx, sz] = levelBoardToWorld(curLevel, ent.position);
@@ -2168,6 +2192,34 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
           if (t - lastAnimShadowTime >= 0.08) {
             lastAnimShadowTime = t;
             refs.markShadowDirty();
+          }
+        }
+        // Subtle editor preview animations for modular platformer add-ons
+        for (let ei = 0; ei < curLevel.entities.length; ei++) {
+          const ent = curLevel.entities[ei];
+          const pa = ent.platformerAddon;
+          if (!pa) continue;
+          const grp = refs.entityGroups.get(ent.id);
+          if (!grp) continue;
+          const fb = grp.userData?.firebarPivot as THREE.Object3D | undefined;
+          if (fb) fb.rotation.z = t * (pa.speed ?? 1.8);
+          const pp = grp.userData?.pendulumPivot as THREE.Object3D | undefined;
+          if (pp) pp.rotation.z = Math.sin(t * (pa.speed ?? 1.9)) * 0.85;
+          const bp = grp.userData?.barrelPivot as THREE.Object3D | undefined;
+          if (bp && pa.cannonAutoRotate) {
+            bp.rotation.z = Math.sin(t * 1.4) * 0.65;
+          } else if (bp && pa.cannonAngleDeg !== undefined) {
+            bp.rotation.z = THREE.MathUtils.degToRad(90 - pa.cannonAngleDeg);
+          }
+          const cm = grp.userData?.crystalMesh as THREE.Object3D | undefined;
+          if (cm) {
+            cm.rotation.y = t * 1.8;
+            cm.position.y = 0.85 + Math.sin(t * 2.6) * 0.1;
+          }
+          const sm = grp.userData?.starMesh as THREE.Object3D | undefined;
+          if (sm) {
+            sm.rotation.y = t * 2.0;
+            sm.position.y = 1.0 + Math.sin(t * 2.4) * 0.1;
           }
         }
         for (let fi = 0; fi < refs.floatSpinObjects.length; fi++) {
@@ -2248,9 +2300,10 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
                   pz = (Math.random() - 0.5) * 260;
                 }
               } else {
-                const isRain = kind === 'rain';
-                py -= wDt * (isRain ? 18 : 3.2);
-                px += isRain ? 0 : Math.sin(t + i) * wDt * 0.6;
+                const isStorm = kind === 'storm';
+                const isRain = kind === 'rain' || isStorm;
+                py -= wDt * (isStorm ? 26 : isRain ? 18 : 3.2);
+                px += isStorm ? wDt * 7.5 : isRain ? wDt * 1.4 : Math.sin(t + i) * wDt * 0.6;
                 if (py < -2) {
                   py = 26;
                   px = (Math.random() - 0.5) * 260;
@@ -2309,8 +2362,27 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         try {
           if (postPipeline) {
             _sunDirScratch.copy(sun.position).sub(sun.target.position);
+            if (scene.fog instanceof THREE.FogExp2) {
+              _volFogColorScratch.copy(scene.fog.color);
+            } else if (scene.background instanceof THREE.Color) {
+              _volFogColorScratch.copy(scene.background);
+            }
+            const bgHorizon = scene.background instanceof THREE.Color ? scene.background : _volFogColorScratch;
+            _volFogInscatterScratch.copy(bgHorizon).lerp(sun.color, 0.56);
+            const isWmNow = propsRef.current.worldEditorScope === 'worldMap' && Boolean(propsRef.current.worldMap);
+            _volFogCfgScratch.enabled = curLevel.volumetricFogEnabled ?? true;
+            _volFogCfgScratch.density = (curLevel.volumetricFogDensity ?? 1.0) * (isWmNow ? 0.22 : 1.0);
+            _volFogCfgScratch.height = curLevel.volumetricFogHeight ?? 2.2;
+            _volFogCfgScratch.softness = curLevel.volumetricFogSoftness ?? 8.5;
+            _volFogCfgScratch.sharpness = curLevel.volumetricFogSharpness ?? 0.3;
+            _volFogCfgScratch.noise = curLevel.volumetricFogNoise ?? 0.95;
+            _volFogCfgScratch.patchiness = curLevel.volumetricFogPatchiness ?? 0.45;
+            _volFogCfgScratch.speed = curLevel.volumetricFogSpeed ?? 0.75;
+            _volFogCfgScratch.wind = curLevel.wind ?? 0.45;
+
             postPipeline.render({
               config: propsRef.current.project.postProcessing,
+              volumetricFog: _volFogCfgScratch,
               sunPosition: _sunDirScratch,
               sunColor: sun.color,
               sunIntensity: sun.intensity,
@@ -2737,15 +2809,51 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     level.fog,
     level.vistaHeightFog,
     level.sunAngle,
+    level.sunVisible,
+    level.sunSize,
+    level.sunGlow,
+    level.sunElevation,
     level.timeOfDay,
     level.cloudDensity,
+    level.cloudOpacity,
+    level.cloudSoftness,
+    level.cloudHeight,
+    level.cloudSpeed,
+    level.cloudScale,
+    level.stormClouds,
+    level.stormIntensity,
+    level.stormLightning,
     level.sunIntensityScale,
     level.ambientIntensityScale,
     level.atmosphereWarmth,
+    level.moonMode,
+    level.moonPhase,
+    level.moonSize,
+    level.moonGlow,
+    level.moonColor,
+    level.moonAngle,
+    level.moonElevation,
     level.starIntensity,
+    level.starDensity,
+    level.starSize,
+    level.starTwinkle,
+    level.starTint,
+    level.auroraEnabled,
+    level.auroraIntensity,
+    level.auroraSpeed,
+    level.auroraHeight,
+    level.auroraSpread,
+    level.auroraColorA,
+    level.auroraColorB,
+    level.wind,
     level.volumetricFogEnabled,
     level.volumetricFogDensity,
     level.volumetricFogHeight,
+    level.volumetricFogSoftness,
+    level.volumetricFogSharpness,
+    level.volumetricFogNoise,
+    level.volumetricFogPatchiness,
+    level.volumetricFogSpeed,
     level.godRaysEnabled,
     level.godRaysIntensity,
     level.atmosphericDust,
@@ -3380,7 +3488,10 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         if (!grp) continue;
         const [wx, wz] = levelBoardToWorld(level, ent.position);
         const wy = sampleLevelHeight(level, wx, wz);
-        const extraY = ent.kind === 'platform' ? PlatformMotion.hover(ent.platformPreset) : 0;
+        const extraY =
+          ent.kind === 'platform' && !ent.platformerAddon
+            ? PlatformMotion.hover(ent.platformPreset)
+            : 0;
         grp.position.set(wx, wy + extraY + (ent.elevationY ?? 0), wz);
 
         if (ent.kind !== 'fxEmitter' && ent.kind !== 'light') {
@@ -3397,7 +3508,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         }
       }
       refs.hasDynamicShadows = level.entities.some(
-        (ent) => ent.kind === 'platform' && Boolean(ent.platformRunning)
+        (ent) => ent.kind === 'platform' && Boolean(ent.platformRunning) && !ent.platformerAddon
       );
       refs.markShadowDirty();
       return;
@@ -3418,7 +3529,7 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     refs.torchFlameObjects = [];
     refs.customUpdaters = [];
     refs.hasDynamicShadows = level.entities.some(
-      (ent) => ent.kind === 'platform' && Boolean(ent.platformRunning)
+      (ent) => ent.kind === 'platform' && Boolean(ent.platformRunning) && !ent.platformerAddon
     );
     refs.heroGroup = null;
     refs.portalGroup = null;
@@ -3550,7 +3661,10 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
 
       const [wx, wz] = levelBoardToWorld(level, ent.position);
       const wy = sampleLevelHeight(level, wx, wz);
-      const extraY = ent.kind === 'platform' ? PlatformMotion.hover(ent.platformPreset) : 0;
+      const extraY =
+        ent.kind === 'platform' && !ent.platformerAddon
+          ? PlatformMotion.hover(ent.platformPreset)
+          : 0;
 
       if (ent.canopyTree) {
         const anchor = new THREE.Group();
@@ -3995,14 +4109,23 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
     const hasFxMime =
       e.dataTransfer.types.includes(FX_DRAG_MIME) || Boolean(propsRef.current.draggingFxTemplate);
     const hasAssetMime = e.dataTransfer.types.includes(MAKER_ASSET_DRAG_MIME);
-    if (!hasFxMime && !hasAssetMime) return;
+    const hasPlatformerMime = e.dataTransfer.types.includes(PLATFORMER_MODULE_DRAG_MIME);
+    if (!hasFxMime && !hasAssetMime && !hasPlatformerMime) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
+    const nextDragKind: 'fx' | 'asset' | 'platformer' = hasPlatformerMime
+      ? 'platformer'
+      : hasAssetMime
+      ? 'asset'
+      : 'fx';
     if (!isDragOver) setIsDragOver(true);
+    if (dragKind !== nextDragKind) setDragKind(nextDragKind);
 
     const refs = sceneRefs.current;
     if (refs) {
-      const accent = hasAssetMime
+      const accent = hasPlatformerMime
+        ? '#20B46A'
+        : hasAssetMime
         ? '#20B46A'
         : propsRef.current.draggingFxTemplate?.accentHex ?? '#7C5CFF';
       refs.dropRingMat.color.set(accent);
@@ -4020,20 +4143,35 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
     setIsDragOver(false);
+    setDragKind(null);
     if (sceneRefs.current) {
       sceneRefs.current.dropPreviewGroup.visible = false;
     }
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    const platformerModId = e.dataTransfer.getData(PLATFORMER_MODULE_DRAG_MIME) as PlatformerModuleId | '';
     const customAssetId = e.dataTransfer.getData(MAKER_ASSET_DRAG_MIME);
     const templateId =
       e.dataTransfer.getData(FX_DRAG_MIME) ||
       propsRef.current.draggingFxTemplate?.id ||
-      (!customAssetId ? e.dataTransfer.getData('text/plain') : '');
+      (!customAssetId && !platformerModId ? e.dataTransfer.getData('text/plain') : '');
     setIsDragOver(false);
+    setDragKind(null);
     if (sceneRefs.current) {
       sceneRefs.current.dropPreviewGroup.visible = false;
+    }
+
+    if (platformerModId && propsRef.current.onDropPlatformerModule) {
+      e.preventDefault();
+      const hit = raycastClientToGround(e.clientX, e.clientY);
+      const boardPos = hit
+        ? levelWorldToBoard(propsRef.current.level, hit.x, hit.z)
+        : { x: 0.5, y: 0.5 };
+      const envNow = getEnvironmentType(propsRef.current.level);
+      const elev = hit && envNow === 'sideScroller' ? Math.max(-3, Math.min(20, hit.y)) : undefined;
+      propsRef.current.onDropPlatformerModule(platformerModId, boardPos, elev);
+      return;
     }
 
     if (customAssetId && propsRef.current.onDropCustomAsset) {
@@ -4179,12 +4317,23 @@ export const WorldViewport3D: React.FC<WorldViewport3DProps> = ({
         <div
           className="pointer-events-none absolute inset-0 rounded-2xl border-2 transition-colors"
           style={{
-            borderColor: draggingFxTemplate?.accentHex ?? '#7C5CFF',
-            boxShadow: `inset 0 0 36px ${(draggingFxTemplate?.accentHex ?? '#7C5CFF')}33`,
+            borderColor:
+              dragKind === 'asset' || dragKind === 'platformer'
+                ? '#20B46A'
+                : draggingFxTemplate?.accentHex ?? '#7C5CFF',
+            boxShadow: `inset 0 0 36px ${
+              dragKind === 'asset' || dragKind === 'platformer'
+                ? '#20B46A33'
+                : `${draggingFxTemplate?.accentHex ?? '#7C5CFF'}33`
+            }`,
           }}
         >
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3.5 py-1.5 rounded-xl bg-black/80 text-white text-xs font-extrabold shadow-lg border border-white/15">
-            Drop to place {draggingFxTemplate?.name ?? 'FX Effect'} here
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3.5 py-1.5 rounded-xl bg-black/80 text-white text-xs font-extrabold shadow-lg border border-white/15 whitespace-nowrap">
+            {dragKind === 'asset'
+              ? 'Drag prop or character and drop in anywhere'
+              : dragKind === 'platformer'
+              ? 'Drop platformer mechanic anywhere in level'
+              : `Drop to place ${draggingFxTemplate?.name ?? 'FX Effect'} here`}
           </div>
         </div>
       )}

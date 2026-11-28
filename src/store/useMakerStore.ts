@@ -59,6 +59,7 @@ import type {
   ExportedAssetBundle,
   ExportedTextureBundle,
   ExportedVoiceBundle,
+  FlowerMakerRecipe,
   GameInventoryConfig,
   GameLevel,
   GameProject,
@@ -624,6 +625,9 @@ export function useMakerStore() {
   const [objectMakerInventoryItemId, setObjectMakerInventoryItemId] = useState<string | null>(null);
   const [plantMakerOpen, setPlantMakerOpen] = useState(false);
   const [plantMakerTargetAssetId, setPlantMakerTargetAssetId] = useState<string | null>(null);
+  const [plantMakerInitialSection, setPlantMakerInitialSection] = useState<
+    'plant' | 'flower' | 'grass'
+  >('plant');
   const [characterMakerOpen, setCharacterMakerOpen] = useState(false);
   const [characterMakerTargetAssetId, setCharacterMakerTargetAssetId] = useState<string | null>(null);
   const [treeMakerOpen, setTreeMakerOpen] = useState(false);
@@ -972,6 +976,8 @@ export function useMakerStore() {
       keepMetricScale?: boolean;
       attachBodyPart?: ObjectAttachBodyPart | null;
       linkedInventoryItemId?: string | null;
+      plantSubKind?: 'plant' | 'flower';
+      flowerRecipe?: FlowerMakerRecipe;
     }): Promise<CustomAssetMeta> => {
       const existingMeta = opts.existingAssetId
         ? customAssets.find((a) => a.id === opts.existingAssetId)
@@ -993,6 +999,8 @@ export function useMakerStore() {
         keepMetricScale: opts.keepMetricScale ?? true,
         attachBodyPart: opts.attachBodyPart,
         linkedInventoryItemId: opts.linkedInventoryItemId,
+        plantSubKind: opts.plantSubKind,
+        flowerRecipe: opts.flowerRecipe,
       });
       await saveAssetRecord(meta, buffer);
       if (meta.thumbnailDataUrl) {
@@ -4413,8 +4421,14 @@ export function useMakerStore() {
     setPlantMakerOpen,
     plantMakerTargetAssetId,
     setPlantMakerTargetAssetId,
-    openPlantMaker: (assetId?: string) => {
+    plantMakerInitialSection,
+    setPlantMakerInitialSection,
+    openPlantMaker: (
+      assetId?: string,
+      initialSection?: 'plant' | 'flower' | 'grass'
+    ) => {
       setPlantMakerTargetAssetId(assetId ?? null);
+      setPlantMakerInitialSection(initialSection ?? 'plant');
       setShowingAssetVault(false);
       setObjectMakerOpen(false);
       setCharacterMakerOpen(false);

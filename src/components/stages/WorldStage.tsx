@@ -8,13 +8,14 @@ import {
   Crosshair,
   Eraser,
   Eye,
+  Gamepad2,
   Globe,
+  HelpCircle,
   Lock,
   Map as MapIcon,
   MapPin,
   Mountain,
   Move,
-  PanelLeftClose,
   PanelLeftOpen,
   Plus,
   RotateCcw,
@@ -22,14 +23,10 @@ import {
   Route,
   Scaling,
   Search,
-  Shapes,
   SlidersHorizontal,
   Spline,
-  Sprout,
   Trash2,
-  Trees,
   Unlock,
-  Waves,
 } from 'lucide-react';
 import {
   BUILTIN_FX_EFFECT_LIBRARY,
@@ -87,6 +84,7 @@ import type {
   EnvironmentType,
   GameplayMode,
   LevelEntity,
+  PlatformerModuleId,
   PropPresetId,
   RpgLootMode,
   RpgPathStyle,
@@ -118,6 +116,11 @@ import {
   getBuildingShapeBaseSize,
 } from '../../three/buildingBlocks';
 import {
+  getActiveFlowerVariantKeys,
+  getActivePlantVariantKeys,
+  resolveFloraScatterSettings,
+} from '../../three/rockBuilder';
+import {
   computeCurveLength,
   createCurvePresetPoints,
   createDefaultCurveGuide,
@@ -135,19 +138,31 @@ import {
   sampleTerrainHeight,
   uid,
 } from '../../utils/terrain';
-import { WORLD_TERRAIN_YELLOW, type WorldMapBrushMode } from '../../utils/worldMap';
+import { WORLD_TERRAIN_YELLOW } from '../../utils/worldMap';
+import {
+  type AtmosphereSectionId,
+  publishGuidanceHint,
+  useHintsEnabled,
+} from '../../utils/editorPrefs';
 import { AssetThumbnail } from '../shared/AssetThumbnail';
 import { ChatBubbleStudioModal } from '../shared/ChatBubbleStudioModal';
 import { DialogueVoiceEditor } from '../shared/DialogueVoiceEditor';
 import { FieldLabel } from '../shared/MakerUI';
 import { FxLibraryPanel } from '../world/FxLibraryPanel';
-import { LeftAssetsPanel } from '../world/LeftAssetsPanel';
 import { LevelMapModal } from '../world/LevelMapModal';
-import { Overview2DPainter } from '../world/Overview2DPainter';
+import { Overview2DPainter, type Painter2DTool } from '../world/Overview2DPainter';
+import { PlatformerKitPanel } from '../world/PlatformerKitPanel';
+import { PLATFORMER_MODULE_MAP, createPlatformerModuleEntity } from '../../data/platformerCatalog';
 import {
   type ActiveBlockToolAdjustments,
   WorldDomainInspector,
 } from '../world/WorldDomainInspector';
+import { WorldGuidanceBanner } from '../world/WorldGuidanceBanner';
+import {
+  WorldLeftCreationPanel,
+  type LeftCreationTab,
+  type LeftPropsSubTab,
+} from '../world/WorldLeftCreationPanel';
 import { WorldViewport3D } from '../world/WorldViewport3D';
 
 const DropKinds: EntityKind[] = [
@@ -165,23 +180,6 @@ const DropKinds: EntityKind[] = [
   'light',
   'fxEmitter',
   'checkpoint',
-];
-
-const WORLD_DOMAINS: {
-  id: WorldDomainId;
-  label: string;
-  accent: string;
-  openWorldOnly?: boolean;
-  Icon: React.FC<{ size?: number; className?: string }>;
-}[] = [
-  { id: 'select', label: 'Select', accent: '#7C5CFF', Icon: Crosshair },
-  { id: 'mountains', label: 'Mountains', accent: '#F59E0B', openWorldOnly: true, Icon: Mountain },
-  { id: 'water', label: 'Water', accent: '#0EA5E9', openWorldOnly: true, Icon: Waves },
-  { id: 'caves', label: 'Caves', accent: '#A855F7', openWorldOnly: true, Icon: Mountain },
-  { id: 'grass', label: 'Grass', accent: '#20B46A', openWorldOnly: true, Icon: Sprout },
-  { id: 'dirtRoads', label: 'Dirt & Roads', accent: '#C2854E', openWorldOnly: true, Icon: Route },
-  { id: 'flora', label: 'Flora', accent: '#16A34A', openWorldOnly: true, Icon: Trees },
-  { id: 'buildings', label: 'Buildings', accent: '#F59E0B', Icon: Box },
 ];
 
 export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
@@ -234,28 +232,63 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     nonce: number;
   } | null>(null);
 
-  const [leftPanelMode, setLeftPanelMode] = useState<'level' | 'assets' | 'hidden'>(() => {
+  const [hintsEnabled, setHintsEnabled] = useHintsEnabled();
+  const [worldMapSelectMode, setWorldMapSelectMode] = useState(false);
+  const [leftPanelVisible, setLeftPanelVisible] = useState<boolean>(() => {
     try {
-      const savedMode = localStorage.getItem('maker.world.leftPanelMode.v1');
-      if (savedMode === 'level' || savedMode === 'assets' || savedMode === 'hidden') {
-        return savedMode;
-      }
-      return localStorage.getItem('maker.world.showLeftPanel.v1') !== 'false' ? 'assets' : 'hidden';
+      return localStorage.getItem('maker.world.showLeftPanel.v1') !== 'false';
     } catch {
-      return 'assets';
+      return true;
     }
   });
-  const setLeftPanel = (next: 'level' | 'assets' | 'hidden') => {
-    setLeftPanelMode(next);
+  const [leftActiveTab, setLeftActiveTab] = useState<LeftCreationTab>('build');
+  const [leftPropsSubTab, setLeftPropsSubTab] = useState<LeftPropsSubTab>('assets');
+  const [atmosphereSection, setAtmosphereSection] = useState<AtmosphereSectionId>('skyTime');
+  const setLeftPanelOpen = (visible: boolean) => {
+    setLeftPanelVisible(visible);
     try {
-      localStorage.setItem('maker.world.leftPanelMode.v1', next);
-      localStorage.setItem('maker.world.showLeftPanel.v1', String(next !== 'hidden'));
+      localStorage.setItem('maker.world.showLeftPanel.v1', String(visible));
     } catch {
       // ignore storage failures
     }
   };
   const aiPanelState = useContextualAiPanelState();
-  const showLeftPanel = aiPanelState.isOpen || leftPanelMode !== 'hidden';
+  const showLeftPanel = aiPanelState.isOpen || leftPanelVisible;
+
+  const wmForHints = store.resolvedWorldMap;
+  const hasWorldTerrain = useMemo(() => {
+    const mask = wmForHints?.landMask;
+    if (!mask || mask.length === 0) return false;
+    for (let i = 0; i < mask.length; i += 4) {
+      if (mask[i] === 1) return true;
+    }
+    for (let i = 0; i < mask.length; i++) {
+      if (mask[i] === 1) return true;
+    }
+    return false;
+  }, [wmForHints?.revision, wmForHints?.landMask]);
+
+  const syncedLandTool: Painter2DTool = useMemo(() => {
+    if (store.activeWorldDomain === 'mountains') {
+      return brush === 'paintRock' || brush === 'weatherCracks' || brush === 'weatherErode'
+        ? 'rocks'
+        : 'hills';
+    }
+    if (store.activeWorldDomain === 'water') {
+      return brush === 'carveRiver' ? 'rivers' : 'lakes';
+    }
+    if (store.activeWorldDomain === 'caves') return 'caves';
+    if (store.activeWorldDomain === 'grass') return 'terrain';
+    if (store.activeWorldDomain === 'dirtRoads') return 'roads';
+    if (store.activeWorldDomain === 'flora') {
+      if (brush === 'scatterRock') return 'rocks';
+      if (brush === 'scatterFlower') return 'wildflowers';
+      if (brush === 'scatterPlant') return 'plants';
+      return 'deciduousWoods';
+    }
+    if (store.activeWorldDomain === 'select') return 'inspect';
+    return 'terrain';
+  }, [store.activeWorldDomain, brush]);
 
   const [activePlacementAssetId, setActivePlacementAssetId] = useState<string | null>(null);
   const [dropPreset, setDropPreset] = useState<'savePlinth' | 'heroStart' | null>(null);
@@ -274,6 +307,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
   );
   const [draggingFxTemplate, setDraggingFxTemplate] = useState<FxLibraryTemplate | null>(null);
   const [placeFxTemplateId, setPlaceFxTemplateId] = useState<string | null>(null);
+  const [placePlatformerModuleId, setPlacePlatformerModuleId] = useState<PlatformerModuleId | null>(null);
 
   const allFxTemplates = useMemo(
     () => [...BUILTIN_FX_EFFECT_LIBRARY, ...customFxTemplates],
@@ -312,6 +346,10 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
       captureEntityIntoActiveTool(currentEntity);
     }
   }, [store.selectedEntityID, keepToolAdjustments, currentEntity]);
+
+  useEffect(() => {
+    publishGuidanceHint(null);
+  }, [currentLevel?.id, store.worldEditorScope]);
 
   const placementGhostSize: [number, number, number] = useMemo(() => {
     if (tool === 'add' && addPaletteMode === 'entities' && dropPreset === 'heroStart') {
@@ -560,6 +598,25 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
       false
     );
     setActivePlacementAssetId(null);
+    setPlacePlatformerModuleId(null);
+    setTool('move');
+    store.setActiveWorldDomain('select');
+  };
+
+  const placePlatformerModuleAtPoint = (
+    moduleId: PlatformerModuleId,
+    pos: { x: number; y: number },
+    elevationY?: number
+  ) => {
+    const spec = PLATFORMER_MODULE_MAP[moduleId];
+    if (!spec) return;
+    const ent = createPlatformerModuleEntity(moduleId, pos, { elevationY });
+    store.updateLevel(`add ${spec.label}`, (lvl) => ({
+      ...lvl,
+      entities: [...lvl.entities, ent],
+    }));
+    store.setSelectedEntityID(ent.id);
+    setPlacePlatformerModuleId(null);
     setTool('move');
     store.setActiveWorldDomain('select');
   };
@@ -714,19 +771,48 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
 
   const selectWorldDomain = (domainId: WorldDomainId) => {
     store.setActiveWorldDomain(domainId);
+    if (domainId === 'atmosphere') {
+      setPlaceFxTemplateId(null);
+      setPlacePlatformerModuleId(null);
+      if (tool === 'terrain' || tool === 'add') setTool('move');
+      if (leftActiveTab !== 'atmosphere') setLeftActiveTab('atmosphere');
+      return;
+    }
+    publishGuidanceHint(null);
     if (domainId === 'select') {
       if (tool === 'terrain') setTool('move');
       setPlaceFxTemplateId(null);
+      setPlacePlatformerModuleId(null);
       return;
     }
     if (domainId === 'buildings') {
       setPlaceFxTemplateId(null);
       setActivePlacementAssetId(null);
+      setPlacePlatformerModuleId(null);
       setAddPaletteMode('blocks');
       setTool('add');
       store.setSelectedEntityID(null);
       return;
     }
+    if (domainId === 'platformerKit') {
+      setPlaceFxTemplateId(null);
+      setActivePlacementAssetId(null);
+      setDropPreset(null);
+      setAddPaletteMode('entities');
+      setTool('add');
+      store.setSelectedEntityID(null);
+      setPlacePlatformerModuleId((prev) => prev ?? 'shuttlePlatform');
+      return;
+    }
+    if (domainId === 'particleFx') {
+      setActivePlacementAssetId(null);
+      setDropPreset(null);
+      setPlacePlatformerModuleId(null);
+      store.setSelectedEntityID(null);
+      setTool(placeFxTemplateId ? 'add' : 'move');
+      return;
+    }
+    setPlacePlatformerModuleId(null);
     if (envType !== 'openWorld') {
       setTool('move');
       return;
@@ -768,6 +854,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
         'scatterTree',
         'scatterRock',
         'scatterFlower',
+        'scatterPlant',
         'scatterCustom',
       ]);
       if (!floraSet.has(brush)) setBrush('scatterTree');
@@ -831,11 +918,6 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
     'player'.includes(searchQ) ||
     'start'.includes(searchQ);
 
-  const visibleDomains = WORLD_DOMAINS.filter(
-    (d) =>
-      (!d.openWorldOnly || envType === 'openWorld') &&
-      !(d.id === 'buildings' && store.worldViewMode === '2d')
-  );
   const isWorldMapScope = envType === 'openWorld' && store.worldEditorScope === 'worldMap';
   const wm = store.resolvedWorldMap;
   const wmRegions = wm?.regions ?? [];
@@ -843,7 +925,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
 
   return (
     <div className="h-full min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden maker-scroll">
-      {/* Left sidebar: Contextual AI Creator OR Assets Browser OR Scene Contents & Level Essentials */}
+      {/* Left sidebar: Contextual AI Creator OR Focused Creation & Land Elements Panel */}
       {aiPanelState.isOpen ? (
         <aside className="w-full lg:w-[296px] xl:w-[320px] shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-b lg:border-b-0 lg:border-r border-slate-200/80 dark:border-white/[0.08] overflow-hidden flex flex-col">
           <ContextualAiPanel
@@ -854,80 +936,76 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
           />
         </aside>
       ) : (
-        <>
-          {leftPanelMode === 'assets' && (
-            <LeftAssetsPanel
-              store={store}
-              activePlacementAssetId={activePlacementAssetId}
-              hideBuildingsSection={isWorldMapScope || store.worldViewMode === '2d'}
-              onSelectPlacementAsset={(asset) => {
-                if (isWorldMapScope) {
-                  const targetRegion = wmRegions[0] ?? store.addWorldLandRegion('Land 1');
-                  if (targetRegion) {
-                    store.enterWorldEditorScope(targetRegion.levelId);
-                  }
+        leftPanelVisible && (
+          <WorldLeftCreationPanel
+            store={store}
+            envType={envType}
+            isWorldMapScope={isWorldMapScope}
+            worldMapSelectMode={worldMapSelectMode}
+            onWorldMapSelectModeChange={setWorldMapSelectMode}
+            activeTool={activeTool}
+            setTool={setTool}
+            brushRadius={brushRadius}
+            setBrushRadius={setBrushRadius}
+            activeTab={leftActiveTab}
+            setActiveTab={setLeftActiveTab}
+            propsSubTab={leftPropsSubTab}
+            setPropsSubTab={setLeftPropsSubTab}
+            onSelectDomain={(domainId) => selectWorldDomain(domainId)}
+            atmosphereSection={atmosphereSection}
+            onSelectAtmosphereSection={setAtmosphereSection}
+            onOpenLandSettings={() => {
+              setLeftActiveTab('props');
+              setLeftPropsSubTab('scene');
+              setShowLevelSettings(true);
+            }}
+            onCollapsePanel={() => setLeftPanelOpen(false)}
+            activePlacementAssetId={activePlacementAssetId}
+            onSelectPlacementAsset={(assetId) => {
+              if (isWorldMapScope) {
+                const targetRegion = wmRegions[0] ?? store.addWorldLandRegion('Land 1');
+                if (targetRegion) {
+                  store.enterWorldEditorScope(targetRegion.levelId);
                 }
-                setActivePlacementAssetId(asset.id);
-                setPlaceFxTemplateId(null);
-                setAddPaletteMode('entities');
-                setDropCustomAssetId(asset.id);
-                setTool('add');
-                store.setActiveWorldDomain('select');
-              }}
-              onEditAssetInObjectMaker={(assetId) => store.openObjectMaker(assetId)}
-              onEditAssetInPlantMaker={(assetId) => store.openPlantMaker(assetId)}
-              onEditAssetInCharacterMaker={(assetId) => store.openCharacterMaker(assetId)}
-              onEditAssetInTreeMaker={(assetId) => store.openTreeMaker(assetId)}
-              onCreateNewObject={() => store.openObjectMaker()}
-              onCreateNewPlant={() => store.openPlantMaker()}
-              onCreateNewCharacter={() => store.openCharacterMaker()}
-              onCreateNewTree={() => store.openTreeMaker()}
-              onCreateNewBuilding={() => {
+              }
+              setActivePlacementAssetId(assetId);
+              setPlaceFxTemplateId(null);
+              setPlacePlatformerModuleId(null);
+              setAddPaletteMode('entities');
+              setDropCustomAssetId(assetId);
+              setTool('add');
+              store.setActiveWorldDomain('select');
+            }}
+            placePlatformerModuleId={placePlatformerModuleId}
+            onSelectPlacePlatformerModule={(spec) => {
+              if (spec) {
                 setPlaceFxTemplateId(null);
                 setActivePlacementAssetId(null);
-                setAddPaletteMode('blocks');
+                setDropPreset(null);
+                setAddPaletteMode('entities');
+                setPlacePlatformerModuleId(spec.id);
                 setTool('add');
-                store.setActiveWorldDomain('buildings');
-              }}
-              onSwitchToLevelPanel={() => setLeftPanel('level')}
-              onCollapseLeftPanel={() => setLeftPanel('hidden')}
-            />
-          )}
-
-          {leftPanelMode === 'level' && (
-            <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-b lg:border-b-0 lg:border-r border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-3.5 space-y-3.5">
-          <div className="flex items-center gap-1.5">
-            <div className="flex-1 grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-slate-200/70 dark:bg-[#1C212E]">
-              <button
-                type="button"
-                className="py-1 px-2 rounded-lg text-[11px] font-extrabold bg-white dark:bg-[#272E3F] text-[#7C5CFF] dark:text-white shadow-xs"
-              >
-                Contents
-              </button>
-              <button
-                type="button"
-                onClick={() => setLeftPanel('assets')}
-                className="py-1 px-2 rounded-lg text-[11px] font-bold text-slate-600 dark:text-[#9FA8BE] hover:text-slate-900 dark:hover:text-white transition-colors"
-              >
-                Assets ({store.customAssets.length})
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setLeftPanel('hidden')}
-              title="Hide left panel"
-              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-[#1F2430] text-slate-600 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white text-xs font-bold transition-colors"
-            >
-              <PanelLeftClose size={13} />
-            </button>
-          </div>
-
-          {/* Search Contents */}
-          <div className="relative">
-            <Search
-              size={13}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-            />
+              } else {
+                setPlacePlatformerModuleId(null);
+                setTool('move');
+              }
+            }}
+            onQuickPlacePlatformerModule={(spec) => {
+              const bx =
+                envType === 'sideScroller'
+                  ? 0.35 + Math.random() * 0.3
+                  : 0.44 + Math.random() * 0.12;
+              const bz = envType === 'sideScroller' ? 0.5 : 0.44 + Math.random() * 0.12;
+              placePlatformerModuleAtPoint(spec.id, { x: bx, y: bz });
+            }}
+            renderSceneContents={() => (
+              <>
+                {/* Search Contents */}
+                <div className="relative">
+                  <Search
+                    size={13}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+                  />
             <input
               type="text"
               value={contentsSearch}
@@ -1521,6 +1599,14 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                           <span>Add Secret Room</span>
                         </button>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => selectWorldDomain('platformerKit')}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#20B46A] hover:bg-[#199958] text-white text-[10px] font-extrabold inline-flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        <Gamepad2 size={12} />
+                        <span>Open Modular Platformer Kit &amp; Movement Tuning</span>
+                      </button>
                     </div>
                   );
                 })()}
@@ -2510,53 +2596,51 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
               </div>
             )}
           </div>
-            </aside>
-          )}
-        </>
+              </>
+            )}
+          />
+        )
       )}
 
-      {/* Center: Docked Viewport Header + Unobstructed Map/3D Frame + Job Dock */}
+      {/* Center: Docked Viewport Header + Optional Guided Hint + Canvas + Lightweight Bottom Bar */}
       <main
         className={`shrink-0 lg:shrink lg:flex-1 lg:h-full lg:min-h-0 lg:min-w-0 flex flex-col lg:overflow-hidden ${
           showLeftPanel ? 'p-2.5 sm:p-3 gap-2' : 'p-2 gap-2'
         }`}
       >
         {/* Docked Top Viewport Control Bar (never overlaps the map or 3D scene) */}
-        <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08]">
+        <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#151822] border border-slate-200/80 dark:border-white/[0.08]">
           <div className="flex flex-wrap items-center gap-1.5">
-            {!showLeftPanel && isWorldMapScope && store.worldViewMode === '2d' && (
-              <div className="inline-flex items-center gap-1 p-0.5 rounded-lg bg-slate-100 dark:bg-[#12151E] border border-slate-200/80 dark:border-white/[0.08]">
-                <button
-                  type="button"
-                  onClick={() => setLeftPanel('level')}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-extrabold bg-[#7C5CFF]/15 text-[#7C5CFF] whitespace-nowrap"
-                >
-                  <PanelLeftOpen size={12} />
-                  <span>Contents</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLeftPanel('assets')}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-extrabold text-slate-600 dark:text-[#C8D0E4] hover:text-[#7C5CFF] whitespace-nowrap"
-                >
-                  <Shapes size={12} />
-                  <span>Assets ({store.customAssets.length})</span>
-                </button>
-              </div>
+            {!showLeftPanel && (
+              <button
+                type="button"
+                onClick={() => setLeftPanelOpen(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-extrabold bg-[#6D4AFF]/12 text-[#6D4AFF] dark:text-[#C4B5FD] border border-[#6D4AFF]/25 whitespace-nowrap"
+              >
+                <PanelLeftOpen size={13} />
+                <span>{isWorldMapScope ? 'World Brushes' : 'Build Tools'}</span>
+              </button>
             )}
 
             {envType === 'openWorld' && (
-              <div className="inline-flex items-center p-0.5 rounded-xl bg-slate-100 dark:bg-[#12151E] border border-slate-200/80 dark:border-white/[0.08]">
+              <div className="inline-flex items-center p-0.5 rounded-xl bg-slate-100 dark:bg-[#10131C] border border-slate-200/80 dark:border-white/[0.08]">
                 <button
                   type="button"
-                  onClick={() => store.setWorldViewMode('3d')}
-                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-extrabold transition-colors whitespace-nowrap ${
+                  onClick={() => {
+                    store.setWorldViewMode('3d');
+                    publishGuidanceHint({
+                      badge: 'Viewport',
+                      title: '3D View Active',
+                      detail: 'Right-drag or Alt-drag to orbit, scroll to zoom, and sculpt or drop items directly in 3D.',
+                    });
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-extrabold transition-colors whitespace-nowrap ${
                     store.worldViewMode === '3d'
-                      ? 'bg-[#7C5CFF] text-white'
+                      ? 'bg-[#6D4AFF] text-white'
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  <Eye size={12} />
+                  <Eye size={13} />
                   <span>3D View</span>
                 </button>
                 <button
@@ -2569,15 +2653,22 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                     if (tool === 'add' && addPaletteMode === 'blocks') {
                       setTool('move');
                     }
+                    publishGuidanceHint({
+                      badge: 'Viewport',
+                      title: '2D Top-Down Map View',
+                      detail: isWorldMapScope
+                        ? 'Paint continents and colored territories directly from above. Double-click any Land to open it.'
+                        : 'Paint terrain, water, caves, and roads from above. Shift+Drag pans and Scroll zooms.',
+                    });
                   }}
-                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-extrabold transition-colors whitespace-nowrap ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-extrabold transition-colors whitespace-nowrap ${
                     store.worldViewMode === '2d'
-                      ? 'bg-[#20B46A] text-white'
+                      ? 'bg-[#16A34A] text-white'
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  <MapIcon size={12} />
-                  <span>2D Painter</span>
+                  <MapIcon size={13} />
+                  <span>2D Map</span>
                 </button>
               </div>
             )}
@@ -2597,9 +2688,14 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                     <button
                       key={p.id}
                       type="button"
-                      onClick={() =>
-                        setCameraPresetRequest({ preset: p.id, nonce: Date.now() + Math.random() })
-                      }
+                      onClick={() => {
+                        setCameraPresetRequest({ preset: p.id, nonce: Date.now() + Math.random() });
+                        publishGuidanceHint({
+                          badge: 'Camera',
+                          title: `${p.label} Camera View`,
+                          detail: 'Snapped camera framing. Right-drag to orbit freely or press Lock Angle (L) to keep it fixed.',
+                        });
+                      }}
                       className="px-2 py-1 rounded-lg text-[10px] font-extrabold hover:bg-slate-200/70 dark:hover:bg-white/15 transition-colors"
                     >
                       {p.label}
@@ -2609,7 +2705,17 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
 
                 <button
                   type="button"
-                  onClick={() => store.setCameraAngleLocked(!store.cameraAngleLocked)}
+                  onClick={() => {
+                    const nextLocked = !store.cameraAngleLocked;
+                    store.setCameraAngleLocked(nextLocked);
+                    publishGuidanceHint({
+                      badge: 'Camera',
+                      title: nextLocked ? 'Camera Angle Locked' : 'Camera Angle Unlocked',
+                      detail: nextLocked
+                        ? 'Orbit rotation is locked so brushing and dropping props never shifts your view (press L to unlock).'
+                        : 'Free camera orbit restored. Right-drag or middle-drag to rotate around your land.',
+                    });
+                  }}
                   title="Lock camera orbit/pan while placing details (Shortcut: L)"
                   className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold border transition-colors whitespace-nowrap ${
                     store.cameraAngleLocked
@@ -2630,6 +2736,21 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
           </div>
 
           <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setHintsEnabled(!hintsEnabled)}
+              title={hintsEnabled ? 'Hide guided workflow hints' : 'Show guided workflow hints'}
+              aria-pressed={hintsEnabled}
+              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-colors whitespace-nowrap ${
+                hintsEnabled
+                  ? 'bg-[#6366F1]/12 border-[#6366F1]/30 text-[#4F46E5] dark:text-[#A5B4FC]'
+                  : 'bg-slate-100 dark:bg-[#12151E] border-slate-200/80 dark:border-white/[0.08] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <HelpCircle size={12} />
+              <span>Hints</span>
+            </button>
+
             {envType === 'openWorld' && (
               <div className="relative">
                 <button
@@ -2715,7 +2836,11 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                   setScratchMenuOpen(false);
                 }}
                 data-testid="world-scope-dropdown"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 dark:bg-[#12151E] hover:bg-slate-800 dark:hover:bg-[#1F2430] text-white text-[11px] font-extrabold border border-slate-700 dark:border-white/[0.12]"
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 dark:bg-[#12151E] hover:bg-slate-800 dark:hover:bg-[#1F2430] text-white text-[11px] font-extrabold border transition-all ${
+                  hintsEnabled && isWorldMapScope && hasWorldTerrain
+                    ? 'border-[#6366F1] ring-2 ring-[#6366F1]/45'
+                    : 'border-slate-700 dark:border-white/[0.12]'
+                }`}
                 title="Switch, add, or manage Lands and Levels"
               >
                 {isWorldMapScope ? (
@@ -2918,6 +3043,31 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
           </div>
         </div>
 
+        <WorldGuidanceBanner
+          visible={hintsEnabled}
+          isWorldMapScope={isWorldMapScope}
+          hasWorldTerrain={hasWorldTerrain}
+          landCount={wmRegions.length}
+          firstLandName={wmRegions[0]?.name}
+          currentLandName={currentLevel.name}
+          envType={envType}
+          gameplayMode={currentLevel.gameplayMode}
+          leftActiveTab={leftActiveTab}
+          activeWorldDomain={store.activeWorldDomain}
+          atmosphereSection={atmosphereSection}
+          onDismiss={() => setHintsEnabled(false)}
+          onJumpToLands={
+            isWorldMapScope && hasWorldTerrain
+              ? () => {
+                  const target = wmRegions[0] ?? store.addWorldLandRegion('Land 1');
+                  if (target) {
+                    store.enterWorldEditorScope(target.levelId);
+                  }
+                }
+              : undefined
+          }
+        />
+
         <div className="h-[420px] sm:h-[480px] lg:h-auto lg:flex-1 min-h-[280px] rounded-2xl overflow-hidden border border-slate-200/80 dark:border-white/[0.1] shadow-sm relative bg-[#0B0F1A]">
           {!store.isPlaying &&
             (store.worldViewMode === '2d' && envType === 'openWorld' ? (
@@ -2925,6 +3075,33 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                 store={store}
                 activePlacementAssetId={activePlacementAssetId}
                 isPlacingHero={activeTool === 'add' && dropPreset === 'heroStart'}
+                syncedLandTool={syncedLandTool}
+                onLandToolChange={(nextTool) => {
+                  if (nextTool === 'plants') {
+                    store.setActiveWorldDomain('flora');
+                    setTool('terrain');
+                    setBrush('scatterPlant');
+                  } else if (nextTool === 'wildflowers') {
+                    store.setActiveWorldDomain('flora');
+                    setTool('terrain');
+                    setBrush('scatterFlower');
+                  } else if (nextTool === 'rocks') {
+                    store.setActiveWorldDomain('flora');
+                    setTool('terrain');
+                    setBrush('scatterRock');
+                  } else if (
+                    nextTool === 'coniferWoods' ||
+                    nextTool === 'deciduousWoods' ||
+                    nextTool === 'bushes'
+                  ) {
+                    store.setActiveWorldDomain('flora');
+                    setTool('terrain');
+                    setBrush('scatterTree');
+                  }
+                }}
+                syncedWorldMapSelectMode={worldMapSelectMode}
+                onWorldMapSelectModeChange={setWorldMapSelectMode}
+                hideWorldMapToolbar
                 onPlacedHeroFrom2D={() => {
                   setDropPreset(null);
                   setTool('move');
@@ -3064,7 +3241,12 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                   )
                 }
                 brushStrength={store.terrainBrushStrength}
-                onBrushStroke={(x, z, meta) =>
+                onBrushStroke={(x, z, meta) => {
+                  const floraCfg = resolveFloraScatterSettings(
+                    currentLevel.terrain?.floraScatterSettings
+                  );
+                  const activeFlowerKeys = getActiveFlowerVariantKeys(floraCfg);
+                  const activePlantKeys = getActivePlantVariantKeys(floraCfg);
                   store.applyBrush(
                     brush,
                     x,
@@ -3079,9 +3261,22 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                         store.terrainFlattenHeight !== null
                           ? store.terrainFlattenHeight
                           : meta?.sampledHeight,
+                      ...(brush === 'scatterRock' ? { rockConfig: floraCfg.rocks } : {}),
+                      ...(brush === 'scatterFlower'
+                        ? {
+                            botanicalVariantKey: activeFlowerKeys[0],
+                            botanicalVariantKeys: activeFlowerKeys,
+                          }
+                        : {}),
+                      ...(brush === 'scatterPlant'
+                        ? {
+                            botanicalVariantKey: activePlantKeys[0],
+                            botanicalVariantKeys: activePlantKeys,
+                          }
+                        : {}),
                     }
-                  )
-                }
+                  );
+                }}
                 onCommitCaveStroke={(stroke) => store.commitCaveStroke(stroke)}
                 fxBurstSignal={fxBurstSignal}
                 fxPaused={store.isPlaying}
@@ -3095,11 +3290,14 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                     : null
                 }
                 onDropFxTemplate={handleDropFxTemplate}
+                onDropPlatformerModule={placePlatformerModuleAtPoint}
                 onAddAtPoint={(pos, elev) => {
                   if (activePlaceFxTemplate) {
                     store.addFxTemplateAtPoint(activePlaceFxTemplate, pos);
                     setPlaceFxTemplateId(null);
                     setTool('move');
+                  } else if (placePlatformerModuleId) {
+                    placePlatformerModuleAtPoint(placePlatformerModuleId, pos, elev);
                   } else if (activePlacementAssetId) {
                     placeCustomAssetAtPoint(activePlacementAssetId, pos, elev);
                   } else if (addPaletteMode === 'blocks') {
@@ -3212,232 +3410,117 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
             ))}
         </div>
 
-        {/* Bottom Contextual World Job Dock */}
-        {(!isWorldMapScope || store.worldViewMode === '3d') && (
+        {/* Bottom Precision & Viewport Action Bar (Land/Level scope only; World Map stays clean in Left Panel) */}
+        {!isWorldMapScope && (
         <div className="shrink-0 space-y-1.5">
-          {isWorldMapScope ? (
-            store.worldViewMode === '3d' ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-2xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08]">
-                <div className="flex flex-wrap items-center gap-1">
-                  {!showLeftPanel && (
-                    <button
-                      type="button"
-                      onClick={() => setLeftPanel('assets')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-extrabold bg-[#7C5CFF]/12 text-[#7C5CFF] mr-1"
-                    >
-                      <PanelLeftOpen size={12} />
-                      <span>Assets</span>
-                    </button>
-                  )}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#151822] border border-slate-200/80 dark:border-white/[0.08]">
+            {/* Transform & Drop Tools */}
+            <div className="inline-flex items-center gap-1 p-0.5 rounded-xl bg-slate-100 dark:bg-[#10131C] border border-slate-200/70 dark:border-white/[0.07]">
+              {(
+                [
+                  { id: 'move', label: 'Move', Icon: Move, hint: 'Click any prop, character, or building in the scene and drag to reposition it (hold Alt/Shift for height).' },
+                  { id: 'rotate', label: 'Turn', Icon: RotateCw, hint: 'Click an item and drag horizontally or adjust Yaw on the right to rotate it.' },
+                  { id: 'scale', label: 'Resize', Icon: Scaling, hint: 'Select an item and drag or use the right panel Size sliders to scale it up or down.' },
+                  { id: 'add', label: 'Drop', Icon: Plus, hint: 'Pick a quick item below or drag any asset from Props & Cast on the left, then click the scene to place.' },
+                ] as const
+              ).map((t) => {
+                const Icon = t.Icon;
+                const active = activeTool === t.id;
+                return (
                   <button
-                    type="button"
-                    onClick={() => setTool('move')}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-extrabold ${
-                      activeTool !== 'terrain'
-                        ? 'bg-[#7C5CFF] text-white'
-                        : 'text-slate-600 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white'
-                    }`}
-                  >
-                    <Crosshair size={12} />
-                    <span>Select Land</span>
-                  </button>
-                  {(
-                    [
-                      { id: 'terrain', label: 'Terrain', dot: WORLD_TERRAIN_YELLOW },
-                      { id: 'eraseTerrain', label: 'Erase Land', dot: '#F2545B' },
-                      { id: 'clearLand', label: 'Unassign', dot: '#94A3B8' },
-                    ] as { id: WorldMapBrushMode; label: string; dot: string }[]
-                  ).map((b) => {
-                    const active = activeTool === 'terrain' && store.worldMapBrushMode === b.id;
-                    return (
-                      <button
-                        key={b.id}
-                        type="button"
-                        onClick={() => {
-                          store.setWorldMapBrushMode(b.id);
-                          setTool('terrain');
-                        }}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-extrabold transition-colors ${
-                          active
-                            ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                            : 'text-slate-600 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                      >
-                        <span
-                          className="w-2.5 h-2.5 rounded-sm border border-black/25"
-                          style={{ backgroundColor: b.dot }}
-                        />
-                        <span>{b.label}</span>
-                      </button>
-                    );
-                  })}
-
-                  <div className="h-4 w-px bg-slate-200 dark:bg-white/10 mx-1" />
-
-                  {wmRegions.map((reg) => {
-                    const active =
-                      activeTool === 'terrain' &&
-                      store.worldMapBrushMode === 'paintLand' &&
-                      store.selectedWorldLandCode === reg.code;
-                    return (
-                      <button
-                        key={reg.id}
-                        type="button"
-                        onClick={() => {
-                          store.setSelectedWorldLandCode(reg.code);
-                          store.setWorldMapBrushMode('paintLand');
-                          setTool('terrain');
-                        }}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
-                          active
-                            ? 'border-slate-900 dark:border-white bg-slate-100 dark:bg-[#272E3F]'
-                            : 'border-transparent hover:bg-slate-100 dark:hover:bg-[#1F2430]'
-                        }`}
-                      >
-                        <span
-                          className="w-2.5 h-2.5 rounded-sm border border-black/25"
-                          style={{ backgroundColor: reg.colorHex }}
-                        />
-                        <span className="max-w-[96px] truncate">{reg.name}</span>
-                      </button>
-                    );
-                  })}
-
-                  <button
+                    key={t.id}
                     type="button"
                     onClick={() => {
-                      store.addWorldLandRegion();
-                      setTool('terrain');
+                      setTool(t.id);
+                      if (t.id !== 'add') {
+                        setPlaceFxTemplateId(null);
+                        setActivePlacementAssetId(null);
+                        setDropPreset(null);
+                        setPlacePlatformerModuleId(null);
+                        if (
+                          store.activeWorldDomain !== 'buildings' &&
+                          store.activeWorldDomain !== 'platformerKit'
+                        ) {
+                          store.setActiveWorldDomain('select');
+                        }
+                      } else {
+                        setAddPaletteMode('entities');
+                      }
+                      publishGuidanceHint({
+                        badge: 'Viewport Tool',
+                        title: `${t.label} Tool`,
+                        detail: t.hint,
+                      });
                     }}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-extrabold bg-[#7C5CFF]/15 text-[#7C5CFF] hover:bg-[#7C5CFF] hover:text-white transition-colors"
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-colors whitespace-nowrap ${
+                      active
+                        ? 'bg-[#6D4AFF] text-white shadow-xs'
+                        : 'text-slate-600 dark:text-[#9FA8BE] hover:text-slate-900 dark:hover:text-white'
+                    }`}
                   >
-                    <Plus size={12} />
-                    <span>New Land</span>
+                    <Icon size={13} />
+                    <span>{t.label}</span>
                   </button>
-                </div>
+                );
+              })}
+            </div>
 
-                <div className="flex items-center gap-2.5">
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 dark:text-[#949BB0]">
-                    <span>Size</span>
-                    <input
-                      type="range"
-                      min={6}
-                      max={120}
-                      step={2}
-                      value={brushRadius}
-                      onChange={(e) => setBrushRadius(Number(e.target.value))}
-                      className="w-20 accent-[#7C5CFF]"
-                    />
-                    <span className="tabular-nums w-10 text-right">{brushRadius}m</span>
-                  </div>
-                </div>
-              </div>
-            ) : null
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-1.5">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {!showLeftPanel && (
-                <div className="inline-flex items-center gap-1 p-0.5 rounded-xl bg-white dark:bg-[#171A23] border border-[#7C5CFF]/50">
-                  <button
-                    type="button"
-                    onClick={() => setLeftPanel('level')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-extrabold bg-[#7C5CFF]/15 text-[#7C5CFF]"
-                  >
-                    <PanelLeftOpen size={12} />
-                    <span>Contents</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLeftPanel('assets')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-extrabold text-slate-600 dark:text-[#C8D0E4] hover:text-[#7C5CFF]"
-                  >
-                    <Shapes size={12} />
-                    <span>Assets ({store.customAssets.length})</span>
-                  </button>
+            {/* Active Brush Quick Size (when sculpting terrain) + Snap */}
+            <div className="flex flex-wrap items-center gap-2">
+              {activeTool === 'terrain' && envType === 'openWorld' && (
+                <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-[#10131C] border border-slate-200/70 dark:border-white/[0.07] text-xs font-bold">
+                  <span className="text-slate-500 dark:text-[#949BB0]">Brush</span>
+                  <input
+                    type="range"
+                    min={4}
+                    max={48}
+                    step={2}
+                    value={brushRadius}
+                    onPointerDown={() =>
+                      publishGuidanceHint({
+                        badge: 'Brush Size',
+                        title: `Terrain Brush Radius (${brushRadius}m)`,
+                        detail: 'Slide left for fine paths and detail carving, or right for broad hills, lakes, and meadows.',
+                      })
+                    }
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setBrushRadius(val);
+                      publishGuidanceHint({
+                        badge: 'Brush Size',
+                        title: `Terrain Brush Radius (${val}m)`,
+                        detail: 'Slide left for fine paths and detail carving, or right for broad hills, lakes, and meadows.',
+                      });
+                    }}
+                    className="w-20 accent-[#6D4AFF]"
+                  />
+                  <span className="tabular-nums w-9 text-right text-[#6D4AFF] dark:text-[#A5B4FC]">
+                    {brushRadius}m
+                  </span>
                 </div>
               )}
 
-              {/* World Domains Strip */}
-              <div className="inline-flex flex-wrap items-center gap-0.5 p-1 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08]">
-                {visibleDomains.map((d) => {
-                  const Icon = d.Icon;
-                  const active = store.activeWorldDomain === d.id;
-                  return (
-                    <button
-                      key={d.id}
-                      type="button"
-                      onClick={() => selectWorldDomain(d.id)}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-extrabold transition-colors whitespace-nowrap shrink-0 ${
-                        active
-                          ? 'text-white shadow-xs'
-                          : 'text-slate-600 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                      style={active ? { backgroundColor: d.accent } : undefined}
-                    >
-                      <Icon size={13} />
-                      <span>{d.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Transform Tools + Snap */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <div className="inline-flex items-center gap-0.5 p-0.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08]">
-                {(
-                  [
-                    { id: 'move', label: 'Move', Icon: Move },
-                    { id: 'rotate', label: 'Turn', Icon: RotateCw },
-                    { id: 'scale', label: 'Resize', Icon: Scaling },
-                    { id: 'add', label: 'Drop', Icon: Plus },
-                  ] as const
-                ).map((t) => {
-                  const Icon = t.Icon;
-                  const active = activeTool === t.id;
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => {
-                        setTool(t.id);
-                        if (t.id !== 'add') {
-                          setPlaceFxTemplateId(null);
-                          setActivePlacementAssetId(null);
-                          setDropPreset(null);
-                          if (store.activeWorldDomain !== 'buildings') {
-                            store.setActiveWorldDomain('select');
-                          }
-                        } else {
-                          setAddPaletteMode('entities');
-                        }
-                      }}
-                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
-                        active
-                          ? 'bg-[#7C5CFF] text-white'
-                          : 'text-slate-600 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                    >
-                      <Icon size={12} />
-                      <span>{t.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="inline-flex items-center gap-0.5 p-0.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08]">
-                <span className="px-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Snap
-                </span>
+              <div className="inline-flex items-center gap-0.5 p-0.5 rounded-xl bg-slate-100 dark:bg-[#10131C] border border-slate-200/70 dark:border-white/[0.07]">
+                <span className="px-2 text-[11px] font-bold text-slate-400">Snap</span>
                 {([0, 0.5, 1, 2] as const).map((snapVal) => (
                   <button
                     key={snapVal}
                     type="button"
-                    onClick={() => store.setWorldGridSnap(snapVal)}
-                    className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-colors ${
+                    onClick={() => {
+                      store.setWorldGridSnap(snapVal);
+                      publishGuidanceHint({
+                        badge: 'Grid Snap',
+                        title: snapVal === 0 ? 'Free Placement (Snap Off)' : `Grid Snap: ${snapVal}m`,
+                        detail:
+                          snapVal === 0
+                            ? 'Place walls, props, and platforms smoothly anywhere without grid locking.'
+                            : `Snapping moved and dropped items every ${snapVal}m so structures align cleanly.`,
+                      });
+                    }}
+                    className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors ${
                       store.worldGridSnap === snapVal
-                        ? 'bg-[#20B46A] text-white'
-                        : 'text-slate-500 dark:text-[#949BB0]'
+                        ? 'bg-[#16A34A] text-white'
+                        : 'text-slate-500 dark:text-[#949BB0] hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
                     {snapVal === 0 ? 'Off' : `${snapVal}m`}
@@ -3445,8 +3528,7 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                 ))}
               </div>
             </div>
-            </div>
-          )}
+          </div>
 
           {/* Contextual Building Kit Tray (3D Land Edit mode only) */}
           {!isWorldMapScope &&
@@ -3561,6 +3643,8 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
           {!isWorldMapScope &&
             activeTool === 'add' &&
             addPaletteMode === 'entities' &&
+            !placePlatformerModuleId &&
+            !activePlaceFxTemplate &&
             store.activeWorldDomain !== 'buildings' && (
               <div className="rounded-2xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] p-2 flex gap-1.5 overflow-x-auto maker-scroll">
                 <button
@@ -3630,6 +3714,39 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
                 </button>
               </div>
             )}
+
+          {!isWorldMapScope &&
+            envType !== 'sideScroller' &&
+            store.worldViewMode === '3d' &&
+            (store.activeWorldDomain === 'platformerKit' ||
+              (activeTool === 'add' && Boolean(placePlatformerModuleId))) && (
+            <PlatformerKitPanel
+              activeModuleId={placePlatformerModuleId}
+              onSelectPlaceModule={(spec) => {
+                if (spec) {
+                  setPlaceFxTemplateId(null);
+                  setActivePlacementAssetId(null);
+                  setDropPreset(null);
+                  setAddPaletteMode('entities');
+                  setPlacePlatformerModuleId(spec.id);
+                  setTool('add');
+                } else {
+                  setPlacePlatformerModuleId(null);
+                  setTool('move');
+                }
+              }}
+              onQuickPlaceCenter={(spec) => {
+                const bx = 0.44 + Math.random() * 0.12;
+                const bz = 0.44 + Math.random() * 0.12;
+                placePlatformerModuleAtPoint(spec.id, { x: bx, y: bz });
+              }}
+              onClose={() => {
+                setPlacePlatformerModuleId(null);
+                store.setActiveWorldDomain('select');
+                setTool('move');
+              }}
+            />
+          )}
 
           {!isWorldMapScope && store.showingFxLibrary && (
             <FxLibraryPanel
@@ -3703,6 +3820,28 @@ export const WorldStage: React.FC<{ store: MakerStore }> = ({ store }) => {
         onTriggerFxBurst={triggerFxBurst}
         onSaveEntityToFxLibrary={handleSaveEntityToFxLibrary}
         onAddVistaItem={handleAddVistaItem}
+        atmosphereSection={atmosphereSection}
+        allFxTemplates={allFxTemplates}
+        placeFxTemplateId={placeFxTemplateId}
+        onSelectPlaceFxTemplate={(tpl) => {
+          if (tpl) {
+            setPlaceFxTemplateId(tpl.id);
+            setTool('add');
+          } else {
+            setPlaceFxTemplateId(null);
+            setTool('move');
+          }
+        }}
+        onQuickPlaceFxCenter={(tpl) => {
+          store.addFxTemplateAtPoint(tpl, {
+            x: 0.44 + Math.random() * 0.12,
+            y: 0.44 + Math.random() * 0.12,
+          });
+          setPlaceFxTemplateId(null);
+          setTool('move');
+        }}
+        onDragStartFxTemplate={(tpl) => setDraggingFxTemplate(tpl)}
+        onDragEndFxTemplate={() => setDraggingFxTemplate(null)}
         isPlacingHero={activeTool === 'add' && dropPreset === 'heroStart'}
         onStartPlaceHero={() => focusHeroStart(true)}
       />

@@ -10,6 +10,7 @@ import {
   RotateCcw,
   Route,
   Shrub,
+  Sprout,
   Trees,
   Umbrella,
   Waves,
@@ -41,7 +42,7 @@ import {
 } from '../../utils/worldMap';
 import { MAKER_ASSET_DRAG_MIME } from './LeftAssetsPanel';
 
-type Painter2DTool = Overview2DBrushId | 'inspect';
+export type Painter2DTool = Overview2DBrushId | 'inspect';
 
 interface BrushMeta {
   id: Painter2DTool;
@@ -57,6 +58,7 @@ const PAINTER_2D_TOOLS: BrushMeta[] = [
   { id: 'deciduousWoods', label: 'Deciduous', accent: '#4EA343', Icon: Trees },
   { id: 'bushes', label: 'Bushes', accent: '#20B46A', Icon: Shrub },
   { id: 'wildflowers', label: 'Flowers', accent: '#EC4899', Icon: Flower2 },
+  { id: 'plants', label: 'Plants', accent: '#16A34A', Icon: Sprout },
   { id: 'rocks', label: 'Rocks', accent: '#64748B', Icon: Mountain },
   { id: 'hills', label: 'Hills', accent: '#F59E0B', Icon: Mountain },
   { id: 'beaches', label: 'Beach', accent: '#D6B66A', Icon: Umbrella },
@@ -109,6 +111,11 @@ export interface Overview2DPainterProps {
   onPlacedHeroFrom2D?: () => void;
   onPlaceCustomAssetAtWorldPoint: (assetId: string, worldX: number, worldZ: number) => void;
   onSelectEntityFrom2D: (entityId: string) => void;
+  syncedLandTool?: Painter2DTool;
+  onLandToolChange?: (tool: Painter2DTool) => void;
+  syncedWorldMapSelectMode?: boolean;
+  onWorldMapSelectModeChange?: (selectMode: boolean) => void;
+  hideWorldMapToolbar?: boolean;
 }
 
 export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
@@ -118,13 +125,34 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
   onPlacedHeroFrom2D,
   onPlaceCustomAssetAtWorldPoint,
   onSelectEntityFrom2D,
+  syncedLandTool,
+  onLandToolChange,
+  syncedWorldMapSelectMode,
+  onWorldMapSelectModeChange,
+  hideWorldMapToolbar = false,
 }) => {
   const { currentLevel } = store;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const [tool, setTool] = useState<Painter2DTool>('terrain');
-  const [worldMapSelectMode, setWorldMapSelectMode] = useState(false);
+  const [tool, setTool] = useState<Painter2DTool>(syncedLandTool ?? 'terrain');
+  const [internalWorldMapSelectMode, setInternalWorldMapSelectMode] = useState(false);
+  const worldMapSelectMode =
+    syncedWorldMapSelectMode !== undefined ? syncedWorldMapSelectMode : internalWorldMapSelectMode;
+  const setWorldMapSelectMode = useCallback(
+    (next: boolean) => {
+      setInternalWorldMapSelectMode(next);
+      onWorldMapSelectModeChange?.(next);
+    },
+    [onWorldMapSelectModeChange]
+  );
+
+  useEffect(() => {
+    if (syncedLandTool) {
+      setTool(syncedLandTool);
+    }
+  }, [syncedLandTool]);
+
   const [brushRadius, setBrushRadius] = useState<number>(11);
   const [density, setDensity] = useState<number>(0.65);
   const [zoom, setZoom] = useState<number>(1);
@@ -762,7 +790,15 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
         ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
       } else if (item.kind === 'flower') {
         ctx.fillStyle = '#F472B6';
-        ctx.fillRect(px - 1, py - 1, 2, 2);
+        ctx.fillRect(px - 1.2, py - 1.2, 2.4, 2.4);
+      } else if (item.kind === 'plant') {
+        ctx.fillStyle = '#22C55E';
+        ctx.strokeStyle = '#14532D';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.arc(px, py, Math.max(2.1, 1.35 * scaleM), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       } else if (item.kind === 'rock') {
         ctx.fillStyle = '#94A3B8';
         ctx.fillRect(px - 1.8, py - 1.8, 3.6, 3.6);
@@ -1272,7 +1308,8 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
         </aside>
       </div>
 
-      {/* Flush Bottom Toolbar Under the Map Border (Never Overlays Canvas) */}
+      {/* Flush Bottom Toolbar Under the Map Border (Hidden in World Map mode when Left Panel handles brushes) */}
+      {!(isWorldMapMode && hideWorldMapToolbar) && (
       <div className="shrink-0 bg-[#121725] border-t border-white/[0.1] px-2.5 py-2">
         {isWorldMapMode && worldMap ? (
           <div className="flex flex-wrap items-center justify-between gap-1.5">
@@ -1403,7 +1440,10 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setTool(item.id)}
+                  onClick={() => {
+                    setTool(item.id);
+                    onLandToolChange?.(item.id);
+                  }}
                   className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-colors whitespace-nowrap ${
                     active
                       ? item.id === 'terrain'
@@ -1421,6 +1461,7 @@ export const Overview2DPainter: React.FC<Overview2DPainterProps> = ({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };

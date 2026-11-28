@@ -10,6 +10,9 @@ import type {
   PlatformMotionType,
   PropPresetId,
   RoadSpline,
+  RockScatterStyleConfig,
+  RockShapeKind,
+  RockSizeClass,
   ScatterItem,
   SidePlatformSegment,
   SideScrollerConfig,
@@ -3583,16 +3586,120 @@ export function applyTerrainBrush(
 
   // Scatter brushes
   const treeKinds: ('pine' | 'oak' | 'birch')[] = ['pine', 'oak', 'birch'];
+  const jitterHex = (hex: string, variance: number): string => {
+    const clean = /^#?[0-9a-fA-F]{6}$/.test(hex) ? (hex.startsWith('#') ? hex.slice(1) : hex) : '7A828C';
+    const num = parseInt(clean, 16);
+    const delta = variance > 0 ? Math.round((Math.random() - 0.5) * 2 * variance * 42) : 0;
+    const clamp8 = (n: number) => Math.max(0, Math.min(255, n));
+    const r = clamp8(((num >> 16) & 255) + delta);
+    const g = clamp8(((num >> 8) & 255) + delta);
+    const b = clamp8((num & 255) + delta);
+    return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+  };
+
+  if (brush === 'scatterRock') {
+    const fallbackRockCfg: RockScatterStyleConfig = {
+      enabledTiers: { largeBoulder: false, boulder: true, rock: true, pebble: true },
+      tierScales: {
+        largeBoulder: { minSize: 1.35, maxSize: 2.15 },
+        boulder: { minSize: 0.54, maxSize: 0.84 },
+        rock: { minSize: 0.24, maxSize: 0.38 },
+        pebble: { minSize: 0.08, maxSize: 0.17 },
+      },
+      colorMode: 'gradient',
+      primaryColor: '#7A828C',
+      secondaryColor: '#9D9384',
+      colorVariation: 0.35,
+      pattern: 'speckled',
+      patternNoise: 0.55,
+      shape: 'mixed',
+      shapeVariation: 0.5,
+    };
+    const rockCfg = options?.rockConfig ?? fallbackRockCfg;
+    const activeTiers = (['largeBoulder', 'boulder', 'rock', 'pebble'] as RockSizeClass[]).filter(
+      (t) => rockCfg.enabledTiers[t]
+    );
+    if (activeTiers.length === 0) {
+      return terrain;
+    }
+
+    const nextScatter = [...terrain.scatter];
+    const hasPebblesOnly = activeTiers.length === 1 && activeTiers[0] === 'pebble';
+    const hasLargeOnly = activeTiers.length === 1 && activeTiers[0] === 'largeBoulder';
+    const maxPerStroke = hasPebblesOnly ? 8 : hasLargeOnly ? 2 : 5;
+    const fixedShapes: Exclude<RockShapeKind, 'mixed'>[] = ['crag', 'cobble', 'slab', 'blocky'];
+
+    for (let i = 0; i < maxPerStroke; i++) {
+      if (nextScatter.length >= 3600) break;
+      const tier = activeTiers[Math.floor(Math.random() * activeTiers.length)];
+      const angle = Math.random() * Math.PI * 2;
+      const dist = Math.random() * radius;
+      const sx = x + Math.cos(angle) * dist;
+      const sz = z + Math.sin(angle) * dist;
+      if (
+        terrain.freeformWorld
+          ? Math.abs(sx) >= worldRadius * 0.96 || Math.abs(sz) >= worldRadius * 0.96
+          : Math.hypot(sx, sz) >= worldRadius * 0.94
+      ) {
+        continue;
+      }
+      const spacing =
+        tier === 'pebble' ? 0.35 : tier === 'rock' ? 0.72 : tier === 'boulder' ? 1.25 : 2.15;
+      const tooClose = nextScatter.some(
+        (item) => Math.hypot(item.x - sx, item.z - sz) < spacing
+      );
+      if (tooClose) continue;
+      const range = rockCfg.tierScales[tier];
+      const minS = Math.min(range.minSize, range.maxSize);
+      const maxS = Math.max(range.minSize, range.maxSize);
+      const itemSize = Number((minS + Math.random() * Math.max(0.01, maxS - minS)).toFixed(3));
+      const pColor = jitterHex(rockCfg.primaryColor, rockCfg.colorVariation);
+      const sColor =
+        rockCfg.colorMode === 'gradient'
+          ? jitterHex(rockCfg.secondaryColor, rockCfg.colorVariation)
+          : pColor;
+      const chosenShape: Exclude<RockShapeKind, 'mixed'> =
+        rockCfg.shape === 'mixed'
+          ? fixedShapes[Math.floor(Math.random() * fixedShapes.length)]
+          : rockCfg.shape;
+
+      nextScatter.push({
+        id: uid(),
+        kind: 'rock',
+        rockClass: tier,
+        rockPrimaryColor: pColor,
+        rockSecondaryColor: sColor,
+        rockColorHex: pColor,
+        rockPattern: rockCfg.pattern,
+        rockPatternNoise: rockCfg.patternNoise,
+        rockShape: chosenShape,
+        rockShapeVariation: rockCfg.shapeVariation,
+        x: sx,
+        z: sz,
+        size: itemSize,
+        rotation: Math.random() * Math.PI * 2,
+      });
+    }
+    return { ...terrain, scatter: nextScatter, revision: terrain.revision + 1 };
+  }
+
   const kind: ScatterItem['kind'] =
     brush === 'scatterTree'
       ? treeKinds[Math.floor(Math.random() * 3)]
-      : brush === 'scatterRock'
-      ? 'rock'
       : brush === 'scatterFlower'
       ? 'flower'
+      : brush === 'scatterPlant'
+      ? 'plant'
       : customAssetId
       ? 'custom'
       : 'bush';
+
+  const variantPool =
+    options?.botanicalVariantKeys && options.botanicalVariantKeys.length > 0
+      ? options.botanicalVariantKeys
+      : options?.botanicalVariantKey
+      ? [options.botanicalVariantKey]
+      : null;
 
   const nextScatter = [...terrain.scatter];
   const maxPerStroke = kind === 'custom' ? 1 : 4;
@@ -3609,21 +3716,35 @@ export function applyTerrainBrush(
     ) {
       continue;
     }
-    const spacing = kind === 'flower' ? 0.85 : kind === 'custom' ? 2.0 : 1.7;
+    const spacing =
+      kind === 'flower' ? 0.85 : kind === 'plant' ? 1.15 : kind === 'custom' ? 2.0 : 1.7;
     const tooClose = nextScatter.some((item) => Math.hypot(item.x - sx, item.z - sz) < spacing);
     if (tooClose) continue;
     const itemSize =
       kind === 'pine' || kind === 'oak' || kind === 'birch'
         ? 0.95 + Math.random() * 0.65
-        : kind === 'rock'
-        ? 0.75 + Math.random() * 0.7
+        : kind === 'plant'
+        ? 0.85 + Math.random() * 0.4
         : kind === 'custom'
         ? 0.9 + Math.random() * 0.35
         : 0.75 + Math.random() * 0.45;
+
+    let itemCustomAssetId = kind === 'custom' ? customAssetId : undefined;
+    let botanicalPresetId: string | undefined;
+    if ((kind === 'flower' || kind === 'plant') && variantPool && variantPool.length > 0) {
+      const picked = variantPool[Math.floor(Math.random() * variantPool.length)];
+      if (picked.startsWith('asset:')) {
+        itemCustomAssetId = picked.slice('asset:'.length);
+      } else {
+        botanicalPresetId = picked;
+      }
+    }
+
     nextScatter.push({
       id: uid(),
       kind,
-      customAssetId: kind === 'custom' ? customAssetId : undefined,
+      customAssetId: itemCustomAssetId,
+      botanicalPresetId,
       x: sx,
       z: sz,
       size: itemSize,
@@ -5064,6 +5185,7 @@ export type Overview2DBrushId =
   | 'deciduousWoods'
   | 'bushes'
   | 'wildflowers'
+  | 'plants'
   | 'rocks'
   | 'hills'
   | 'beaches'
@@ -5287,9 +5409,71 @@ export function apply2DOverviewBrushStroke(
     };
   }
 
-  // Generic botanical & boulder blocking brushes
-  const targetCount = Math.max(1, Math.round(density * (brushId === 'wildflowers' ? 7 : 4)));
-  const minSpacing = brushId === 'wildflowers' ? 1.1 : brushId === 'bushes' ? 1.8 : 2.6;
+  if (brushId === 'rocks') {
+    const rockCfg = terrain.floraScatterSettings?.rocks;
+    const passes = Math.max(1, Math.round(density * 2));
+    let cur = terrain;
+    for (let p = 0; p < passes; p++) {
+      cur = applyTerrainBrush(cur, 'scatterRock', x, z, r, undefined, {
+        rockConfig: rockCfg,
+      });
+    }
+    return cur;
+  }
+
+  // Resolve selected botanical variants from the Flora inspector for 2D Plants & Flowers brushes
+  const defaultPlantSlots: [string, string, string, string] = [
+    'plant:bananaClump',
+    'plant:elephantEar',
+    'plant:swordAgave',
+    'plant:fairyLantern',
+  ];
+  const defaultFlowerSlots: [string, string, string, string] = [
+    'flower:meadowBlossom',
+    'flower:sunlitDaisy',
+    'flower:violetOrchid',
+    'flower:crimsonTulip',
+  ];
+  const resolveBotanicalPool = (mode: 'plants' | 'wildflowers'): string[] => {
+    const fs = terrain.floraScatterSettings;
+    if (mode === 'plants') {
+      const slots = fs?.plantSlots ?? defaultPlantSlots;
+      if (fs?.plantEnabledSlots) {
+        const picked = slots.filter((_, idx) => fs.plantEnabledSlots?.[idx]);
+        if (picked.length > 0) return picked;
+      }
+      if (fs && fs.plantPaintAll === false) {
+        return [slots[Math.max(0, Math.min(3, fs.activePlantSlot ?? 0))] ?? slots[0]];
+      }
+      return [...slots];
+    }
+    const slots = fs?.flowerSlots ?? defaultFlowerSlots;
+    if (fs?.flowerEnabledSlots) {
+      const picked = slots.filter((_, idx) => fs.flowerEnabledSlots?.[idx]);
+      if (picked.length > 0) return picked;
+    }
+    if (fs && fs.flowerPaintAll === false) {
+      return [slots[Math.max(0, Math.min(3, fs.activeFlowerSlot ?? 0))] ?? slots[0]];
+    }
+    return [...slots];
+  };
+
+  const botanicalPool =
+    brushId === 'plants' || brushId === 'wildflowers' ? resolveBotanicalPool(brushId) : null;
+
+  // Generic botanical blocking brushes
+  const targetCount = Math.max(
+    1,
+    Math.round(density * (brushId === 'wildflowers' ? 7 : brushId === 'plants' ? 5 : 4))
+  );
+  const minSpacing =
+    brushId === 'wildflowers'
+      ? 1.05
+      : brushId === 'plants'
+      ? 1.3
+      : brushId === 'bushes'
+      ? 1.8
+      : 2.6;
   const nextScatter = [...terrain.scatter];
   for (let i = 0; i < targetCount; i++) {
     if (nextScatter.length >= 3600) break;
@@ -5310,15 +5494,31 @@ export function apply2DOverviewBrushStroke(
     else if (brushId === 'deciduousWoods') kind = Math.random() < 0.32 ? 'birch' : 'oak';
     else if (brushId === 'bushes') kind = Math.random() < 0.3 ? 'berryBush' : 'bush';
     else if (brushId === 'wildflowers') kind = 'flower';
-    else if (brushId === 'rocks') kind = 'rock';
+    else if (brushId === 'plants') kind = 'plant';
+
+    let customAssetId: string | undefined;
+    let botanicalPresetId: string | undefined;
+    if (botanicalPool && botanicalPool.length > 0) {
+      const picked = botanicalPool[Math.floor(Math.random() * botanicalPool.length)];
+      if (picked.startsWith('asset:')) {
+        customAssetId = picked.slice('asset:'.length);
+      } else {
+        botanicalPresetId = picked;
+      }
+    }
+
     nextScatter.push({
       id: uid(),
       kind,
+      customAssetId,
+      botanicalPresetId,
       x: sx,
       z: sz,
       size:
         kind === 'pine' || kind === 'oak' || kind === 'birch'
           ? 0.92 + Math.random() * 0.55
+          : kind === 'plant'
+          ? 0.85 + Math.random() * 0.45
           : 0.78 + Math.random() * 0.48,
       rotation: Math.random() * Math.PI * 2,
     });

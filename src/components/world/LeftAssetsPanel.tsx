@@ -48,6 +48,7 @@ export interface LeftAssetsPanelProps {
   onCreateNewBuilding?: () => void;
   onSwitchToLevelPanel: () => void;
   onCollapseLeftPanel: () => void;
+  embedded?: boolean;
 }
 
 interface SectionMeta {
@@ -142,6 +143,7 @@ export const LeftAssetsPanel: React.FC<LeftAssetsPanelProps> = ({
   onCreateNewBuilding,
   onSwitchToLevelPanel,
   onCollapseLeftPanel,
+  embedded = false,
 }) => {
   const [activeSection, setActiveSection] = useState<AssetsPanelSectionId>('all');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -280,35 +282,36 @@ export const LeftAssetsPanel: React.FC<LeftAssetsPanelProps> = ({
   const hasActiveFilter = Boolean(search.trim() || sourceFilter !== 'all' || favoritesOnly);
   const ActiveSectionIcon = activeSectionMeta.Icon;
 
-  return (
-    <aside className="w-[268px] xl:w-[292px] shrink-0 rounded-2xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] flex flex-col min-h-0 overflow-hidden shadow-xs">
-      {/* Top Panel Mode Switcher: Level | Assets | Hide */}
-      <div className="shrink-0 p-2 border-b border-slate-200/80 dark:border-white/[0.08] flex items-center gap-1.5 bg-slate-50/80 dark:bg-[#131720]">
-        <div className="flex-1 grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-slate-200/70 dark:bg-[#1C212E]">
+  const content = (
+    <>
+      {!embedded && (
+        <div className="shrink-0 p-2 border-b border-slate-200/80 dark:border-white/[0.08] flex items-center gap-1.5 bg-slate-50/80 dark:bg-[#131720]">
+          <div className="flex-1 grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-slate-200/70 dark:bg-[#1C212E]">
+            <button
+              type="button"
+              onClick={onSwitchToLevelPanel}
+              className="py-1 px-2 rounded-lg text-[11px] font-bold text-slate-600 dark:text-[#9FA8BE] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap"
+            >
+              Contents
+            </button>
+            <button
+              type="button"
+              className="py-1 px-2 rounded-lg text-[11px] font-extrabold bg-white dark:bg-[#272E3F] text-[#7C5CFF] dark:text-white shadow-xs whitespace-nowrap"
+            >
+              Assets ({store.customAssets.length})
+            </button>
+          </div>
           <button
             type="button"
-            onClick={onSwitchToLevelPanel}
-            className="py-1 px-2 rounded-lg text-[11px] font-bold text-slate-600 dark:text-[#9FA8BE] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap"
+            onClick={onCollapseLeftPanel}
+            title="Hide left panel to expand viewport"
+            aria-label="Hide left panel"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:text-[#949BB0] dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-[#1F2430]"
           >
-            Contents
-          </button>
-          <button
-            type="button"
-            className="py-1 px-2 rounded-lg text-[11px] font-extrabold bg-white dark:bg-[#272E3F] text-[#7C5CFF] dark:text-white shadow-xs whitespace-nowrap"
-          >
-            Assets ({store.customAssets.length})
+            <ChevronLeft size={15} />
           </button>
         </div>
-        <button
-          type="button"
-          onClick={onCollapseLeftPanel}
-          title="Hide left panel to expand viewport"
-          aria-label="Hide left panel"
-          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:text-[#949BB0] dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-[#1F2430]"
-        >
-          <ChevronLeft size={15} />
-        </button>
-      </div>
+      )}
 
       {/* Category Dropdown Selector + Search + Source/Favorite/View Controls */}
       <div className="shrink-0 px-2.5 py-2 border-b border-slate-200/70 dark:border-white/[0.06] space-y-2">
@@ -809,6 +812,16 @@ export const LeftAssetsPanel: React.FC<LeftAssetsPanelProps> = ({
           Asset Vault
         </button>
       </div>
+    </>
+  );
+
+  if (embedded) {
+    return <div className="flex-1 min-h-0 flex flex-col overflow-hidden">{content}</div>;
+  }
+
+  return (
+    <aside className="w-[268px] xl:w-[292px] shrink-0 rounded-2xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] flex flex-col min-h-0 overflow-hidden shadow-xs">
+      {content}
     </aside>
   );
 };

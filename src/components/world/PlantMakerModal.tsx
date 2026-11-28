@@ -60,12 +60,15 @@ import {
   sanitizeObjectNodeName,
 } from '../../three/objectMakerBuilder';
 import {
+  FLOWER_STARTER_RECIPES,
   PLANT_COLOR_PALETTES,
   PLANT_PATTERN_OPTIONS,
   PLANT_SHAPE_CATALOG,
   PLANT_STARTER_PRESETS,
+  buildFlowerDocFromRecipe,
   buildPlantClusterParts,
   createClusterGroupAndParts,
+  createDefaultFlowerRecipe,
   createDefaultPlantPartSpec,
   createStarterPlantDoc,
   getPlantShapeMeta,
@@ -106,6 +109,7 @@ import type {
   CurveGuideConfig,
   CurveGuidePresetId,
   CustomAssetMeta,
+  FlowerMakerRecipe,
   GrassFieldConfig,
   GrassQuality,
   ObjectGroupSpec,
@@ -125,11 +129,11 @@ import { AssetThumbnail } from '../shared/AssetThumbnail';
 export interface PlantMakerModalProps {
   store: MakerStore;
   initialAssetId?: string | null;
-  initialSection?: 'plant' | 'grass';
+  initialSection?: 'plant' | 'flower' | 'grass';
   onClose: () => void;
 }
 
-type StudioSection = 'plant' | 'grass';
+type StudioSection = 'plant' | 'flower' | 'grass';
 type StudioToolMode = 'select' | 'translate' | 'rotate' | 'scale';
 type InspectorTab = 'cluster' | 'shape' | 'pattern' | 'paint';
 type CameraPreset = 'threeQuarter' | 'front' | 'top' | 'close';
@@ -235,9 +239,20 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
     initialAssetId ? 'plant' : initialSection
   );
   const [editingAssetId, setEditingAssetId] = useState<string | null>(initialAssetId);
-  const [plantName, setPlantName] = useState<string>('Tropical Banana Clump');
+  const [flowerRecipe, setFlowerRecipe] = useState<FlowerMakerRecipe>(() =>
+    createDefaultFlowerRecipe()
+  );
+  const [plantName, setPlantName] = useState<string>(() =>
+    !initialAssetId && initialSection === 'flower'
+      ? FLOWER_STARTER_RECIPES[0].name
+      : 'Tropical Banana Clump'
+  );
   const [assetCategory, setAssetCategory] = useState<AssetCategory>('plant');
-  const [doc, setDoc] = useState<ObjectMakerDoc>(() => createStarterPlantDoc());
+  const [doc, setDoc] = useState<ObjectMakerDoc>(() =>
+    !initialAssetId && initialSection === 'flower'
+      ? buildFlowerDocFromRecipe(FLOWER_STARTER_RECIPES[0])
+      : createStarterPlantDoc()
+  );
 
   // Grass & Meadow Maker sampler state (synced live to currentLevel.grass)
   const [localGrassFallback, setLocalGrassFallback] = useState<GrassFieldConfig>(() =>
@@ -445,6 +460,13 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
       setPlaceOnSave(false);
       setShowLoadMenu(false);
 
+      if (asset.plantSubKind === 'flower' && asset.flowerRecipe) {
+        setFlowerRecipe(JSON.parse(JSON.stringify(asset.flowerRecipe)) as FlowerMakerRecipe);
+        setStudioSection('flower');
+      } else {
+        setStudioSection('plant');
+      }
+
       if (asset.objectRecipe && asset.objectRecipe.parts.length > 0) {
         const cloned = JSON.parse(JSON.stringify(asset.objectRecipe)) as ObjectMakerDoc;
         const loadedStrokes = asset.vertexPaintStrokes ?? cloned.vertexPaintStrokes ?? [];
@@ -463,6 +485,38 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
       } else {
         flashToast(`"${asset.name}" is an external GLB — edit in Object Maker`);
       }
+    },
+    [flashToast]
+  );
+
+  const updateFlowerRecipe = useCallback(
+    (updater: (prev: FlowerMakerRecipe) => FlowerMakerRecipe) => {
+      setFlowerRecipe((prev) => {
+        const next = updater(prev);
+        const built = buildFlowerDocFromRecipe(next);
+        setDoc(built);
+        setSelectedGroupId(built.groups[0]?.id ?? null);
+        setSelectedPartIds([]);
+        return next;
+      });
+    },
+    []
+  );
+
+  const loadStarterFlower = useCallback(
+    (preset: FlowerMakerRecipe) => {
+      const cloned: FlowerMakerRecipe = { ...preset, seed: preset.seed };
+      setEditingAssetId(null);
+      setFlowerRecipe(cloned);
+      setPlantName(cloned.name);
+      setAssetCategory('plant');
+      const built = buildFlowerDocFromRecipe(cloned);
+      setDoc(built);
+      setPaintStrokes([]);
+      setPaintRedoStack([]);
+      setSelectedGroupId(built.groups[0]?.id ?? null);
+      setSelectedPartIds([]);
+      flashToast(`Loaded "${cloned.name}"`);
     },
     [flashToast]
   );
@@ -980,19 +1034,28 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
       };
       const { buffer } = await buildAndExportObjectDocToGlb(docWithPaint);
       const targetId = opts?.asCopy ? undefined : editingAssetId ?? undefined;
+      const isFlowerMode = studioSection === 'flower';
       const meta = await store.saveGeneratedAsset({
         existingAssetId: targetId,
         name: cleanName,
-        category: assetCategory,
+        category: isFlowerMode ? 'plant' : assetCategory,
         buffer,
         objectRecipe: docWithPaint,
         vertexPaintStrokes: shiftedStrokes.length > 0 ? shiftedStrokes : undefined,
         keepMetricScale: true,
+        plantSubKind: isFlowerMode ? 'flower' : 'plant',
+        flowerRecipe: isFlowerMode ? { ...flowerRecipe, name: cleanName } : undefined,
       });
       setDoc(docWithPaint);
       setPaintStrokes(shiftedStrokes);
       setEditingAssetId(meta.id);
-      flashToast(targetId ? `Saved "${meta.name}"` : `Added "${meta.name}" to Plants`);
+      flashToast(
+        targetId
+          ? `Saved "${meta.name}"`
+          : isFlowerMode
+          ? `Saved "${meta.name}" to Flowers`
+          : `Added "${meta.name}" to Plants`
+      );
 
       if (opts?.placeNow) {
         const hero = store.currentLevel?.entities.find((e) => e.kind === 'hero');
@@ -2330,7 +2393,7 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
               Plant Maker
             </span>
 
-            {/* Section Switcher: Botanical Plants vs Grass & Meadow */}
+            {/* Section Switcher: Botanical Plants vs Flower Maker vs Grass & Meadow */}
             <div className="inline-flex items-center p-0.5 rounded-xl bg-slate-100 dark:bg-[#12151E] border border-slate-200/80 dark:border-white/[0.08]">
               <button
                 type="button"
@@ -2346,6 +2409,27 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  if (studioSection !== 'flower') {
+                    setStudioSection('flower');
+                    const built = buildFlowerDocFromRecipe(flowerRecipe);
+                    setDoc(built);
+                    setPlantName(flowerRecipe.name);
+                    setSelectedGroupId(built.groups[0]?.id ?? null);
+                    setSelectedPartIds([]);
+                  }
+                }}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-extrabold transition-colors whitespace-nowrap ${
+                  studioSection === 'flower'
+                    ? 'bg-[#EC4899] text-white shadow-sm'
+                    : 'text-slate-600 dark:text-[#A5AEC4] hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Flower2 size={12} />
+                <span>Flower Maker</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setStudioSection('grass')}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-extrabold transition-colors whitespace-nowrap ${
                   studioSection === 'grass'
@@ -2358,30 +2442,37 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
               </button>
             </div>
 
-            {studioSection === 'plant' && (
+            {studioSection !== 'grass' && (
               <div className="flex items-center gap-2 min-w-0">
                 <input
                   type="text"
                   value={plantName}
-                  onChange={(e) => setPlantName(e.target.value)}
+                  onChange={(e) => {
+                    setPlantName(e.target.value);
+                    if (studioSection === 'flower') {
+                      setFlowerRecipe((prev) => ({ ...prev, name: e.target.value }));
+                    }
+                  }}
                   maxLength={40}
-                  placeholder="Plant name…"
+                  placeholder={studioSection === 'flower' ? 'Flower name…' : 'Plant name…'}
                   className="w-40 sm:w-48 px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-[#12151E] border border-slate-200/80 dark:border-white/[0.08] text-xs font-extrabold focus:outline-none focus:border-[#20B46A]"
                 />
-                <select
-                  value={assetCategory}
-                  onChange={(e) => setAssetCategory(e.target.value as AssetCategory)}
-                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-[#12151E] border border-slate-200/80 dark:border-white/[0.08] text-xs font-bold"
-                >
-                  <option value="plant">Plant</option>
-                  <option value="scenery">Scenery</option>
-                </select>
+                {studioSection === 'plant' && (
+                  <select
+                    value={assetCategory}
+                    onChange={(e) => setAssetCategory(e.target.value as AssetCategory)}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-[#12151E] border border-slate-200/80 dark:border-white/[0.08] text-xs font-bold"
+                  >
+                    <option value="plant">Plant</option>
+                    <option value="scenery">Scenery</option>
+                  </select>
+                )}
               </div>
             )}
           </div>
 
           <div className="flex items-center gap-1.5 flex-wrap">
-            {studioSection === 'plant' ? (
+            {studioSection !== 'grass' ? (
               <>
                 {/* Load Saved Plants & Starter Presets Dropdown */}
                 <div className="relative">
@@ -2565,10 +2656,20 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
                   type="button"
                   disabled={saving}
                   onClick={() => void handleSaveAsset({ placeNow: placeOnSave })}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#20B46A] hover:opacity-95 text-white text-xs font-extrabold shadow-sm disabled:opacity-50 whitespace-nowrap"
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl hover:opacity-95 text-white text-xs font-extrabold shadow-sm disabled:opacity-50 whitespace-nowrap ${
+                    studioSection === 'flower' ? 'bg-[#EC4899]' : 'bg-[#20B46A]'
+                  }`}
                 >
                   <Save size={13} />
-                  <span>{saving ? 'Exporting GLB…' : editingAssetId ? 'Save Changes' : 'Save to Plants'}</span>
+                  <span>
+                    {saving
+                      ? 'Exporting GLB…'
+                      : editingAssetId
+                      ? 'Save Changes'
+                      : studioSection === 'flower'
+                      ? 'Save Flower'
+                      : 'Save to Plants'}
+                  </span>
                 </button>
               </>
             ) : (
@@ -3046,6 +3147,98 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
             </aside>
           )}
 
+          {/* LEFT DOCK: FLOWER MAKER STARTER FLOWERS & SAVED FLOWERS */}
+          {showLeftDock && studioSection === 'flower' && (
+            <aside className="w-[262px] shrink-0 border-r border-slate-200/80 dark:border-white/[0.08] bg-slate-50 dark:bg-[#131720] flex flex-col min-h-0">
+              <div className="p-3 border-b border-slate-200/80 dark:border-white/[0.08] space-y-2 shrink-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#EC4899]">
+                    Premade Flowers
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateFlowerRecipe((prev) => ({
+                        ...prev,
+                        seed: Math.floor(Math.random() * 90000 + 100),
+                      }))
+                    }
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-[#EC4899] hover:underline"
+                  >
+                    <Dices size={12} />
+                    <span>Reseed</span>
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {FLOWER_STARTER_RECIPES.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => loadStarterFlower(preset)}
+                      className="w-full p-2 rounded-xl bg-white dark:bg-[#1B202C] hover:border-[#EC4899] border border-slate-200/80 dark:border-white/[0.06] text-left transition-colors space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+                          {preset.name}
+                        </span>
+                        <div className="flex items-center -space-x-1 shrink-0">
+                          <span
+                            className="w-3 h-3 rounded-full border border-black/25"
+                            style={{ backgroundColor: preset.primaryColor }}
+                          />
+                          <span
+                            className="w-3 h-3 rounded-full border border-black/25"
+                            style={{ backgroundColor: preset.stamenColor }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-slate-500 dark:text-[#8E96AB]">
+                        {preset.petalCount} petals · {preset.stemHeight.toFixed(1)}m tall
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex-1 min-h-0 flex flex-col p-3 space-y-2">
+                <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB] shrink-0">
+                  Saved Flowers ({savedPlantAssets.filter((a) => a.plantSubKind === 'flower').length})
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1 maker-scroll">
+                  {savedPlantAssets
+                    .filter((a) => a.plantSubKind === 'flower')
+                    .map((asset) => (
+                      <button
+                        key={asset.id}
+                        type="button"
+                        onClick={() => loadExistingAsset(asset)}
+                        className={`w-full flex items-center gap-2 p-2 rounded-xl border text-left transition-colors ${
+                          editingAssetId === asset.id
+                            ? 'bg-[#EC4899]/15 border-[#EC4899]/50'
+                            : 'bg-white dark:bg-[#1B202C] border-slate-200/80 dark:border-white/[0.06] hover:border-[#EC4899]/50'
+                        }`}
+                      >
+                        <AssetThumbnail customAsset={asset} size={34} rounded="rounded-lg" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-bold truncate">{asset.name}</div>
+                          <div className="text-[10px] text-slate-500 dark:text-[#8E96AB]">
+                            {asset.flowerRecipe
+                              ? `${asset.flowerRecipe.petalCount} petals · ${asset.flowerRecipe.stemHeight.toFixed(1)}m`
+                              : 'Custom flower'}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  {savedPlantAssets.filter((a) => a.plantSubKind === 'flower').length === 0 && (
+                    <div className="text-[11px] text-slate-500 dark:text-[#8E96AB] leading-snug">
+                      Customize any flower on the right and click Save Flower so it appears in Flora scatter dropdowns.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </aside>
+          )}
+
           {/* CENTER 3D VIEWPORT */}
           <div className="flex-1 min-w-0 relative bg-[#101915] select-none touch-none">
             <div ref={viewportMountRef} className="w-full h-full touch-none" />
@@ -3336,7 +3529,450 @@ export const PlantMakerModal: React.FC<PlantMakerModalProps> = ({
           </div>
 
           {/* RIGHT CONTEXTUAL INSPECTOR */}
-          {studioSection === 'grass' ? (
+          {studioSection === 'flower' ? (
+            <aside className="w-[332px] xl:w-[360px] shrink-0 border-l border-slate-200/80 dark:border-white/[0.08] bg-white dark:bg-[#171A23] flex flex-col min-h-0">
+              <div className="shrink-0 px-3.5 py-2.5 border-b border-slate-200/80 dark:border-white/[0.08] bg-slate-50 dark:bg-[#131720] flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Flower2 size={14} className="text-[#EC4899]" />
+                  <span className="text-xs font-extrabold tracking-tight">Flower Parameters</span>
+                </div>
+                <span className="text-[11px] font-mono font-bold tabular-nums text-[#EC4899]">
+                  {flowerRecipe.petalCount} petals · {flowerRecipe.stemHeight.toFixed(2)}m
+                </span>
+              </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-4 maker-scroll">
+                {/* PETAL SHAPE & COUNT */}
+                <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
+                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
+                    Petals
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="flex justify-between text-[11px] font-bold">
+                      <span>Number of Petals</span>
+                      <span className="font-mono tabular-nums text-[#EC4899]">{flowerRecipe.petalCount}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={3}
+                      max={18}
+                      step={1}
+                      value={flowerRecipe.petalCount}
+                      onChange={(e) =>
+                        updateFlowerRecipe((prev) => ({ ...prev, petalCount: Number(e.target.value) }))
+                      }
+                      className="w-full accent-[#EC4899]"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(
+                      [
+                        ['petalRound', 'Round'],
+                        ['petalPointed', 'Pointed'],
+                        ['petalRuffled', 'Ruffled'],
+                        ['petalOrchid', 'Orchid'],
+                      ] as const
+                    ).map(([sid, lbl]) => (
+                      <button
+                        key={sid}
+                        type="button"
+                        onClick={() => updateFlowerRecipe((prev) => ({ ...prev, petalShape: sid }))}
+                        className={`py-1.5 px-2 rounded-xl text-[11px] font-bold border transition-colors whitespace-nowrap ${
+                          flowerRecipe.petalShape === sid
+                            ? 'bg-[#EC4899] border-[#EC4899] text-white'
+                            : 'bg-white dark:bg-[#171A23] border-slate-200/80 dark:border-white/[0.08]'
+                        }`}
+                      >
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Length</span>
+                        <span className="tabular-nums">{flowerRecipe.petalLength.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.28}
+                        max={1.1}
+                        step={0.02}
+                        value={flowerRecipe.petalLength}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({ ...prev, petalLength: Number(e.target.value) }))
+                        }
+                        className="w-full accent-[#EC4899]"
+                      />
+                    </label>
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Width</span>
+                        <span className="tabular-nums">{flowerRecipe.petalWidth.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.18}
+                        max={0.85}
+                        step={0.02}
+                        value={flowerRecipe.petalWidth}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({ ...prev, petalWidth: Number(e.target.value) }))
+                        }
+                        className="w-full accent-[#EC4899]"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Cup</span>
+                        <span className="tabular-nums">{Math.round(flowerRecipe.petalCup * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={0.85}
+                        step={0.05}
+                        value={flowerRecipe.petalCup}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({ ...prev, petalCup: Number(e.target.value) }))
+                        }
+                        className="w-full accent-[#EC4899]"
+                      />
+                    </label>
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Droop</span>
+                        <span className="tabular-nums">{flowerRecipe.petalDroop.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={-0.4}
+                        max={0.55}
+                        step={0.02}
+                        value={flowerRecipe.petalDroop}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({ ...prev, petalDroop: Number(e.target.value) }))
+                        }
+                        className="w-full accent-[#EC4899]"
+                      />
+                    </label>
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Ruffle</span>
+                        <span className="tabular-nums">{Math.round(flowerRecipe.petalRuffle * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={0.95}
+                        step={0.05}
+                        value={flowerRecipe.petalRuffle}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({ ...prev, petalRuffle: Number(e.target.value) }))
+                        }
+                        className="w-full accent-[#EC4899]"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* COLOR GRADIENT & TEXTURE NOISE */}
+                <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
+                      Petal Color &amp; Noise
+                    </span>
+                    <div className="inline-flex rounded-lg bg-white dark:bg-[#171A23] p-0.5 border border-slate-200/80 dark:border-white/[0.08]">
+                      {(
+                        [
+                          ['single', 'Single'],
+                          ['gradient', 'Gradient'],
+                        ] as const
+                      ).map(([m, lbl]) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => updateFlowerRecipe((prev) => ({ ...prev, colorMode: m }))}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                            flowerRecipe.colorMode === m
+                              ? 'bg-[#EC4899] text-white'
+                              : 'text-slate-600 dark:text-[#9FA8BE]'
+                          }`}
+                        >
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] text-[11px] font-bold cursor-pointer">
+                      <span>Base Color</span>
+                      <input
+                        type="color"
+                        value={flowerRecipe.primaryColor}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({ ...prev, primaryColor: e.target.value }))
+                        }
+                        className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                      />
+                    </label>
+                    {flowerRecipe.colorMode === 'gradient' ? (
+                      <label className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] text-[11px] font-bold cursor-pointer">
+                        <span>Tip Blend</span>
+                        <input
+                          type="color"
+                          value={flowerRecipe.secondaryColor}
+                          onChange={(e) =>
+                            updateFlowerRecipe((prev) => ({
+                              ...prev,
+                              secondaryColor: e.target.value,
+                            }))
+                          }
+                          className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                        />
+                      </label>
+                    ) : (
+                      <label className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] text-[11px] font-bold cursor-pointer">
+                        <span>Stamen</span>
+                        <input
+                          type="color"
+                          value={flowerRecipe.stamenColor}
+                          onChange={(e) =>
+                            updateFlowerRecipe((prev) => ({ ...prev, stamenColor: e.target.value }))
+                          }
+                          className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 items-center">
+                    <select
+                      value={flowerRecipe.petalPattern}
+                      onChange={(e) =>
+                        updateFlowerRecipe((prev) => ({
+                          ...prev,
+                          petalPattern: e.target.value as PlantLeafPatternId,
+                        }))
+                      }
+                      className="w-full px-2 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] text-[11px] font-bold"
+                    >
+                      {PLANT_PATTERN_OPTIONS.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Texture Noise</span>
+                        <span className="tabular-nums">{Math.round(flowerRecipe.textureNoise * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={flowerRecipe.textureNoise}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({
+                            ...prev,
+                            textureNoise: Number(e.target.value),
+                          }))
+                        }
+                        className="w-full accent-[#EC4899]"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* STAMEN CORE */}
+                <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2">
+                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
+                    Stamen &amp; Core
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 items-center">
+                    <label className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] text-[11px] font-bold cursor-pointer">
+                      <span>Stamen Color</span>
+                      <input
+                        type="color"
+                        value={flowerRecipe.stamenColor}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({ ...prev, stamenColor: e.target.value }))
+                        }
+                        className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                      />
+                    </label>
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Core Size</span>
+                        <span className="tabular-nums">{flowerRecipe.stamenSize.toFixed(2)}×</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.45}
+                        max={1.8}
+                        step={0.05}
+                        value={flowerRecipe.stamenSize}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({
+                            ...prev,
+                            stamenSize: Number(e.target.value),
+                          }))
+                        }
+                        className="w-full accent-[#F59E0B]"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* STEM HEIGHT & LEAVES RANGE */}
+                <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
+                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-[#8E96AB]">
+                    Stem &amp; Leaf Range
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Stem Height</span>
+                        <span className="tabular-nums">{flowerRecipe.stemHeight.toFixed(2)}m</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.45}
+                        max={2.2}
+                        step={0.05}
+                        value={flowerRecipe.stemHeight}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({
+                            ...prev,
+                            stemHeight: Number(e.target.value),
+                          }))
+                        }
+                        className="w-full accent-[#20B46A]"
+                      />
+                    </label>
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Stem Arch</span>
+                        <span className="tabular-nums">{Math.round(flowerRecipe.stemDroop * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={0.65}
+                        step={0.02}
+                        value={flowerRecipe.stemDroop}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({
+                            ...prev,
+                            stemDroop: Number(e.target.value),
+                          }))
+                        }
+                        className="w-full accent-[#20B46A]"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] text-[11px] font-bold cursor-pointer">
+                      <span>Stem Color</span>
+                      <input
+                        type="color"
+                        value={flowerRecipe.stemColor}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({ ...prev, stemColor: e.target.value }))
+                        }
+                        className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                      />
+                    </label>
+                    <label className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] text-[11px] font-bold cursor-pointer">
+                      <span>Leaf Color</span>
+                      <input
+                        type="color"
+                        value={flowerRecipe.leafColor}
+                        onChange={(e) =>
+                          updateFlowerRecipe((prev) => ({ ...prev, leafColor: e.target.value }))
+                        }
+                        className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Min Stem Leaves</span>
+                        <span className="tabular-nums">{flowerRecipe.leafCountMin}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={8}
+                        step={1}
+                        value={flowerRecipe.leafCountMin}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          updateFlowerRecipe((prev) => ({
+                            ...prev,
+                            leafCountMin: v,
+                            leafCountMax: Math.max(v, prev.leafCountMax),
+                          }));
+                        }}
+                        className="w-full accent-[#20B46A]"
+                      />
+                    </label>
+                    <label className="block space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span>Max Stem Leaves</span>
+                        <span className="tabular-nums">{flowerRecipe.leafCountMax}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={10}
+                        step={1}
+                        value={flowerRecipe.leafCountMax}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          updateFlowerRecipe((prev) => ({
+                            ...prev,
+                            leafCountMax: v,
+                            leafCountMin: Math.min(prev.leafCountMin, v),
+                          }));
+                        }}
+                        className="w-full accent-[#20B46A]"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block space-y-0.5">
+                    <div className="flex justify-between text-[10px] font-semibold">
+                      <span>Leaf Size</span>
+                      <span className="tabular-nums">{flowerRecipe.leafScale.toFixed(2)}×</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.45}
+                      max={1.55}
+                      step={0.05}
+                      value={flowerRecipe.leafScale}
+                      onChange={(e) =>
+                        updateFlowerRecipe((prev) => ({ ...prev, leafScale: Number(e.target.value) }))
+                      }
+                      className="w-full accent-[#20B46A]"
+                    />
+                  </label>
+                </div>
+              </div>
+            </aside>
+          ) : studioSection === 'grass' ? (
             <aside className="w-[332px] xl:w-[360px] shrink-0 border-l border-slate-200/80 dark:border-white/[0.08] bg-white dark:bg-[#171A23] flex flex-col min-h-0">
               <div className="shrink-0 px-3.5 py-2.5 border-b border-slate-200/80 dark:border-white/[0.08] bg-slate-50 dark:bg-[#131720] flex items-center justify-between">
                 <div className="flex items-center gap-2">

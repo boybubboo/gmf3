@@ -19,6 +19,7 @@ import {
   isStoneArchBridgeEntity,
   type WalkInBuildingSpec,
 } from '../utils/terrain';
+import { buildPlatformerAddonMesh } from './platformerModels';
 
 export interface CreatureAnimRefs {
   creatureType: CreatureBodyId;
@@ -4546,6 +4547,10 @@ export function buildEntityMesh(entity: LevelEntity): THREE.Group {
     group.rotation.y = (entity.rotation * Math.PI) / 180;
     group.scale.setScalar(bbScale);
     return group;
+  }
+
+  if (entity.platformerAddon) {
+    return buildPlatformerAddonMesh(entity);
   }
 
   if (entity.monsterConfig) {

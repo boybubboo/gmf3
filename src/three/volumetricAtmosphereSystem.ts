@@ -24,7 +24,6 @@ import {
 } from 'three/tsl';
 import type { GameLevel, TerrainQualityTier } from '../types/maker';
 import type { ComputedAtmosphere } from './islandScene';
-import { IslandTerrain } from '../utils/terrain';
 
 // Reusable math helpers to guarantee 0 heap allocations in per-frame update
 const _camPos = new THREE.Vector3();
@@ -59,6 +58,10 @@ export interface VolumetricAtmosphereConfig {
   volumetricFogEnabled?: boolean;
   volumetricFogDensity?: number;
   volumetricFogHeight?: number;
+  volumetricFogSoftness?: number;
+  volumetricFogNoise?: number;
+  volumetricFogPatchiness?: number;
+  volumetricFogSpeed?: number;
   godRaysEnabled?: boolean;
   godRaysIntensity?: number;
   atmosphericDust?: number;
@@ -68,6 +71,7 @@ export interface VolumetricAtmosphereConfig {
  * Volumetric Atmosphere System:
  * - 3D Volumetric Light Shafts (Crepuscular Rays / God Rays) streaming along sun vector with forward Mie scattering.
  * - Ambient Sunbeam Dust Motes & Floating Spores with phase-angle forward scattering.
+ * (Ground mist planes removed to guarantee zero harsh horizontal cutting lines on tree trunks or rocks).
  */
 export class VolumetricAtmosphereSystem {
   public readonly group: THREE.Group;
@@ -84,8 +88,6 @@ export class VolumetricAtmosphereSystem {
   private readonly uInscatterColor = uniform(new THREE.Color('#FFE2A8'));
   private readonly uGodRaysIntensity = uniform(0.75);
   private readonly uGodRaysEnabled = uniform(1.0);
-  private readonly uFogDensity = uniform(1.0);
-  private readonly uFogEnabled = uniform(1.0);
   private readonly uDustIntensity = uniform(0.5);
   private readonly uWind = uniform(new THREE.Vector2(0.35, 0.15));
 
@@ -262,14 +264,10 @@ export class VolumetricAtmosphereSystem {
   }
 
   public applyConfig(cfg: VolumetricAtmosphereConfig): void {
-    const fogOn = cfg.volumetricFogEnabled ?? true;
     const raysOn = cfg.godRaysEnabled ?? true;
-    const fogDensity = THREE.MathUtils.clamp(cfg.volumetricFogDensity ?? 1.0, 0, 2.5);
     const raysIntensity = THREE.MathUtils.clamp(cfg.godRaysIntensity ?? 0.75, 0, 1.8);
     const dustAmt = THREE.MathUtils.clamp(cfg.atmosphericDust ?? 0.5, 0, 1.0);
 
-    this.uFogEnabled.value = fogOn ? 1.0 : 0.0;
-    this.uFogDensity.value = fogDensity;
     this.uGodRaysEnabled.value = raysOn ? 1.0 : 0.0;
     this.uGodRaysIntensity.value = raysIntensity;
     this.uDustIntensity.value = dustAmt;
@@ -309,7 +307,8 @@ export class VolumetricAtmosphereSystem {
     this.uInscatterColor.value.copy(_tempColor);
 
     const windSpeed = THREE.MathUtils.clamp(level.wind ?? 0.45, 0.05, 2.0);
-    this.uWind.value.set(windSpeed * 0.38, windSpeed * 0.18);
+    const speedMult = level.volumetricFogSpeed ?? 0.75;
+    this.uWind.value.set(windSpeed * 0.38 * speedMult, windSpeed * 0.18 * speedMult);
 
     if (this.isNight) {
       this.uInscatterColor.value.set('#A4C4E8');

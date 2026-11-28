@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Box,
   Crosshair,
+  Flower2,
   Globe,
   MapPin,
   MessageCircle,
@@ -42,6 +43,7 @@ import type {
   DoorSlotStyle,
   EntityMaterialVariant,
   FenceStyleId,
+  FloraScatterSettings,
   GrassFieldConfig,
   GrassQuality,
   LevelEntity,
@@ -51,6 +53,8 @@ import type {
   PropPresetId,
   RoadBorderScatterKind,
   RoadSpline,
+  RockPatternKind,
+  RockShapeKind,
   RoofStyleId,
   TerrainBrush,
   TerrainBrushFalloff,
@@ -99,6 +103,10 @@ import {
   normalizeProceduralConfig,
 } from '../../utils/proceduralTerrain';
 import {
+  PlatformerModuleInspector,
+  PlatformerMovementInspector,
+} from './PlatformerInspectorSection';
+import {
   LAND_REGION_PALETTE,
   WORLD_BORDER_GRAY,
   WORLD_TERRAIN_YELLOW,
@@ -117,6 +125,27 @@ import { AssetThumbnail } from '../shared/AssetThumbnail';
 import { CanopyTreeInspector } from '../shared/CanopyTreeInspector';
 import { FxEmitterInspector } from '../shared/FxEmitterInspector';
 import { FieldLabel, MakerCard } from '../shared/MakerUI';
+import {
+  type AtmosphereSectionId,
+  publishGuidanceFromControlEvent,
+} from '../../utils/editorPrefs';
+import {
+  ROCK_CLASS_META,
+  ROCK_PATTERN_OPTIONS,
+  ROCK_SHAPE_OPTIONS,
+  resolveFloraScatterSettings,
+} from '../../three/rockBuilder';
+import {
+  FLOWER_STARTER_RECIPES,
+  PLANT_STARTER_PRESETS,
+} from '../../three/plantMakerBuilder';
+import {
+  FX_LIBRARY_CATEGORY_LABELS,
+  type FxLibraryCategory,
+  type FxLibraryTemplate,
+} from '../../data/fxEffectLibrary';
+import { FX_DRAG_MIME } from './FxLibraryPanel';
+import { AtmosphereInspectorPanel } from './AtmosphereInspectorPanel';
 
 export interface ActiveBlockToolAdjustments {
   scaleX: number;
@@ -174,6 +203,13 @@ export interface WorldDomainInspectorProps {
   onTriggerFxBurst: (entityId: string) => void;
   onSaveEntityToFxLibrary: (entity: LevelEntity) => void;
   onAddVistaItem: (kind: VistaPropKind, customAssetId?: string, customLabel?: string) => void;
+  atmosphereSection?: AtmosphereSectionId;
+  allFxTemplates?: FxLibraryTemplate[];
+  placeFxTemplateId?: string | null;
+  onSelectPlaceFxTemplate?: (template: FxLibraryTemplate | null) => void;
+  onQuickPlaceFxCenter?: (template: FxLibraryTemplate) => void;
+  onDragStartFxTemplate?: (template: FxLibraryTemplate) => void;
+  onDragEndFxTemplate?: () => void;
   isPlacingHero?: boolean;
   onStartPlaceHero?: () => void;
 }
@@ -217,6 +253,13 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
   onTriggerFxBurst,
   onSaveEntityToFxLibrary,
   onAddVistaItem,
+  atmosphereSection = 'skyTime',
+  allFxTemplates = [],
+  placeFxTemplateId = null,
+  onSelectPlaceFxTemplate,
+  onQuickPlaceFxCenter,
+  onDragStartFxTemplate,
+  onDragEndFxTemplate,
   isPlacingHero,
   onStartPlaceHero,
 }) => {
@@ -225,9 +268,11 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
   const [savedBuildingAssetNote, setSavedBuildingAssetNote] = useState<string | null>(null);
   const [newLandName, setNewLandName] = useState('');
   const [appliedTreeDefaultsNote, setAppliedTreeDefaultsNote] = useState<'current' | 'all' | null>(null);
+  const [fxCategoryFilter, setFxCategoryFilter] = useState<FxLibraryCategory>('all');
   const defaultTreePrefs = useDefaultTreeStyles();
 
   const domain = store.activeWorldDomain;
+  const controlHintBadge = domain === 'atmosphere' ? 'Atmosphere Control' : 'Control Tip';
   const terrain = useMemo(
     () => currentLevel?.terrain ?? createInitialTerrain(),
     [currentLevel?.terrain]
@@ -298,7 +343,14 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
     };
 
     return (
-      <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
+      <aside
+      onPointerDownCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      onFocusCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Globe size={16} style={{ color: WORLD_TERRAIN_YELLOW }} />
@@ -636,7 +688,14 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
       { id: 'paintSnow', label: 'Paint Snow' },
     ];
     return (
-      <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
+      <aside
+      onPointerDownCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      onFocusCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Mountain size={16} className="text-[#F59E0B]" />
@@ -1012,7 +1071,14 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
     };
 
     return (
-      <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
+      <aside
+      onPointerDownCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      onFocusCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Waves size={16} className="text-[#0EA5E9]" />
@@ -1299,7 +1365,14 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
     ];
 
     return (
-      <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
+      <aside
+      onPointerDownCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      onFocusCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Mountain size={16} className="text-[#A855F7]" />
@@ -1984,7 +2057,14 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
     ];
 
     return (
-      <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
+      <aside
+      onPointerDownCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      onFocusCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Sprout size={16} className="text-[#20B46A]" />
@@ -2203,7 +2283,14 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
     };
 
     return (
-      <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
+      <aside
+      onPointerDownCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      onFocusCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Route size={16} className="text-[#C2854E]" />
@@ -2515,14 +2602,50 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
 
   // --- DOMAIN: FLORA & SCATTER ---
   if (domain === 'flora') {
-    const floraBrushes: { id: TerrainBrush; label: string }[] = [
-      { id: 'scatterTree', label: 'Trees' },
-      { id: 'scatterRock', label: 'Rocks' },
-      { id: 'scatterFlower', label: 'Flowers' },
-      { id: 'scatterCustom', label: 'Custom GLB' },
+    const floraBrushes: { id: TerrainBrush; label: string; spanClass: string }[] = [
+      { id: 'scatterTree', label: 'Trees', spanClass: 'col-span-2' },
+      { id: 'scatterRock', label: 'Rocks', spanClass: 'col-span-2' },
+      { id: 'scatterFlower', label: 'Flowers', spanClass: 'col-span-2' },
+      { id: 'scatterPlant', label: 'Plants', spanClass: 'col-span-3' },
+      { id: 'scatterCustom', label: 'Custom GLB', spanClass: 'col-span-3' },
     ];
+    const floraCfg = resolveFloraScatterSettings(terrain.floraScatterSettings);
+    const patchFloraSettings = (
+      updater: (cur: FloraScatterSettings) => FloraScatterSettings
+    ) => {
+      store.updateLevel(
+        'update flora scatter settings',
+        (lvl) => {
+          const curTerrain = lvl.terrain ?? createInitialTerrain();
+          const curResolved = resolveFloraScatterSettings(curTerrain.floraScatterSettings);
+          return {
+            ...lvl,
+            terrain: {
+              ...curTerrain,
+              floraScatterSettings: updater(curResolved),
+            },
+          };
+        },
+        false
+      );
+    };
+    const rockCfg = floraCfg.rocks;
+    const savedFlowers = store.customAssets.filter(
+      (a) => a.category === 'plant' && a.plantSubKind === 'flower'
+    );
+    const savedPlants = store.customAssets.filter(
+      (a) => a.category === 'plant' && a.plantSubKind !== 'flower'
+    );
+
     return (
-      <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
+      <aside
+      onPointerDownCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      onFocusCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
         <div className="flex items-center gap-2">
           <Trees size={16} className="text-[#20B46A]" />
           <h2 className="text-sm font-extrabold">Flora &amp; Scatter</h2>
@@ -2530,7 +2653,7 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
 
         <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
           <FieldLabel text="3D Scatter Brush" />
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-6 gap-1.5">
             {floraBrushes.map((b) => (
               <button
                 key={b.id}
@@ -2543,10 +2666,10 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
                   setTool('terrain');
                   setBrush(b.id);
                 }}
-                className={`py-2 rounded-xl text-xs font-bold border ${
+                className={`${b.spanClass} py-2 px-1 rounded-xl text-xs font-bold border whitespace-nowrap truncate ${
                   activeTool === 'terrain' && brush === b.id
                     ? 'bg-[#20B46A] border-[#20B46A] text-white'
-                    : 'bg-white dark:bg-[#171A23] border-transparent'
+                    : 'bg-white dark:bg-[#171A23] border-transparent text-slate-700 dark:text-slate-200'
                 }`}
               >
                 {b.label}
@@ -2585,24 +2708,679 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
           </label>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-1.5">
           <button
             type="button"
             onClick={() => store.openTreeMaker()}
-            className="py-2 rounded-xl bg-[#20B46A]/15 hover:bg-[#20B46A]/25 text-[#20B46A] text-xs font-extrabold inline-flex items-center justify-center gap-1"
+            className="py-2 px-1 rounded-xl bg-[#20B46A]/15 hover:bg-[#20B46A]/25 text-[#20B46A] text-[11px] font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap"
           >
-            <Trees size={13} />
-            <span>Tree Maker</span>
+            <Trees size={12} />
+            <span>Trees</span>
           </button>
           <button
             type="button"
-            onClick={() => store.openPlantMaker()}
-            className="py-2 rounded-xl bg-[#20B46A]/15 hover:bg-[#20B46A]/25 text-[#20B46A] text-xs font-extrabold inline-flex items-center justify-center gap-1"
+            onClick={() => store.openPlantMaker(undefined, 'flower')}
+            className="py-2 px-1 rounded-xl bg-[#EC4899]/15 hover:bg-[#EC4899]/25 text-[#EC4899] text-[11px] font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap"
           >
-            <Sprout size={13} />
-            <span>Plant Maker</span>
+            <Flower2 size={12} />
+            <span>Flowers</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => store.openPlantMaker(undefined, 'plant')}
+            className="py-2 px-1 rounded-xl bg-[#16A34A]/15 hover:bg-[#16A34A]/25 text-[#16A34A] text-[11px] font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap"
+          >
+            <Sprout size={12} />
+            <span>Plants</span>
           </button>
         </div>
+
+        {/* ROCKS SUB-CONTROLS: 4 Interactive Tiers + Size Ranges + Color/Pattern/Shape */}
+        {brush === 'scatterRock' && (
+          <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <FieldLabel text="Rock Tiers to Paint" />
+              <span className="text-[10px] font-bold text-slate-500 dark:text-[#949BB0]">
+                Tick any mix
+              </span>
+            </div>
+
+            <div className="space-y-1.5">
+              {ROCK_CLASS_META.map((tier) => {
+                const enabled = rockCfg.enabledTiers[tier.id];
+                return (
+                  <label
+                    key={tier.id}
+                    className={`flex items-start gap-2 p-2 rounded-xl border cursor-pointer transition-colors ${
+                      enabled
+                        ? 'bg-white dark:bg-[#171A23] border-[#20B46A]/60'
+                        : 'bg-white/50 dark:bg-[#171A23]/40 border-transparent opacity-70'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={(e) =>
+                        patchFloraSettings((cur) => ({
+                          ...cur,
+                          rocks: {
+                            ...cur.rocks,
+                            enabledTiers: {
+                              ...cur.rocks.enabledTiers,
+                              [tier.id]: e.target.checked,
+                            },
+                          },
+                        }))
+                      }
+                      className="mt-0.5 w-3.5 h-3.5 accent-[#20B46A] shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-extrabold leading-tight">{tier.label}</span>
+                        <span className="text-[10px] font-bold text-[#20B46A] shrink-0">
+                          {tier.interactionLabel}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 dark:text-[#949BB0] leading-snug mt-0.5">
+                        {tier.description}
+                      </p>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            {/* Min / Max Size for Each Ticked Tier */}
+            {ROCK_CLASS_META.some((t) => rockCfg.enabledTiers[t.id]) && (
+              <div className="space-y-2 pt-2 border-t border-slate-200/70 dark:border-white/[0.08]">
+                <FieldLabel text="Size Range (Selected Tiers)" />
+                {ROCK_CLASS_META.filter((t) => rockCfg.enabledTiers[t.id]).map((tier) => {
+                  const range = rockCfg.tierScales[tier.id];
+                  return (
+                    <div
+                      key={tier.id}
+                      className="p-2 rounded-xl bg-white dark:bg-[#171A23] space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between text-[11px] font-bold">
+                        <span>{tier.label}</span>
+                        <span className="tabular-nums text-[#20B46A]">
+                          {range.minSize.toFixed(2)} – {range.maxSize.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="block text-[10px] font-semibold text-slate-500 dark:text-[#949BB0]">
+                          <span>Min</span>
+                          <input
+                            type="range"
+                            min={tier.sliderMin}
+                            max={tier.sliderMax}
+                            step={tier.sliderStep}
+                            value={range.minSize}
+                            onChange={(e) => {
+                              const nextMin = Number(e.target.value);
+                              patchFloraSettings((cur) => ({
+                                ...cur,
+                                rocks: {
+                                  ...cur.rocks,
+                                  tierScales: {
+                                    ...cur.rocks.tierScales,
+                                    [tier.id]: {
+                                      minSize: nextMin,
+                                      maxSize: Math.max(nextMin, cur.rocks.tierScales[tier.id].maxSize),
+                                    },
+                                  },
+                                },
+                              }));
+                            }}
+                            className="w-full accent-[#20B46A]"
+                          />
+                        </label>
+                        <label className="block text-[10px] font-semibold text-slate-500 dark:text-[#949BB0]">
+                          <span>Max</span>
+                          <input
+                            type="range"
+                            min={tier.sliderMin}
+                            max={tier.sliderMax}
+                            step={tier.sliderStep}
+                            value={range.maxSize}
+                            onChange={(e) => {
+                              const nextMax = Number(e.target.value);
+                              patchFloraSettings((cur) => ({
+                                ...cur,
+                                rocks: {
+                                  ...cur.rocks,
+                                  tierScales: {
+                                    ...cur.rocks.tierScales,
+                                    [tier.id]: {
+                                      minSize: Math.min(cur.rocks.tierScales[tier.id].minSize, nextMax),
+                                      maxSize: nextMax,
+                                    },
+                                  },
+                                },
+                              }));
+                            }}
+                            className="w-full accent-[#20B46A]"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Color, Pattern, Noise & Shape Controls */}
+            <div className="space-y-2.5 pt-2 border-t border-slate-200/70 dark:border-white/[0.08]">
+              <FieldLabel text="Color, Pattern & Shape" />
+              <div className="grid grid-cols-2 gap-1.5">
+                {(
+                  [
+                    { id: 'single', label: 'Single Color' },
+                    { id: 'gradient', label: '2-Color Gradient' },
+                  ] as const
+                ).map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() =>
+                      patchFloraSettings((cur) => ({
+                        ...cur,
+                        rocks: { ...cur.rocks, colorMode: mode.id },
+                      }))
+                    }
+                    className={`py-1.5 px-2 rounded-xl text-[11px] font-bold border whitespace-nowrap ${
+                      rockCfg.colorMode === mode.id
+                        ? 'bg-[#20B46A] border-[#20B46A] text-white'
+                        : 'bg-white dark:bg-[#171A23] border-transparent text-slate-600 dark:text-slate-200'
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="flex-1 flex items-center justify-between gap-2 px-2 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[11px] font-bold">
+                  <span>Color A</span>
+                  <input
+                    type="color"
+                    value={rockCfg.primaryColor}
+                    onChange={(e) =>
+                      patchFloraSettings((cur) => ({
+                        ...cur,
+                        rocks: { ...cur.rocks, primaryColor: e.target.value },
+                      }))
+                    }
+                    className="w-6 h-5 rounded border-0 bg-transparent cursor-pointer"
+                  />
+                </label>
+                {rockCfg.colorMode === 'gradient' && (
+                  <label className="flex-1 flex items-center justify-between gap-2 px-2 py-1.5 rounded-xl bg-white dark:bg-[#171A23] text-[11px] font-bold">
+                    <span>Color B</span>
+                    <input
+                      type="color"
+                      value={rockCfg.secondaryColor}
+                      onChange={(e) =>
+                        patchFloraSettings((cur) => ({
+                          ...cur,
+                          rocks: { ...cur.rocks, secondaryColor: e.target.value },
+                        }))
+                      }
+                      className="w-6 h-5 rounded border-0 bg-transparent cursor-pointer"
+                    />
+                  </label>
+                )}
+              </div>
+
+              <label className="block space-y-0.5">
+                <div className="flex justify-between text-[11px] font-semibold">
+                  <span>Color Variation</span>
+                  <span className="tabular-nums">{Math.round(rockCfg.colorVariation * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={rockCfg.colorVariation}
+                  onChange={(e) =>
+                    patchFloraSettings((cur) => ({
+                      ...cur,
+                      rocks: { ...cur.rocks, colorVariation: Number(e.target.value) },
+                    }))
+                  }
+                  className="w-full accent-[#20B46A]"
+                />
+              </label>
+
+              <div className="space-y-1">
+                <span className="text-[11px] font-semibold">Rock Pattern</span>
+                <select
+                  value={rockCfg.pattern}
+                  onChange={(e) =>
+                    patchFloraSettings((cur) => ({
+                      ...cur,
+                      rocks: { ...cur.rocks, pattern: e.target.value as RockPatternKind },
+                    }))
+                  }
+                  className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] text-xs font-bold"
+                >
+                  {ROCK_PATTERN_OPTIONS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <label className="block space-y-0.5">
+                <div className="flex justify-between text-[11px] font-semibold">
+                  <span>Pattern Noise</span>
+                  <span className="tabular-nums">{Math.round(rockCfg.patternNoise * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={rockCfg.patternNoise}
+                  onChange={(e) =>
+                    patchFloraSettings((cur) => ({
+                      ...cur,
+                      rocks: { ...cur.rocks, patternNoise: Number(e.target.value) },
+                    }))
+                  }
+                  className="w-full accent-[#20B46A]"
+                />
+              </label>
+
+              <div className="space-y-1">
+                <span className="text-[11px] font-semibold">Shape Style</span>
+                <select
+                  value={rockCfg.shape}
+                  onChange={(e) =>
+                    patchFloraSettings((cur) => ({
+                      ...cur,
+                      rocks: { ...cur.rocks, shape: e.target.value as RockShapeKind },
+                    }))
+                  }
+                  className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#171A23] border border-slate-200/80 dark:border-white/[0.08] text-xs font-bold"
+                >
+                  {ROCK_SHAPE_OPTIONS.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <label className="block space-y-0.5">
+                <div className="flex justify-between text-[11px] font-semibold">
+                  <span>Shape Irregularity</span>
+                  <span className="tabular-nums">{Math.round(rockCfg.shapeVariation * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={rockCfg.shapeVariation}
+                  onChange={(e) =>
+                    patchFloraSettings((cur) => ({
+                      ...cur,
+                      rocks: { ...cur.rocks, shapeVariation: Number(e.target.value) },
+                    }))
+                  }
+                  className="w-full accent-[#20B46A]"
+                />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* FLOWERS SUB-CONTROLS: 4 Flower Dropdown Slots + Single / Group / All 4 Selection */}
+        {brush === 'scatterFlower' && (() => {
+          const enabledFlowers = floraCfg.flowerEnabledSlots ?? [true, true, true, true];
+          const enabledCount = enabledFlowers.filter(Boolean).length;
+          return (
+            <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <FieldLabel text="Flower Brush Slots" />
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTool('terrain');
+                      setBrush('scatterFlower');
+                      patchFloraSettings((cur) => ({
+                        ...cur,
+                        flowerPaintAll: true,
+                        flowerEnabledSlots: [true, true, true, true],
+                      }));
+                    }}
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-extrabold whitespace-nowrap ${
+                      enabledCount === 4
+                        ? 'bg-[#EC4899] text-white'
+                        : 'bg-white dark:bg-[#171A23] text-slate-500'
+                    }`}
+                  >
+                    All 4
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTool('terrain');
+                      setBrush('scatterFlower');
+                      patchFloraSettings((cur) => {
+                        const soloIdx = Math.max(0, Math.min(3, cur.activeFlowerSlot));
+                        return {
+                          ...cur,
+                          flowerPaintAll: false,
+                          flowerEnabledSlots: [
+                            soloIdx === 0,
+                            soloIdx === 1,
+                            soloIdx === 2,
+                            soloIdx === 3,
+                          ],
+                        };
+                      });
+                    }}
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-extrabold whitespace-nowrap ${
+                      enabledCount === 1
+                        ? 'bg-[#EC4899] text-white'
+                        : 'bg-white dark:bg-[#171A23] text-slate-500'
+                    }`}
+                  >
+                    Single
+                  </button>
+                </div>
+              </div>
+              <p className="text-[10.5px] text-slate-500 dark:text-[#949BB0] leading-snug">
+                Tick one flower or any group below, then paint directly on the land map.
+              </p>
+
+              <div className="space-y-1.5">
+                {floraCfg.flowerSlots.map((slotKey, idx) => {
+                  const isChecked = enabledFlowers[idx];
+                  return (
+                    <div
+                      key={idx}
+                      className={`flex items-center gap-1.5 p-1.5 rounded-xl border transition-colors ${
+                        isChecked
+                          ? 'bg-[#EC4899]/10 border-[#EC4899]/60'
+                          : 'bg-white dark:bg-[#171A23] border-transparent opacity-70'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        aria-label={`Include Flower ${idx + 1} in brush`}
+                        onChange={(e) => {
+                          const nextChecked = e.target.checked;
+                          setTool('terrain');
+                          setBrush('scatterFlower');
+                          patchFloraSettings((cur) => {
+                            const base = [...(cur.flowerEnabledSlots ?? [true, true, true, true])] as [
+                              boolean,
+                              boolean,
+                              boolean,
+                              boolean,
+                            ];
+                            base[idx] = nextChecked;
+                            if (!base.some(Boolean)) {
+                              base[idx] = true;
+                            }
+                            const firstOn = base.findIndex(Boolean);
+                            return {
+                              ...cur,
+                              flowerEnabledSlots: base,
+                              flowerPaintAll: base.every(Boolean),
+                              activeFlowerSlot: nextChecked ? idx : firstOn >= 0 ? firstOn : 0,
+                            };
+                          });
+                        }}
+                        className="accent-[#EC4899] w-3.5 h-3.5 shrink-0 cursor-pointer"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTool('terrain');
+                          setBrush('scatterFlower');
+                          patchFloraSettings((cur) => ({
+                            ...cur,
+                            flowerPaintAll: false,
+                            activeFlowerSlot: idx,
+                            flowerEnabledSlots: [idx === 0, idx === 1, idx === 2, idx === 3],
+                          }));
+                        }}
+                        title={`Paint only Flower ${idx + 1}`}
+                        className={`w-5 h-5 rounded-md text-[10px] font-extrabold shrink-0 ${
+                          isChecked
+                            ? 'bg-[#EC4899] text-white'
+                            : 'bg-slate-100 dark:bg-[#1F2430] text-slate-500'
+                        }`}
+                      >
+                        {idx + 1}
+                      </button>
+                      <select
+                        value={slotKey}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTool('terrain');
+                          setBrush('scatterFlower');
+                          patchFloraSettings((cur) => {
+                            const nextSlots = [...cur.flowerSlots] as [string, string, string, string];
+                            nextSlots[idx] = val;
+                            return { ...cur, flowerSlots: nextSlots };
+                          });
+                        }}
+                        className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-slate-50 dark:bg-[#11141D] text-xs font-semibold truncate"
+                      >
+                        <optgroup label="Premade Flowers">
+                          {FLOWER_STARTER_RECIPES.map((f) => (
+                            <option key={`flower:${f.id}`} value={`flower:${f.id}`}>
+                              {f.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                        {savedFlowers.length > 0 && (
+                          <optgroup label="Your Flower Maker Creations">
+                            {savedFlowers.map((a) => (
+                              <option key={`asset:${a.id}`} value={`asset:${a.id}`}>
+                                {a.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => store.openPlantMaker(undefined, 'flower')}
+                className="w-full py-2 px-3 rounded-xl bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold inline-flex items-center justify-center gap-1.5"
+              >
+                <Flower2 size={13} />
+                <span>Create Custom Flower</span>
+              </button>
+            </div>
+          );
+        })()}
+
+        {/* PLANTS SUB-CONTROLS: 4 Plant Dropdown Slots + Single / Group / All 4 Selection */}
+        {brush === 'scatterPlant' && (() => {
+          const enabledPlants = floraCfg.plantEnabledSlots ?? [true, true, true, true];
+          const enabledCount = enabledPlants.filter(Boolean).length;
+          return (
+            <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <FieldLabel text="Plant Brush Slots" />
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTool('terrain');
+                      setBrush('scatterPlant');
+                      patchFloraSettings((cur) => ({
+                        ...cur,
+                        plantPaintAll: true,
+                        plantEnabledSlots: [true, true, true, true],
+                      }));
+                    }}
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-extrabold whitespace-nowrap ${
+                      enabledCount === 4
+                        ? 'bg-[#16A34A] text-white'
+                        : 'bg-white dark:bg-[#171A23] text-slate-500'
+                    }`}
+                  >
+                    All 4
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTool('terrain');
+                      setBrush('scatterPlant');
+                      patchFloraSettings((cur) => {
+                        const soloIdx = Math.max(0, Math.min(3, cur.activePlantSlot));
+                        return {
+                          ...cur,
+                          plantPaintAll: false,
+                          plantEnabledSlots: [
+                            soloIdx === 0,
+                            soloIdx === 1,
+                            soloIdx === 2,
+                            soloIdx === 3,
+                          ],
+                        };
+                      });
+                    }}
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-extrabold whitespace-nowrap ${
+                      enabledCount === 1
+                        ? 'bg-[#16A34A] text-white'
+                        : 'bg-white dark:bg-[#171A23] text-slate-500'
+                    }`}
+                  >
+                    Single
+                  </button>
+                </div>
+              </div>
+              <p className="text-[10.5px] text-slate-500 dark:text-[#949BB0] leading-snug">
+                Tick one plant or any group below (or click a number to solo it), then paint on the land map.
+              </p>
+
+              <div className="space-y-1.5">
+                {floraCfg.plantSlots.map((slotKey, idx) => {
+                  const isChecked = enabledPlants[idx];
+                  return (
+                    <div
+                      key={idx}
+                      className={`flex items-center gap-1.5 p-1.5 rounded-xl border transition-colors ${
+                        isChecked
+                          ? 'bg-[#16A34A]/10 border-[#16A34A]/60'
+                          : 'bg-white dark:bg-[#171A23] border-transparent opacity-70'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        aria-label={`Include Plant ${idx + 1} in brush`}
+                        onChange={(e) => {
+                          const nextChecked = e.target.checked;
+                          setTool('terrain');
+                          setBrush('scatterPlant');
+                          patchFloraSettings((cur) => {
+                            const base = [...(cur.plantEnabledSlots ?? [true, true, true, true])] as [
+                              boolean,
+                              boolean,
+                              boolean,
+                              boolean,
+                            ];
+                            base[idx] = nextChecked;
+                            if (!base.some(Boolean)) {
+                              base[idx] = true;
+                            }
+                            const firstOn = base.findIndex(Boolean);
+                            return {
+                              ...cur,
+                              plantEnabledSlots: base,
+                              plantPaintAll: base.every(Boolean),
+                              activePlantSlot: nextChecked ? idx : firstOn >= 0 ? firstOn : 0,
+                            };
+                          });
+                        }}
+                        className="accent-[#16A34A] w-3.5 h-3.5 shrink-0 cursor-pointer"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTool('terrain');
+                          setBrush('scatterPlant');
+                          patchFloraSettings((cur) => ({
+                            ...cur,
+                            plantPaintAll: false,
+                            activePlantSlot: idx,
+                            plantEnabledSlots: [idx === 0, idx === 1, idx === 2, idx === 3],
+                          }));
+                        }}
+                        title={`Paint only Plant ${idx + 1}`}
+                        className={`w-5 h-5 rounded-md text-[10px] font-extrabold shrink-0 ${
+                          isChecked
+                            ? 'bg-[#16A34A] text-white'
+                            : 'bg-slate-100 dark:bg-[#1F2430] text-slate-500'
+                        }`}
+                      >
+                        {idx + 1}
+                      </button>
+                      <select
+                        value={slotKey}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTool('terrain');
+                          setBrush('scatterPlant');
+                          patchFloraSettings((cur) => {
+                            const nextSlots = [...cur.plantSlots] as [string, string, string, string];
+                            nextSlots[idx] = val;
+                            return { ...cur, plantSlots: nextSlots };
+                          });
+                        }}
+                        className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-slate-50 dark:bg-[#11141D] text-xs font-semibold truncate"
+                      >
+                        <optgroup label="Premade Plants">
+                          {PLANT_STARTER_PRESETS.map((p) => (
+                            <option key={`plant:${p.id}`} value={`plant:${p.id}`}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                        {savedPlants.length > 0 && (
+                          <optgroup label="Your Plant Maker Creations">
+                            {savedPlants.map((a) => (
+                              <option key={`asset:${a.id}`} value={`asset:${a.id}`}>
+                                {a.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => store.openPlantMaker(undefined, 'plant')}
+                className="w-full py-2 px-3 rounded-xl bg-[#16A34A] hover:bg-[#15803D] text-white text-xs font-extrabold inline-flex items-center justify-center gap-1.5"
+              >
+                <Sprout size={13} />
+                <span>Create Custom Plant</span>
+              </button>
+            </div>
+          );
+        })()}
 
         {/* Persistent Default Spawn Tree Styles */}
         <div className="p-3 rounded-2xl bg-slate-100 dark:bg-[#1F2430] space-y-2.5">
@@ -2759,7 +3537,14 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
     (domain === 'buildings' || (activeTool === 'add' && addPaletteMode === 'blocks'));
 
   return (
-    <aside className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
+    <aside
+      onPointerDownCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      onFocusCapture={(e) =>
+        publishGuidanceFromControlEvent(e, controlHintBadge)
+      }
+      className="w-full lg:w-76 shrink-0 lg:h-full lg:min-h-0 bg-white dark:bg-[#171A23] border-t lg:border-t-0 lg:border-l border-slate-200/80 dark:border-white/[0.08] lg:overflow-y-auto maker-scroll p-4 space-y-4">
       {isHeroSelected ? (
         <>
           <div className="flex items-center gap-3">
@@ -3542,6 +4327,10 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
             />
           )}
 
+          {currentEntity.platformerAddon && (
+            <PlatformerModuleInspector store={store} entity={currentEntity} />
+          )}
+
           {/* Material & Weathering */}
           {currentEntity.kind !== 'fxEmitter' && currentEntity.kind !== 'light' && (
             <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-[#1F2430] space-y-2">
@@ -3996,6 +4785,123 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
             </div>
           );
         })()
+      ) : domain === 'platformerKit' ? (
+        <PlatformerMovementInspector store={store} level={currentLevel} />
+      ) : domain === 'atmosphere' ? (
+        <AtmosphereInspectorPanel
+          store={store}
+          section={atmosphereSection}
+          onAddVistaItem={onAddVistaItem}
+        />
+      ) : domain === 'particleFx' ? (
+        (() => {
+          const customCount = allFxTemplates.filter((t) => t.isCustom).length;
+          const catTabs: FxLibraryCategory[] = [
+            'all',
+            'fireHeat',
+            'weather',
+            'magic',
+            'nature',
+            'critters',
+            ...(customCount > 0 ? (['custom'] as FxLibraryCategory[]) : []),
+          ];
+          const filteredFx = allFxTemplates.filter(
+            (t) => fxCategoryFilter === 'all' || t.category === fxCategoryFilter
+          );
+          return (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={16} className="text-[#F59E0B]" />
+                  <h2 className="text-sm font-extrabold">Particle FX</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => store.setShowingFxLibrary(!store.showingFxLibrary)}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-extrabold border ${
+                    store.showingFxLibrary
+                      ? 'bg-[#F59E0B] border-[#F59E0B] text-white'
+                      : 'bg-slate-100 dark:bg-[#1F2430] border-transparent text-slate-600 dark:text-slate-200'
+                  }`}
+                >
+                  {store.showingFxLibrary ? 'Hide Bottom Dock' : 'Open Dock'}
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-1">
+                {catTabs.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setFxCategoryFilter(cat)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-colors ${
+                      fxCategoryFilter === cat
+                        ? 'bg-[#F59E0B] text-white'
+                        : 'bg-slate-100 dark:bg-[#1F2430] text-slate-600 dark:text-[#949BB0]'
+                    }`}
+                  >
+                    {FX_LIBRARY_CATEGORY_LABELS[cat]}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-1.5">
+                {filteredFx.map((tpl) => {
+                  const armed = placeFxTemplateId === tpl.id;
+                  return (
+                    <div
+                      key={tpl.id}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(FX_DRAG_MIME, tpl.id);
+                        e.dataTransfer.setData('text/plain', tpl.id);
+                        e.dataTransfer.effectAllowed = 'copy';
+                        onDragStartFxTemplate?.(tpl);
+                      }}
+                      onDragEnd={() => onDragEndFxTemplate?.()}
+                      className={`p-2 rounded-xl border transition-all cursor-grab active:cursor-grabbing ${
+                        armed
+                          ? 'bg-[#F59E0B]/12 border-[#F59E0B]'
+                          : 'bg-slate-100 dark:bg-[#1F2430] border-transparent hover:border-[#F59E0B]/50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onSelectPlaceFxTemplate?.(armed ? null : tpl)}
+                          className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                        >
+                          <span
+                            className="w-6 h-6 rounded-lg shrink-0 flex items-center justify-center text-white"
+                            style={{
+                              background: `linear-gradient(135deg, ${tpl.accentHex}, ${tpl.secondaryHex})`,
+                            }}
+                          >
+                            <Sparkles size={12} />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="text-xs font-extrabold truncate">{tpl.name}</div>
+                            <div className="text-[10px] text-slate-500 dark:text-[#949BB0] truncate">
+                              {armed ? 'Click ground in 3D to drop' : tpl.summary}
+                            </div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onQuickPlaceFxCenter?.(tpl)}
+                          title={`Drop ${tpl.name} into center of scene`}
+                          className="px-2 py-1 rounded-lg bg-white dark:bg-[#171A23] hover:bg-[#F59E0B] hover:text-white text-[10px] font-extrabold shrink-0"
+                        >
+                          + Add
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()
       ) : (
         <MakerCard padding="p-4" className="!bg-slate-100 dark:!bg-[#1F2430] border-none space-y-2.5">
           <div className="flex items-center gap-2">
@@ -4003,7 +4909,7 @@ export const WorldDomainInspector: React.FC<WorldDomainInspectorProps> = ({
             <h3 className="text-sm font-extrabold">World Job Inspector</h3>
           </div>
           <p className="text-xs text-slate-500 dark:text-[#949BB0] leading-relaxed">
-            Click any character, chest, door, lake, cave, or trail in the scene (or pick a job from the dock below) to inspect its contextual tools here.
+            Click any character, chest, door, lake, cave, or trail in the scene (or pick a job from the left panel) to inspect its contextual tools here.
           </p>
           <div className="text-[11px] font-semibold text-slate-500 dark:text-[#8E96AB] pt-1 tabular-nums">
             <span className="text-[#7C5CFF]">{currentLevel.entities.length} objects</span>

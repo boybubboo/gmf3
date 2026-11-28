@@ -210,54 +210,12 @@ export function syncBotwSceneFog(
   const baseFog = env === 'dungeon' ? 0.015 : skyId === 'golden' ? 0.00135 : 0.00072;
   const fogDensity = baseFog + fogSlider * 0.0052;
   scene.fog = new THREE.FogExp2(atmo.fogColor.getHex(), fogDensity);
+  scene.fogNode = null as any;
 
   let fogU = scene.userData.botwFogUniforms as BotwFogUniformBundle | undefined;
   if (!fogU) {
     fogU = createBotwFogUniformBundle(atmo.fogColor, fogDensity, waterLevel);
     scene.userData.botwFogUniforms = fogU;
-
-    const u = fogU;
-    const distFactor = densityFogFactor(u.uFogDensity) as unknown as ReturnType<typeof float>;
-
-    // Organic animated noise waves for rolling undulating fog ceiling (eliminates flat horizontal line)
-    const posW = positionWorld;
-    const hWave1 = sin(posW.x.mul(0.014).add(u.uTime.mul(u.uWind.x).mul(0.55)))
-      .mul(cos(posW.z.mul(0.014).add(u.uTime.mul(u.uWind.y).mul(0.55))));
-    const hWave2 = sin(posW.x.add(posW.z).mul(0.032).sub(u.uTime.mul(0.22)))
-      .mul(0.48);
-    const boundaryOffset = hWave1.add(hWave2).mul(u.uHeightFogNoiseAmp);
-
-    // Dynamic undulating ceiling
-    const dynamicCeiling = u.uHeightFogLevel.add(boundaryOffset);
-
-    // Soft gradient transition across uHeightFogSoftness (adjustable thickness)
-    const deltaY = posW.y.sub(dynamicCeiling);
-    const vertGradient = float(1.0).sub(
-      smoothstep(float(0.0), max(float(1.0), u.uHeightFogSoftness), max(float(0.0), deltaY))
-    );
-
-    // Patchiness / fog separation: breaks up into drifting rolling patches/banks with clear gaps
-    const patchNoise = sin(posW.x.mul(0.007).add(u.uTime.mul(u.uWind.x).mul(0.28)))
-      .mul(cos(posW.z.mul(0.007).add(u.uTime.mul(u.uWind.y).mul(0.28))))
-      .mul(0.5).add(0.5);
-    const patchMask = smoothstep(u.uHeightFogPatchiness.mul(0.68), float(1.0), patchNoise);
-
-    // Organic height fog factor: smooth gradient and patch separation
-    const heightFactor = vertGradient
-      .mul(patchMask)
-      .mul(clamp(u.uHeightFogDensity.mul(180.0), float(0.0), float(1.0)));
-
-    const combinedFactor = clamp(
-      float(1.0).sub(float(1.0).sub(distFactor).mul(float(1.0).sub(heightFactor))),
-      0.0,
-      1.0
-    );
-    const viewDir = normalize(positionWorld.sub(cameraPosition));
-    const sunDot = max(0.0, dot(viewDir, normalize(u.uSunDir)));
-    const sunInscatter = pow(sunDot, 5.0).mul(u.uSunInscatterStrength);
-    const aerialColor = mix(u.uFogColor, u.uSunInscatterColor, clamp(sunInscatter, 0.0, 0.72));
-
-    scene.fogNode = fog(aerialColor, combinedFactor);
   }
 
   _tmpSunDir.copy(atmo.sunPos);

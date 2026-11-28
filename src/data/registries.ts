@@ -45,6 +45,7 @@ import type {
 } from '../types/maker';
 import { createDefaultFxEmitterConfig } from './fxEmitterPresets';
 import { createShowcaseTwinFlameDrakeBlueprint } from './baddieActionLibrary';
+import { createPlatformerModuleEntity, DEFAULT_PLATFORMER_MOVEMENT } from './platformerCatalog';
 import { DEFAULT_ROGUELIKE_CONFIG, generateRoguelikeFloor } from './roguelikeEngine';
 import {
   BuddiesLandmarks,
@@ -261,6 +262,7 @@ export const WeatherOptions: { id: WeatherKind; title: string; symbol: string }[
   { id: 'fireflies', title: 'Fireflies', symbol: 'sparkles' },
   { id: 'leaves', title: 'Leaves', symbol: 'leaf.fill' },
   { id: 'rain', title: 'Rain', symbol: 'cloud.rain.fill' },
+  { id: 'storm', title: 'Stormy', symbol: 'cloud.bolt.fill' },
   { id: 'snow', title: 'Snow', symbol: 'snowflake' },
 ];
 
@@ -2256,28 +2258,36 @@ function buildThemedProject(
       { id: uid(), text: 'Reach the portal', isOptional: false },
     ];
     if (environmentType === 'sideScroller') {
+      level.platformerTuning = { ...DEFAULT_PLATFORMER_MOVEMENT };
       level.entities = [
-        createEntity('npc', npc, 0.18, 0.5, {
-          dialogue: 'Jump across the cliffs and bridges to reach the portal!',
-          cards: [makeCard('playerTalks', ['say', 'playAnimation'], 'Jump across the cliffs and bridges!')],
+        createEntity('npc', npc, 0.13, 0.5, {
+          dialogue: 'Jump, air-dash (C), bounce on springs, and grab all 3 Star Coins!',
+          cards: [makeCard('playerTalks', ['say', 'playAnimation'], 'Use Space to jump, C to air-dash!')],
         }),
-        createEntity('baddie', baddie, 0.48, 0.5, {
-          health: 2,
-          brain: 'Patroller',
-          cards: [makeCard('seesPlayer', ['chase'])],
+        createPlatformerModuleEntity('coinTrail', { x: 0.2, y: 0.5 }, { elevationY: 0.2 }),
+        createPlatformerModuleEntity('shuttlePlatform', { x: 0.26, y: 0.5 }, { elevationY: 1.5 }),
+        createPlatformerModuleEntity('starCoin', { x: 0.28, y: 0.5 }, {
+          elevationY: 3.4,
+          configPatch: { starIndex: 1 },
         }),
-        createEntity('platform', 'Sky bridge', 0.31, 0.5, {
-          platformPreset: 'swingingBridge',
-          platformEnd: { x: 0.37, y: 0.5 },
+        createPlatformerModuleEntity('oneWayPlatform', { x: 0.35, y: 0.5 }, { elevationY: 2.1 }),
+        createPlatformerModuleEntity('enemyPatroller', { x: 0.4, y: 0.5 }),
+        createPlatformerModuleEntity('checkpointFlag', { x: 0.45, y: 0.5 }),
+        createPlatformerModuleEntity('bounceSpring', { x: 0.5, y: 0.5 }),
+        createPlatformerModuleEntity('dashCrystal', { x: 0.55, y: 0.5 }, { elevationY: 4.0 }),
+        createPlatformerModuleEntity('crumblingPlatform', { x: 0.6, y: 0.5 }, { elevationY: 2.0 }),
+        createPlatformerModuleEntity('enemyFlyer', { x: 0.66, y: 0.5 }, { elevationY: 2.8 }),
+        createPlatformerModuleEntity('starCoin', { x: 0.67, y: 0.5 }, {
+          elevationY: 4.8,
+          configPatch: { starIndex: 2 },
         }),
-        createEntity('treasure', 'Cliff chest', 0.64, 0.5, {
-          cards: [makeCard('playerTouches', ['giveTreasure', 'playSound', 'destroySelf'], '5 coins')],
+        createPlatformerModuleEntity('barrelCannon', { x: 0.73, y: 0.5 }, { elevationY: 0.5 }),
+        createPlatformerModuleEntity('secretWall', { x: 0.8, y: 0.5 }),
+        createPlatformerModuleEntity('starCoin', { x: 0.82, y: 0.5 }, {
+          elevationY: 1.3,
+          configPatch: { starIndex: 3 },
         }),
-        createEntity('baddie', baddie, 0.77, 0.5, {
-          health: 3,
-          brain: 'Patroller',
-        }),
-        createEntity('checkpoint', 'Cliff flag', 0.44, 0.5),
+        createPlatformerModuleEntity('finishGoal', { x: 0.89, y: 0.5 }),
       ];
     } else {
       level.entities = [

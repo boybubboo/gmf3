@@ -18,6 +18,7 @@ import {
   cameraPosition,
   clamp,
   cos,
+  cross,
   dot,
   exp,
   float,
@@ -42,6 +43,7 @@ import {
   select,
   sin,
   smoothstep,
+  sqrt,
   step,
   texture,
   transformNormalToView,
@@ -88,6 +90,9 @@ import type {
   GrassFieldConfig,
   MountainProfileConfig,
   ProceduralTerrainConfig,
+  RockPatternKind,
+  RockShapeKind,
+  RockSizeClass,
   ScatterItem,
   SceneryTextureSlot,
   SurfaceTextureSettings,
@@ -163,6 +168,13 @@ import {
   createSculptedCanopyLobeGeometry,
   createShrubBerryClusterGeometry,
 } from './treeGeometry';
+import {
+  buildSculptedRockGeometry,
+  getOrCreateRockPatternTexture,
+  inferRockSizeClass,
+} from './rockBuilder';
+import { buildBotanicalPresetDocByKey } from './plantMakerBuilder';
+import { buildObjectMakerSceneGroup } from './objectMakerBuilder';
 import { StylizedGrassSystem } from './stylizedGrassSystem';
 import {
   createHardwareWebGL2Context,
@@ -223,6 +235,7 @@ export interface ChoppableTreeHandle {
 export interface HarvestableScatterHandle {
   id: string;
   scatterKind: 'mushroom' | 'berryBush' | 'bush' | 'fern' | 'broadleaf' | 'flower' | 'rock';
+  rockClass?: RockSizeClass;
   x: number;
   y: number;
   z: number;
@@ -231,6 +244,7 @@ export interface HarvestableScatterHandle {
   hp?: number;
   maxHp?: number;
   batchedEntries: BatchEntryRef[];
+  group?: THREE.Object3D;
 }
 
 export interface WorldMapRenderContext {
@@ -548,15 +562,40 @@ export function computeAtmosphereState(level: GameLevel, overrideTime?: number):
 
   const hasDynamicTime = level.timeOfDay !== undefined || overrideTime !== undefined;
 
-  const cloudDensity = THREE.MathUtils.clamp(
-    level.cloudDensity ?? (level.sky === 'storm' ? 0.85 : level.sky === 'mist' ? 0.72 : 0.58),
+  const isStormActive =
+    level.stormClouds !== undefined
+      ? level.stormClouds
+      : level.weather === 'storm' || level.sky === 'storm';
+  const stormFactor = isStormActive
+    ? THREE.MathUtils.clamp(level.stormIntensity ?? 0.85, 0, 1)
+    : 0;
+
+  const baseCloudDensity = THREE.MathUtils.clamp(
+    level.cloudDensity ?? (isStormActive ? 0.88 : level.sky === 'mist' ? 0.72 : 0.58),
     0,
     1
   );
+  const cloudDensity =
+    level.weather === 'storm' && level.stormClouds !== false
+      ? Math.max(baseCloudDensity, 0.58)
+      : baseCloudDensity;
   const sunScale = THREE.MathUtils.clamp(level.sunIntensityScale ?? 1, 0.3, 1.8);
   const ambientScale = THREE.MathUtils.clamp(level.ambientIntensityScale ?? 1, 0.3, 1.8);
   const warmth = THREE.MathUtils.clamp(level.atmosphereWarmth ?? 0, -0.5, 0.5);
-  const overcastDamp = 1 - Math.max(0, cloudDensity - 0.55) * 0.48;
+  const overcastDamp = (1 - Math.max(0, cloudDensity - 0.55) * 0.48) * (1 - stormFactor * 0.28);
+
+  const applySunElevationOverride = (pos: THREE.Vector3): THREE.Vector3 => {
+    if (level.sunElevation === undefined) return pos;
+    const azRad = ((level.sunAngle ?? 38) * Math.PI) / 180;
+    const elRad = (THREE.MathUtils.clamp(level.sunElevation, -10, 85) * Math.PI) / 180;
+    const dist = 80;
+    const cosEl = Math.cos(elRad);
+    return new THREE.Vector3(
+      Math.cos(azRad) * cosEl * dist,
+      Math.sin(elRad) * dist,
+      Math.sin(azRad) * cosEl * dist
+    );
+  };
 
   const applyTuning = (base: ComputedAtmosphere): ComputedAtmosphere => {
     if (warmth !== 0) {
@@ -574,6 +613,15 @@ export function computeAtmosphereState(level: GameLevel, overrideTime?: number):
       base.zenithColor.lerp(cloudGrey, hazeAmt);
       base.midColor.lerp(cloudGrey, hazeAmt * 0.75);
     }
+    if (stormFactor > 0.01) {
+      const sAmt = stormFactor * 0.58;
+      base.zenithColor.lerp(new THREE.Color('#1E2636'), sAmt);
+      base.midColor.lerp(new THREE.Color('#2E384B'), sAmt);
+      base.horizonColor.lerp(new THREE.Color('#424F63'), sAmt * 0.85);
+      base.fogColor.lerp(new THREE.Color('#3C485B'), sAmt * 0.75);
+      base.sunColor.lerp(new THREE.Color('#B8C8DF'), sAmt * 0.65);
+      base.warmGlow *= 1 - stormFactor * 0.55;
+    }
     base.sunIntensity = base.sunIntensity * sunScale * overcastDamp;
     base.hemiIntensity = base.hemiIntensity * ambientScale * (1 + Math.max(0, cloudDensity - 0.55) * 0.14);
     base.envIntensity = base.envIntensity * THREE.MathUtils.lerp(1, ambientScale, 0.55);
@@ -587,9 +635,11 @@ export function computeAtmosphereState(level: GameLevel, overrideTime?: number):
     const isStorm = level.sky === 'storm';
     const isMist = level.sky === 'mist';
 
-    const sunPos = isGolden
-      ? new THREE.Vector3(Math.cos(rad) * 72, 16 + Math.sin(rad) * 10, 46)
-      : new THREE.Vector3(Math.cos(rad) * 58, 34 + Math.sin(rad) * 22, 34);
+    const sunPos = applySunElevationOverride(
+      isGolden
+        ? new THREE.Vector3(Math.cos(rad) * 72, 16 + Math.sin(rad) * 10, 46)
+        : new THREE.Vector3(Math.cos(rad) * 58, 34 + Math.sin(rad) * 22, 34)
+    );
 
     const horizon = new THREE.Color(env === 'scifi' ? '#0C1222' : sky.bgHex);
     let zenith: THREE.Color;
@@ -651,10 +701,12 @@ export function computeAtmosphereState(level: GameLevel, overrideTime?: number):
   const rawZ = 32;
   const cosA = Math.cos(azOffsetRad);
   const sinA = Math.sin(azOffsetRad);
-  const sunPos = new THREE.Vector3(
-    rawX * cosA - rawZ * sinA,
-    Math.max(-20, sunElev * 52) + (sunElev < 0 ? 22 : 12),
-    rawX * sinA + rawZ * cosA
+  const sunPos = applySunElevationOverride(
+    new THREE.Vector3(
+      rawX * cosA - rawZ * sinA,
+      Math.max(-20, sunElev * 52) + (sunElev < 0 ? 22 : 12),
+      rawX * sinA + rawZ * cosA
+    )
   );
 
   const stops: {
@@ -740,23 +792,80 @@ export function applyAtmosphere(
   const style: VisualStyleId = level.visualStyle ?? 'painterlyPBR';
   const env = getEnvironmentType(level);
   const isWmMode = Boolean(options?.isWorldMapMode);
-  const cloudDensity = THREE.MathUtils.clamp(
-    level.cloudDensity ?? (level.sky === 'storm' ? 0.85 : level.sky === 'mist' ? 0.72 : 0.58),
+  const isStormActive =
+    level.stormClouds !== undefined
+      ? level.stormClouds
+      : level.weather === 'storm' || level.sky === 'storm';
+  const stormFactor = isStormActive
+    ? THREE.MathUtils.clamp(level.stormIntensity ?? 0.85, 0, 1)
+    : 0;
+  const stormLightning = isStormActive && (level.stormLightning ?? true);
+  const baseCloudDensity = THREE.MathUtils.clamp(
+    level.cloudDensity ?? (isStormActive ? 0.88 : level.sky === 'mist' ? 0.72 : 0.58),
     0,
     1
   );
+  const cloudDensity =
+    level.weather === 'storm' && level.stormClouds !== false
+      ? Math.max(baseCloudDensity, 0.58)
+      : baseCloudDensity;
+  const cloudOpacity = THREE.MathUtils.clamp(level.cloudOpacity ?? 0.88, 0, 1);
+  const cloudSoftness = THREE.MathUtils.clamp(level.cloudSoftness ?? 0.68, 0, 1);
+  const cloudHeightOffset = THREE.MathUtils.clamp(level.cloudHeight ?? 0, -20, 60);
+  const cloudSpeed = THREE.MathUtils.clamp(level.cloudSpeed ?? 1.0, 0, 3.0);
+  const cloudScale = THREE.MathUtils.clamp(level.cloudScale ?? 1.0, 0.5, 2.0);
+
+  const sunVisible = level.sunVisible !== false;
+  const sunSize = THREE.MathUtils.clamp(level.sunSize ?? 1.0, 0.4, 2.4);
+  const sunGlow = THREE.MathUtils.clamp(level.sunGlow ?? 1.0, 0, 2.0);
+
+  const moonMode = level.moonMode ?? 'auto';
+  const moonVis =
+    moonMode === 'off'
+      ? 0
+      : moonMode === 'always'
+      ? 1
+      : THREE.MathUtils.clamp((atmo.nightFactor - 0.12) * 1.45, 0, 1);
+  const moonPhase = THREE.MathUtils.clamp(level.moonPhase ?? 0.62, 0, 1);
+  const moonSize = THREE.MathUtils.clamp(level.moonSize ?? 1.0, 0.4, 2.6);
+  const moonGlow = THREE.MathUtils.clamp(level.moonGlow ?? 0.95, 0, 2.0);
+  const moonAzRad = ((level.moonAngle ?? 215) * Math.PI) / 180;
+  const moonElRad = (THREE.MathUtils.clamp(level.moonElevation ?? 34, 5, 82) * Math.PI) / 180;
+  const moonDir = new THREE.Vector3(
+    Math.cos(moonAzRad) * Math.cos(moonElRad),
+    Math.sin(moonElRad),
+    Math.sin(moonAzRad) * Math.cos(moonElRad)
+  ).normalize();
+
   const starScale = THREE.MathUtils.clamp(level.starIntensity ?? 1, 0, 1.5);
+  const starDensity = THREE.MathUtils.clamp(level.starDensity ?? 0.85, 0.1, 1.5);
+  const starSize = THREE.MathUtils.clamp(level.starSize ?? 1.0, 0.4, 2.4);
+  const starTwinkle = THREE.MathUtils.clamp(level.starTwinkle ?? 0.85, 0, 2.0);
+  const starTint = level.starTint ?? 'natural';
+
+  const auroraEnabled = Boolean(level.auroraEnabled);
+  const auroraIntensityRaw = auroraEnabled
+    ? THREE.MathUtils.clamp(level.auroraIntensity ?? 1.0, 0, 2.0)
+    : 0;
+  // Vivid at night/twilight, subtly visible even in daylight when user explicitly enables aurora
+  const auroraVisMult = auroraEnabled
+    ? THREE.MathUtils.lerp(0.38, 1.15, THREE.MathUtils.clamp(atmo.nightFactor * 1.15, 0, 1))
+    : 0;
+  const auroraIntensity = auroraIntensityRaw * auroraVisMult;
+  const auroraSpeed = THREE.MathUtils.clamp(level.auroraSpeed ?? 0.85, 0, 2.5);
+  const auroraHeight = THREE.MathUtils.clamp(level.auroraHeight ?? 0.34, 0.12, 0.75);
+  const auroraSpread = THREE.MathUtils.clamp(level.auroraSpread ?? 0.75, 0.2, 1.5);
 
   scene.background = atmo.horizonColor;
   scene.environmentIntensity = atmo.envIntensity;
-  syncBotwStyleUniforms(style, atmo, env, cloudDensity, level.sky);
+  syncBotwStyleUniforms(style, atmo, env, cloudDensity, isStormActive ? 'storm' : level.sky);
   syncBotwSceneFog(
     scene,
     atmo,
     env,
     level.fog,
     cloudDensity,
-    level.sky,
+    isStormActive ? 'storm' : level.sky,
     IslandTerrain.waterLevel,
     level.vistaHeightFog ?? 1,
     {
@@ -814,9 +923,17 @@ export function applyAtmosphere(
   if (atmo.nightFactor > 0) {
     cloudTint.lerp(new THREE.Color('#475A7E'), atmo.nightFactor * 0.72);
   }
-  if (level.sky === 'storm') {
-    cloudTint.lerp(new THREE.Color('#7C899E'), 0.6);
+  if (stormFactor > 0.01) {
+    cloudTint.lerp(new THREE.Color('#49556B'), stormFactor * 0.78);
   }
+
+  // Persist live motion & storm parameters on scene.userData for zero-alloc per-frame updates
+  scene.userData.__makerCloudSpeed = cloudSpeed;
+  scene.userData.__makerCloudHeightOffset = cloudHeightOffset;
+  scene.userData.__makerAuroraSpeed = auroraSpeed;
+  scene.userData.__makerStormFactor = stormFactor;
+  scene.userData.__makerStormLightning = stormLightning;
+  scene.userData.__makerStarTwinkle = starTwinkle;
 
   const skyDome =
     (scene.userData.__makerSkyDome as THREE.Mesh | undefined) ??
@@ -831,9 +948,30 @@ export function applyAtmosphere(
           uHorizon: { value: THREE.Color };
           uSunDir: { value: THREE.Vector3 };
           uSunColor: { value: THREE.Color };
+          uSunVisible: { value: number };
+          uSunSize: { value: number };
+          uSunGlow: { value: number };
           uWarmGlow: { value: number };
+          uMoonDir: { value: THREE.Vector3 };
+          uMoonVis: { value: number };
+          uMoonPhase: { value: number };
+          uMoonSize: { value: number };
+          uMoonGlow: { value: number };
+          uMoonColor: { value: THREE.Color };
+          uAuroraIntensity: { value: number };
+          uAuroraTime: { value: number };
+          uAuroraHeight: { value: number };
+          uAuroraSpread: { value: number };
+          uAuroraColorA: { value: THREE.Color };
+          uAuroraColorB: { value: THREE.Color };
           uCloudDensity: { value: number };
+          uCloudOpacity: { value: number };
+          uCloudSoftness: { value: number };
+          uCloudHeightNorm: { value: number };
+          uCloudScale: { value: number };
           uCloudColor: { value: THREE.Color };
+          uStormFactor: { value: number };
+          uLightningFlash: { value: number };
           uTime: { value: number };
         }
       | undefined;
@@ -843,19 +981,62 @@ export function applyAtmosphere(
       skyU.uHorizon.value.copy(atmo.horizonColor);
       skyU.uSunDir.value.copy(atmo.sunPos).normalize();
       skyU.uSunColor.value.copy(atmo.sunColor);
+      skyU.uSunVisible.value = sunVisible ? Math.max(0, 1 - atmo.nightFactor * 0.92) : 0;
+      skyU.uSunSize.value = sunSize;
+      skyU.uSunGlow.value = sunGlow;
       skyU.uWarmGlow.value = atmo.warmGlow;
+      skyU.uMoonDir.value.copy(moonDir);
+      skyU.uMoonVis.value = moonVis;
+      skyU.uMoonPhase.value = moonPhase;
+      skyU.uMoonSize.value = moonSize;
+      skyU.uMoonGlow.value = moonGlow;
+      skyU.uMoonColor.value.set(level.moonColor || '#DDE8FF');
+      skyU.uAuroraIntensity.value = auroraIntensity;
+      skyU.uAuroraHeight.value = auroraHeight;
+      skyU.uAuroraSpread.value = auroraSpread;
+      skyU.uAuroraColorA.value.set(level.auroraColorA || '#34D399');
+      skyU.uAuroraColorB.value.set(level.auroraColorB || '#8B5CF6');
       skyU.uCloudDensity.value = env === 'sideScroller' ? cloudDensity * 0.45 : cloudDensity;
+      skyU.uCloudOpacity.value = cloudOpacity;
+      skyU.uCloudSoftness.value = cloudSoftness;
+      skyU.uCloudHeightNorm.value = THREE.MathUtils.clamp((cloudHeightOffset + 20) / 80, 0, 1);
+      skyU.uCloudScale.value = cloudScale;
       skyU.uCloudColor.value.copy(cloudTint);
+      skyU.uStormFactor.value = stormFactor;
+      if (!stormLightning) {
+        skyU.uLightningFlash.value = 0;
+      }
     }
   }
+
   const stars =
     (scene.userData.__makerStars as THREE.Points | undefined) ??
     (scene.getObjectByName('maker-stars') as THREE.Points | undefined);
   if (stars && stars.material instanceof THREE.PointsMaterial) {
     scene.userData.__makerStars = stars;
-    const starOpacity = THREE.MathUtils.clamp(atmo.nightFactor * 0.92 * starScale * (1 - cloudDensity * 0.45), 0, 1);
-    stars.material.opacity = starOpacity;
-    stars.visible = env !== 'dungeon' && starOpacity > 0.03;
+    const baseStarOpacity = THREE.MathUtils.clamp(
+      atmo.nightFactor * 0.94 * starScale * (1 - cloudDensity * cloudOpacity * 0.52),
+      0,
+      1
+    );
+    stars.userData.baseOpacity = baseStarOpacity;
+    stars.material.opacity = baseStarOpacity;
+    const baseStarPx = (stars.userData.baseSize as number | undefined) ?? 8.5;
+    stars.material.size = baseStarPx * starSize;
+    if (starTint === 'cool') {
+      stars.material.color.set('#CFE6FF');
+    } else if (starTint === 'warm') {
+      stars.material.color.set('#FFE9C2');
+    } else {
+      stars.material.color.set('#FFFFFF');
+    }
+    const maxStars = (stars.userData.maxCount as number | undefined) ?? 1100;
+    const activeStarCount = Math.max(
+      20,
+      Math.min(maxStars, Math.round(maxStars * THREE.MathUtils.clamp(starDensity / 1.25, 0.08, 1)))
+    );
+    stars.geometry.setDrawRange(0, activeStarCount);
+    stars.visible = env !== 'dungeon' && baseStarOpacity > 0.02;
   }
 
   const clouds =
@@ -865,33 +1046,62 @@ export function applyAtmosphere(
   if (clouds) {
     scene.userData.__makerClouds = clouds;
     clouds.visible =
-      !isWmMode && env !== 'dungeon' && env !== 'sideScroller' && cloudDensity > 0.015;
-    const cloudMat = clouds.userData?.material as THREE.MeshStandardMaterial | undefined;
+      !isWmMode &&
+      env !== 'dungeon' &&
+      env !== 'sideScroller' &&
+      cloudDensity > 0.015 &&
+      cloudOpacity > 0.015;
+    const cloudMat = clouds.userData?.material as MeshStandardNodeMaterial | undefined;
     if (cloudMat) {
       cloudMat.color.copy(cloudTint);
       cloudMat.emissive.copy(atmo.horizonColor).multiplyScalar(atmo.warmGlow * 0.22);
-      cloudMat.emissiveIntensity = atmo.warmGlow > 0.4 ? 0.48 : 0.14;
-      if (atmo.nightFactor > 0) {
-        cloudMat.emissiveIntensity = 0.04;
-      }
-      if (level.sky === 'storm') {
-        cloudMat.emissiveIntensity = 0.05;
+      const baseEmissiveIntensity =
+        stormFactor > 0.2
+          ? 0.05
+          : atmo.nightFactor > 0.35
+          ? 0.04
+          : atmo.warmGlow > 0.4
+          ? 0.44
+          : 0.14;
+      cloudMat.emissiveIntensity = baseEmissiveIntensity;
+      clouds.userData.baseEmissiveIntensity = baseEmissiveIntensity;
+      clouds.userData.baseEmissiveColor = cloudMat.emissive.clone();
+      const cloudU = clouds.userData?.cloudUniforms as
+        | {
+            uSoftness: { value: number };
+            uOpacity: { value: number };
+            uStorm: { value: number };
+          }
+        | undefined;
+      if (cloudU) {
+        cloudU.uSoftness.value = cloudSoftness;
+        cloudU.uOpacity.value = cloudOpacity;
+        cloudU.uStorm.value = stormFactor;
       }
     }
     const qualityTier = (scene.userData.__makerTerrainQuality as TerrainQualityTier | undefined) ?? 'balanced';
     const maxBand = qualityTier === 'performance' ? 0 : qualityTier === 'balanced' ? 1 : 2;
-    const fullnessScale = 0.72 + cloudDensity * 0.52;
+    const cloudRadiusScale = (clouds.userData.radiusScale as number | undefined) ?? 1.0;
+    const fullnessScale = (0.72 + cloudDensity * 0.52) * cloudScale * (1 + stormFactor * 0.16);
     for (const child of clouds.children) {
-      const ud = child.userData as { priority?: number; baseScale?: number; band?: number };
+      const ud = child.userData as {
+        priority?: number;
+        baseScale?: number;
+        band?: number;
+        baseY?: number;
+      };
       const priority = ud.priority ?? 0.5;
       const baseScale = ud.baseScale ?? 3.0;
       const band = ud.band ?? 0;
       const isVisible = band <= maxBand && priority < cloudDensity;
       child.visible = isVisible;
       if (isVisible) {
-        // Gently ramp in newly appearing clouds near the density threshold
         const edgeFade = THREE.MathUtils.clamp((cloudDensity - priority) / 0.14, 0.35, 1);
-        child.scale.setScalar(baseScale * fullnessScale * edgeFade);
+        const s = baseScale * fullnessScale * edgeFade;
+        child.scale.set(s, s * (1 + stormFactor * 0.24), s);
+        if (ud.baseY !== undefined) {
+          child.position.y = ud.baseY + cloudHeightOffset * cloudRadiusScale;
+        }
       }
     }
   }
@@ -929,6 +1139,38 @@ export function applyAtmosphereQualityToScene(scene: THREE.Scene, tier: TerrainQ
   }
 }
 
+let _sharedSoftCloudUnitGeo: THREE.BufferGeometry | null = null;
+function getSharedSoftCloudPuffGeometry(): THREE.BufferGeometry {
+  if (!_sharedSoftCloudUnitGeo) {
+    // High-resolution subdivided icosahedron (320 smooth faces) for silky soft-edged volumetric clouds
+    _sharedSoftCloudUnitGeo = new THREE.IcosahedronGeometry(1.0, 2);
+  }
+  return _sharedSoftCloudUnitGeo;
+}
+
+let _sharedStarSpriteTex: THREE.CanvasTexture | null = null;
+function getSharedStarSpriteTexture(): THREE.CanvasTexture | null {
+  if (typeof document === 'undefined') return null;
+  if (_sharedStarSpriteTex) return _sharedStarSpriteTex;
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
+    grad.addColorStop(0.0, 'rgba(255,255,255,1.0)');
+    grad.addColorStop(0.22, 'rgba(255,255,255,0.92)');
+    grad.addColorStop(0.55, 'rgba(220,235,255,0.28)');
+    grad.addColorStop(1.0, 'rgba(200,220,255,0.0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 64, 64);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  _sharedStarSpriteTex = tex;
+  return tex;
+}
+
 function createFacetedCloudMesh(mat: THREE.Material, variant = 0): THREE.Group {
   const cloud = new THREE.Group();
   const puffLayouts: [number, number, number, number, number, number, number][][] = [
@@ -958,36 +1200,126 @@ function createFacetedCloudMesh(mat: THREE.Material, variant = 0): THREE.Group {
     ],
   ];
 
+  const unitGeo = getSharedSoftCloudPuffGeometry();
   const layout = puffLayouts[Math.abs(variant) % puffLayouts.length];
   for (let i = 0; i < layout.length; i++) {
     const [px, py, pz, r, sx, sy, sz] = layout[i];
-    const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), mat);
+    const puff = new THREE.Mesh(unitGeo, mat);
     puff.position.set(px, py, pz);
-    puff.scale.set(sx, sy, sz);
+    puff.scale.set(r * sx, r * sy, r * sz);
     puff.rotation.set(((i * 0.7 + variant) % 1) * 0.45, (i * 1.1 + variant) % Math.PI, 0);
     cloud.add(puff);
   }
   return cloud;
 }
 
+const _lightningColor = new THREE.Color('#B8DCFF');
+
 export function updateSkyClouds(scene: THREE.Scene, elapsed: number, wind = 0.3) {
   syncBotwTime(elapsed, scene);
+  const cloudSpeedMult =
+    typeof scene.userData.__makerCloudSpeed === 'number'
+      ? (scene.userData.__makerCloudSpeed as number)
+      : 1.0;
+  const auroraSpeedMult =
+    typeof scene.userData.__makerAuroraSpeed === 'number'
+      ? (scene.userData.__makerAuroraSpeed as number)
+      : 0.85;
+  const heightOffset =
+    typeof scene.userData.__makerCloudHeightOffset === 'number'
+      ? (scene.userData.__makerCloudHeightOffset as number)
+      : 0;
+  const stormFactor =
+    typeof scene.userData.__makerStormFactor === 'number'
+      ? (scene.userData.__makerStormFactor as number)
+      : 0;
+  const stormLightning = Boolean(scene.userData.__makerStormLightning);
+  const starTwinkle =
+    typeof scene.userData.__makerStarTwinkle === 'number'
+      ? (scene.userData.__makerStarTwinkle as number)
+      : 0.85;
+
+  // Periodic soft internal cloud sheet-lightning pulse during storms
+  let flash = 0;
+  if (stormLightning && stormFactor > 0.15) {
+    const cycle = elapsed % 7.3;
+    if (cycle > 5.8 && cycle < 6.08) {
+      flash = Math.sin(((cycle - 5.8) / 0.28) * Math.PI) * 0.95;
+    } else if (cycle > 6.18 && cycle < 6.32) {
+      flash = Math.sin(((cycle - 6.18) / 0.14) * Math.PI) * 0.65;
+    }
+  }
+
   let skyDome = scene.userData.__makerSkyDome as THREE.Mesh | undefined;
   if (!skyDome) {
     skyDome = scene.getObjectByName('maker-skydome') as THREE.Mesh | undefined;
     if (skyDome) scene.userData.__makerSkyDome = skyDome;
   }
-  const skyU = skyDome?.userData?.skyUniforms as { uTime?: { value: number } } | undefined;
-  if (skyDome && skyDome.visible && skyU?.uTime) {
-    skyU.uTime.value = elapsed * (0.35 + wind * 0.9);
+  const skyU = skyDome?.userData?.skyUniforms as
+    | {
+        uTime?: { value: number };
+        uAuroraTime?: { value: number };
+        uLightningFlash?: { value: number };
+      }
+    | undefined;
+  if (skyDome && skyDome.visible && skyU) {
+    if (skyU.uTime) {
+      skyU.uTime.value = elapsed * (0.35 + wind * 0.9) * cloudSpeedMult;
+    }
+    if (skyU.uAuroraTime) {
+      skyU.uAuroraTime.value = elapsed * auroraSpeedMult;
+    }
+    if (skyU.uLightningFlash) {
+      skyU.uLightningFlash.value = flash;
+    }
   }
+
+  // Gentle organic starfield twinkle modulation
+  let stars = scene.userData.__makerStars as THREE.Points | undefined;
+  if (!stars) {
+    stars = scene.getObjectByName('maker-stars') as THREE.Points | undefined;
+    if (stars) scene.userData.__makerStars = stars;
+  }
+  if (stars && stars.visible && stars.material instanceof THREE.PointsMaterial) {
+    const baseOp = (stars.userData.baseOpacity as number | undefined) ?? stars.material.opacity;
+    if (starTwinkle > 0.01) {
+      const shimmer =
+        1.0 +
+        (Math.sin(elapsed * (2.6 + starTwinkle * 1.4)) * 0.14 +
+          Math.cos(elapsed * (4.3 + starTwinkle * 1.9)) * 0.08) *
+          Math.min(1.5, starTwinkle);
+      stars.material.opacity = THREE.MathUtils.clamp(baseOp * shimmer, 0, 1);
+    } else {
+      stars.material.opacity = baseOp;
+    }
+  }
+
   let clouds = scene.userData.__makerClouds as THREE.Group | undefined;
   if (!clouds) {
     clouds = scene.getObjectByName('maker-clouds') as THREE.Group | undefined;
     if (clouds) scene.userData.__makerClouds = clouds;
   }
   if (!clouds || !clouds.visible) return;
-  const speedBoost = 0.35 + wind * 1.15;
+
+  const cloudU = clouds.userData?.cloudUniforms as { uTime?: { value: number } } | undefined;
+  if (cloudU?.uTime) {
+    cloudU.uTime.value = elapsed * (0.4 + wind * 0.7) * Math.max(0.1, cloudSpeedMult);
+  }
+  const cloudMat = clouds.userData?.material as MeshStandardNodeMaterial | undefined;
+  if (cloudMat) {
+    const baseEmInt = (clouds.userData.baseEmissiveIntensity as number | undefined) ?? 0.14;
+    const baseEmCol = clouds.userData.baseEmissiveColor as THREE.Color | undefined;
+    if (flash > 0.02) {
+      cloudMat.emissive.copy(_lightningColor);
+      cloudMat.emissiveIntensity = baseEmInt + flash * 0.55 * stormFactor;
+    } else if (baseEmCol) {
+      cloudMat.emissive.copy(baseEmCol);
+      cloudMat.emissiveIntensity = baseEmInt;
+    }
+  }
+
+  const speedBoost = (0.35 + wind * 1.15) * cloudSpeedMult;
+  const cloudRadiusScale = (clouds.userData.radiusScale as number | undefined) ?? 1.0;
   for (const child of clouds.children) {
     if (!child.visible) continue;
     const ud = child.userData as {
@@ -1001,7 +1333,9 @@ export function updateSkyClouds(scene: THREE.Scene, elapsed: number, wind = 0.3)
     const ang = ud.baseAngle + elapsed * (ud.driftSpeed ?? 0.008) * speedBoost;
     child.position.set(
       Math.cos(ang) * ud.radius,
-      ud.baseY + Math.sin(elapsed * 0.45 + (ud.bobPhase ?? 0)) * 0.9,
+      ud.baseY +
+        heightOffset * cloudRadiusScale +
+        Math.sin(elapsed * 0.45 + (ud.bobPhase ?? 0)) * 0.9 * cloudRadiusScale,
       Math.sin(ang) * ud.radius
     );
     child.rotation.y = -ang + Math.PI * 0.5;
@@ -1034,9 +1368,11 @@ const skyHash21Tsl = Fn(([pIn]: [any]) => {
 });
 
 const skyValueNoiseTsl = Fn(([p]: [any]) => {
-  const i = floor(p);
-  const fRaw = fract(p);
-  const f = fRaw.mul(fRaw).mul(vec2(3.0).sub(fRaw.mul(2.0)));
+  const pv = vec2(p);
+  const i = floor(pv);
+  const fRaw = fract(pv);
+  // Quintic smoothstep for artifact-free high-res cloud gradients
+  const f = vec2(fRaw.mul(fRaw).mul(fRaw).mul(fRaw.mul(fRaw.mul(6.0).sub(15.0)).add(10.0)));
   const a = skyHash21Tsl(i);
   const b = skyHash21Tsl(i.add(vec2(1.0, 0.0)));
   const c = skyHash21Tsl(i.add(vec2(0.0, 1.0)));
@@ -1046,12 +1382,12 @@ const skyValueNoiseTsl = Fn(([p]: [any]) => {
 
 const skyFbmCloudTsl = Fn(([pIn]: [any]) => {
   const v = float(0.0).toVar();
-  const amp = float(0.52).toVar();
+  const amp = float(0.50).toVar();
   const p = vec2(pIn).toVar();
-  Loop(4, () => {
+  Loop(5, () => {
     v.addAssign(amp.mul(skyValueNoiseTsl(p)));
     const nextP = vec2(p.x.mul(0.8).sub(p.y.mul(0.6)), p.x.mul(0.6).add(p.y.mul(0.8)))
-      .mul(2.06)
+      .mul(2.04)
       .add(vec2(1.7, 9.2));
     p.assign(nextP);
     amp.mulAssign(0.48);
@@ -1059,17 +1395,39 @@ const skyFbmCloudTsl = Fn(([pIn]: [any]) => {
   return v;
 });
 
-export function ensureSkyDome(scene: THREE.Scene) {
+export function ensureSkyDome(scene: THREE.Scene, radiusScale = 1.0) {
+  const domeR = 2400 * radiusScale;
   if (!scene.userData.__makerSkyDome && !scene.getObjectByName('maker-skydome')) {
-    const skyGeo = new THREE.SphereGeometry(2400, 28, 18);
+    const skyGeo = new THREE.SphereGeometry(domeR, 48, 32);
     const uZenith = uniform(new THREE.Color('#34466E'));
     const uMidSky = uniform(new THREE.Color('#A66E64'));
     const uHorizon = uniform(new THREE.Color('#D88E5A'));
     const uSunDir = uniform(new THREE.Vector3(0.6, 0.28, 0.45).normalize());
     const uSunColor = uniform(new THREE.Color('#FFA95C'));
+    const uSunVisible = uniform(1.0);
+    const uSunSize = uniform(1.0);
+    const uSunGlow = uniform(1.0);
     const uWarmGlow = uniform(0.9);
+    const uMoonDir = uniform(new THREE.Vector3(-0.6, 0.45, -0.5).normalize());
+    const uMoonVis = uniform(0.0);
+    const uMoonPhase = uniform(0.62);
+    const uMoonSize = uniform(1.0);
+    const uMoonGlow = uniform(0.95);
+    const uMoonColor = uniform(new THREE.Color('#DDE8FF'));
+    const uAuroraIntensity = uniform(0.0);
+    const uAuroraTime = uniform(0.0);
+    const uAuroraHeight = uniform(0.34);
+    const uAuroraSpread = uniform(0.75);
+    const uAuroraColorA = uniform(new THREE.Color('#34D399'));
+    const uAuroraColorB = uniform(new THREE.Color('#8B5CF6'));
     const uCloudDensity = uniform(0.58);
+    const uCloudOpacity = uniform(0.88);
+    const uCloudSoftness = uniform(0.68);
+    const uCloudHeightNorm = uniform(0.25);
+    const uCloudScale = uniform(1.0);
     const uCloudColor = uniform(new THREE.Color('#F5EDE4'));
+    const uStormFactor = uniform(0.0);
+    const uLightningFlash = uniform(0.0);
     const uTime = uniform(0);
 
     const skyMat = new MeshBasicNodeMaterial({
@@ -1109,72 +1467,206 @@ export function ensureSkyDome(scene: THREE.Scene) {
       const rayleighTint = mix(uHorizon, uSunColor, float(0.28).add(uWarmGlow.mul(0.32)));
       col.assign(mix(col, rayleighTint, clamp(rayleighHorizonLift.mul(0.45), 0.0, 0.55)));
 
-      // Henyey-Greenstein phase function (g = 0.78) for realistic atmospheric solar aureole
       const g = float(0.78);
       const g2 = g.mul(g);
       const hgPhase = float(1.0)
         .sub(g2)
         .div(pow(max(0.04, float(1.0).add(g2).sub(g.mul(2.0).mul(cosTheta))), 1.5))
         .mul(0.0795);
-      const mieScatter = clamp(hgPhase, 0.0, 2.8).mul(float(0.12).add(uWarmGlow.mul(0.22)));
+      const mieScatter = clamp(hgPhase, 0.0, 2.8)
+        .mul(float(0.12).add(uWarmGlow.mul(0.22)))
+        .mul(uSunGlow);
 
       col.addAssign(
-        uSunColor.mul(horizonBand).mul(float(0.08).add(pow(sunAzimuth, 2.2).mul(0.22))).mul(uWarmGlow)
+        uSunColor
+          .mul(horizonBand)
+          .mul(float(0.08).add(pow(sunAzimuth, 2.2).mul(0.22)))
+          .mul(uWarmGlow)
       );
-      col.addAssign(uSunColor.mul(mieScatter));
-      col.addAssign(uSunColor.mul(pow(sunDot, 14.0)).mul(float(0.16).add(uWarmGlow.mul(0.16))));
-      col.addAssign(uSunColor.mul(pow(sunDot, 84.0)).mul(0.38));
-      col.addAssign(uSunColor.mul(pow(sunDot, 460.0)).mul(0.95));
+      col.addAssign(uSunColor.mul(mieScatter).mul(uSunVisible));
 
-      If(uCloudDensity.greaterThan(0.01).and(dir.y.greaterThan(0.008)), () => {
-        const skyUV = vec2(dir.x, dir.z).div(dir.y.add(0.16)).mul(1.42);
-        const drift = vec2(uTime.mul(0.024), uTime.mul(0.011));
-        const n1 = skyFbmCloudTsl(skyUV.add(drift));
-        const n2 = skyFbmCloudTsl(skyUV.mul(2.25).sub(drift.mul(1.38)));
-        const rawCloud = n1.mul(0.66).add(n2.mul(0.34)).toVar();
-        const sunOffset = vec2(sunDirN.x, sunDirN.z).mul(0.16);
-        const opticalThickness = float(0.45).toVar();
-
-        // Balanced & Ultra: multi-slice volumetric cumulus depth + Beer-Lambert sun marching
-        If(sharedAtmoU.uCloudDetailLevel.greaterThan(0.55), () => {
-          const shadowSample1 = skyFbmCloudTsl(skyUV.add(drift).add(sunOffset.mul(0.55)));
-          const shadowSample2 = skyFbmCloudTsl(skyUV.add(drift).add(sunOffset.mul(1.25)));
-          const wispDeck = skyFbmCloudTsl(skyUV.mul(1.35).add(drift.mul(1.55)).add(vec2(14.2, 6.7)));
-          rawCloud.assign(mix(rawCloud, max(rawCloud, wispDeck.mul(0.94)), 0.36));
-          opticalThickness.assign(
-            clamp(shadowSample1.mul(0.55).add(shadowSample2.mul(0.45)).sub(rawCloud.mul(0.35)), 0.0, 1.2)
-          );
-
-          // Ultra: high-altitude cirrus parallax deck for expansive open-world vistas
-          If(sharedAtmoU.uCloudDetailLevel.greaterThan(0.9), () => {
-            const upperDeck = skyFbmCloudTsl(
-              skyUV.mul(0.82).add(drift.mul(0.72)).sub(sunOffset.mul(1.35))
-            );
-            rawCloud.assign(max(rawCloud, upperDeck.mul(0.86)));
-          });
-        });
-
-        const threshold = mix(0.82, 0.27, uCloudDensity);
-        const cloudMask = smoothstep(threshold, threshold.add(0.24), rawCloud);
-        const horizonFade = smoothstep(0.008, 0.21, dir.y);
-        const alpha = cloudMask.mul(horizonFade).mul(float(0.32).add(uCloudDensity.mul(0.58)));
-
-        // Beer-Lambert + Beer-Powder volumetric cloud lighting (dark bottoms, bright sunlit crests)
-        const beer = exp(opticalThickness.mul(-2.25));
-        const powder = float(1.0).sub(exp(cloudMask.mul(-2.8)));
-        const litEnergy = clamp(beer.mul(float(0.45).add(powder.mul(0.75))).add(0.22), 0.14, 1.15);
-
-        const shadowCol = mix(uCloudColor.mul(0.56), uMidSky.mul(0.76), 0.42);
-        const bodyCloud = mix(shadowCol, uCloudColor.mul(1.08), clamp(litEnergy, 0.0, 1.0));
-        // Forward-scattered silver lining around sun-facing cloud edges
-        const silverRim = clamp(hgPhase.mul(0.42), 0.0, 1.15)
-          .mul(float(1.0).sub(cloudMask.mul(0.54)))
-          .mul(float(0.32).add(uWarmGlow.mul(0.35)));
-        const litCloud = mix(bodyCloud, uSunColor.mul(1.28), clamp(silverRim, 0.0, 0.88));
-        // Aerial perspective blend into horizon haze
-        const distBlend = mix(litCloud, uHorizon, float(1.0).sub(horizonFade).mul(0.52));
-        col.assign(mix(col, distBlend, clamp(alpha, 0.0, 0.9)));
+      // Controllable Sun Corona + Crisp/Soft Solar Disc
+      If(uSunVisible.greaterThan(0.01), () => {
+        const invSize = float(1.0).div(max(0.35, uSunSize));
+        col.addAssign(
+          uSunColor
+            .mul(pow(sunDot, float(14.0).mul(invSize)))
+            .mul(float(0.16).add(uWarmGlow.mul(0.16)))
+            .mul(uSunGlow)
+            .mul(uSunVisible)
+        );
+        col.addAssign(
+          uSunColor
+            .mul(pow(sunDot, float(82.0).mul(invSize)))
+            .mul(0.38)
+            .mul(uSunGlow)
+            .mul(uSunVisible)
+        );
+        const sunRadiusCos = cos(float(0.028).mul(uSunSize));
+        const sunCore = smoothstep(sunRadiusCos.sub(0.0025), sunRadiusCos.add(0.0008), sunDot);
+        col.addAssign(uSunColor.mul(sunCore.mul(1.35)).mul(uSunVisible));
       });
+
+      // Analytical 3D Phased Moon + Soft Lunar Corona
+      If(uMoonVis.greaterThan(0.01), () => {
+        const mDir = normalize(uMoonDir);
+        const mCos = dot(dir, mDir);
+        const mInvSize = float(1.0).div(max(0.4, uMoonSize));
+        const mHalo = pow(max(0.0, mCos), float(24.0).mul(mInvSize))
+          .mul(0.22)
+          .add(pow(max(0.0, mCos), float(120.0).mul(mInvSize)).mul(0.34))
+          .mul(uMoonGlow)
+          .mul(uMoonVis);
+        col.addAssign(uMoonColor.mul(mHalo));
+
+        const mRadius = float(0.036).mul(uMoonSize);
+        const upRef = select(abs(mDir.y).lessThan(0.95), vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0));
+        const mRight = normalize(cross(upRef, mDir));
+        const mUp = normalize(cross(mDir, mRight));
+        const offsetVec = dir.sub(mDir.mul(mCos));
+        const mx = dot(offsetVec, mRight).div(mRadius);
+        const my = dot(offsetVec, mUp).div(mRadius);
+        const r2 = mx.mul(mx).add(my.mul(my));
+
+        If(mCos.greaterThan(0.0).and(r2.lessThan(1.08)), () => {
+          const discMask = float(1.0).sub(smoothstep(0.86, 1.02, r2));
+          const nz = sqrt(max(0.0, float(1.0).sub(min(r2, 1.0))));
+          const sphereN = normalize(vec3(mx, my, nz));
+          const pAng = uMoonPhase.mul(6.2831853);
+          const phaseLight = normalize(vec3(sin(pAng), float(0.18), cos(pAng).negate()));
+          const litPhase = smoothstep(-0.08, 0.22, dot(sphereN, phaseLight));
+          const maria = skyFbmCloudTsl(vec2(mx, my).mul(2.3).add(vec2(3.1, 1.7)));
+          const surfaceShade = mix(0.74, 1.08, maria);
+          const moonRadiance = uMoonColor
+            .mul(surfaceShade)
+            .mul(mix(float(0.06), float(1.42), litPhase));
+          col.assign(mix(col, moonRadiance, discMask.mul(uMoonVis)));
+        });
+      });
+
+      // Animated Aurora Borealis Ribbons & Vertical Shimmering Curtains
+      If(uAuroraIntensity.greaterThan(0.005).and(dir.y.greaterThan(0.02)), () => {
+        const aUv = vec2(dir.x, dir.z).div(dir.y.add(0.36));
+        const tA = uAuroraTime;
+        const wave1 = sin(aUv.x.mul(1.85).add(tA.mul(0.45)))
+          .mul(0.34)
+          .add(cos(aUv.x.mul(3.4).sub(tA.mul(0.3))).mul(0.14));
+        const wave2 = cos(aUv.x.mul(1.4).sub(tA.mul(0.38)).add(1.7))
+          .mul(0.38)
+          .add(sin(aUv.x.mul(2.8).add(tA.mul(0.24))).mul(0.15));
+
+        const bandDist1 = abs(aUv.y.sub(wave1).add(0.42));
+        const bandDist2 = abs(aUv.y.sub(wave2).sub(0.35));
+        const ribbonWidth = float(0.22).add(uAuroraSpread.mul(0.32));
+        const rw2 = max(0.05, ribbonWidth.mul(ribbonWidth));
+        const ribbon1 = exp(bandDist1.mul(bandDist1).negate().div(rw2));
+        const ribbon2 = exp(bandDist2.mul(bandDist2).negate().div(rw2.mul(1.35)));
+
+        const rayNoise1 = skyFbmCloudTsl(
+          vec2(aUv.x.mul(4.5).add(tA.mul(0.28)), dir.y.mul(1.25).sub(tA.mul(0.16)))
+        );
+        const rayNoise2 = skyFbmCloudTsl(
+          vec2(aUv.x.mul(7.2).sub(tA.mul(0.36)), dir.y.mul(1.65).sub(tA.mul(0.22)))
+        );
+        const curtainRays = smoothstep(0.22, 0.84, rayNoise1.mul(0.62).add(rayNoise2.mul(0.38)));
+
+        const botEdge = max(0.04, uAuroraHeight.sub(0.14));
+        const topEdge = min(0.98, uAuroraHeight.add(uAuroraSpread.mul(0.48)));
+        const vertLower = smoothstep(botEdge, botEdge.add(0.14), dir.y);
+        const vertUpper = float(1.0).sub(smoothstep(uAuroraHeight.add(0.04), topEdge, dir.y));
+        const vertMask = vertLower.mul(vertUpper);
+
+        const auroraField = clamp(ribbon1.add(ribbon2.mul(0.75)), 0.0, 1.35)
+          .mul(float(0.35).add(curtainRays.mul(0.95)))
+          .mul(vertMask);
+
+        const colorT = clamp(dir.y.sub(botEdge).div(max(0.12, topEdge.sub(botEdge))), 0.0, 1.0);
+        const auroraCol = mix(uAuroraColorA, uAuroraColorB, pow(colorT, 0.85));
+        col.addAssign(auroraCol.mul(auroraField).mul(uAuroraIntensity).mul(0.95));
+      });
+
+      // High-Res Volumetric Sky Cloud Strata with Softness, Opacity, Height & Storm Thunderheads
+      If(
+        uCloudDensity.greaterThan(0.01).and(uCloudOpacity.greaterThan(0.01)).and(dir.y.greaterThan(0.008)),
+        () => {
+          const heightProj = mix(float(0.11), float(0.28), uCloudHeightNorm);
+          const uvScale = float(1.42).div(max(0.45, uCloudScale));
+          const skyUV = vec2(dir.x, dir.z).div(dir.y.add(heightProj)).mul(uvScale);
+          const drift = vec2(uTime.mul(0.024), uTime.mul(0.011));
+
+          // Domain warp for silky, organic high-res cloud edges
+          const warpN = skyValueNoiseTsl(skyUV.mul(1.6).add(drift.mul(0.8)));
+          const warpedUV = skyUV.add(vec2(warpN.sub(0.5), warpN.mul(0.7).sub(0.35)).mul(mix(0.18, 0.52, uCloudSoftness)));
+
+          const n1 = skyFbmCloudTsl(warpedUV.add(drift));
+          const n2 = skyFbmCloudTsl(warpedUV.mul(2.25).sub(drift.mul(1.38)));
+          const rawCloud = n1.mul(0.64).add(n2.mul(0.36)).toVar();
+          const sunOffset = vec2(sunDirN.x, sunDirN.z).mul(0.16);
+          const opticalThickness = float(0.45).toVar();
+
+          If(sharedAtmoU.uCloudDetailLevel.greaterThan(0.55), () => {
+            const shadowSample1 = skyFbmCloudTsl(warpedUV.add(drift).add(sunOffset.mul(0.55)));
+            const shadowSample2 = skyFbmCloudTsl(warpedUV.add(drift).add(sunOffset.mul(1.25)));
+            const wispDeck = skyFbmCloudTsl(
+              warpedUV.mul(1.35).add(drift.mul(1.55)).add(vec2(14.2, 6.7))
+            );
+            rawCloud.assign(mix(rawCloud, max(rawCloud, wispDeck.mul(0.94)), 0.38));
+            opticalThickness.assign(
+              clamp(
+                shadowSample1.mul(0.55).add(shadowSample2.mul(0.45)).sub(rawCloud.mul(0.35)),
+                0.0,
+                1.2
+              )
+            );
+
+            If(sharedAtmoU.uCloudDetailLevel.greaterThan(0.9), () => {
+              const upperDeck = skyFbmCloudTsl(
+                warpedUV.mul(0.82).add(drift.mul(0.72)).sub(sunOffset.mul(1.35))
+              );
+              rawCloud.assign(max(rawCloud, upperDeck.mul(0.86)));
+            });
+          });
+
+          const threshold = mix(0.82, 0.25, uCloudDensity);
+          const featherSpan = mix(0.08, 0.44, uCloudSoftness);
+          const cloudMask = smoothstep(threshold, threshold.add(featherSpan), rawCloud);
+          const horizonFade = smoothstep(0.008, 0.21, dir.y);
+          const alpha = cloudMask
+            .mul(horizonFade)
+            .mul(float(0.34).add(uCloudDensity.mul(0.58)))
+            .mul(uCloudOpacity);
+
+          const beer = exp(opticalThickness.mul(mix(-2.15, -3.45, uStormFactor)));
+          const powder = float(1.0).sub(exp(cloudMask.mul(-2.8)));
+          const litEnergy = clamp(beer.mul(float(0.45).add(powder.mul(0.75))).add(0.22), 0.12, 1.15);
+
+          const clearShadow = mix(uCloudColor.mul(0.56), uMidSky.mul(0.76), 0.42);
+          const stormShadow = vec3(0.11, 0.14, 0.21);
+          const shadowCol = mix(clearShadow, stormShadow, uStormFactor.mul(0.85));
+
+          const clearTop = uCloudColor.mul(1.08);
+          const stormTop = mix(uCloudColor.mul(0.68), vec3(0.36, 0.42, 0.52), 0.65);
+          const topCol = mix(clearTop, stormTop, uStormFactor.mul(0.78));
+
+          const bodyCloud = mix(shadowCol, topCol, clamp(litEnergy, 0.0, 1.0)).toVar();
+
+          // Internal storm sheet-lightning illumination inside thick thunderheads
+          If(uLightningFlash.greaterThan(0.01).and(uStormFactor.greaterThan(0.1)), () => {
+            const boltPocket = smoothstep(0.52, 0.86, rawCloud)
+              .mul(uLightningFlash)
+              .mul(uStormFactor);
+            bodyCloud.addAssign(vec3(0.76, 0.88, 1.0).mul(boltPocket).mul(1.7));
+          });
+
+          const silverRim = clamp(hgPhase.mul(0.42), 0.0, 1.15)
+            .mul(float(1.0).sub(cloudMask.mul(0.54)))
+            .mul(float(0.32).add(uWarmGlow.mul(0.35)))
+            .mul(float(1.0).sub(uStormFactor.mul(0.65)));
+          const litCloud = mix(bodyCloud, uSunColor.mul(1.28), clamp(silverRim, 0.0, 0.88));
+          const distBlend = mix(litCloud, uHorizon, float(1.0).sub(horizonFade).mul(0.52));
+          col.assign(mix(col, distBlend, clamp(alpha, 0.0, 0.94)));
+        }
+      );
 
       // Subtle anti-banding dither across smooth horizon gradients
       const dither = skyHash21Tsl(dir.xz.mul(1600.0)).sub(0.5).mul(0.0035);
@@ -1192,9 +1684,30 @@ export function ensureSkyDome(scene: THREE.Scene) {
       uHorizon,
       uSunDir,
       uSunColor,
+      uSunVisible,
+      uSunSize,
+      uSunGlow,
       uWarmGlow,
+      uMoonDir,
+      uMoonVis,
+      uMoonPhase,
+      uMoonSize,
+      uMoonGlow,
+      uMoonColor,
+      uAuroraIntensity,
+      uAuroraTime,
+      uAuroraHeight,
+      uAuroraSpread,
+      uAuroraColorA,
+      uAuroraColorB,
       uCloudDensity,
+      uCloudOpacity,
+      uCloudSoftness,
+      uCloudHeightNorm,
+      uCloudScale,
       uCloudColor,
+      uStormFactor,
+      uLightningFlash,
       uTime,
     };
     scene.userData.__makerSkyDome = dome;
@@ -1204,30 +1717,56 @@ export function ensureSkyDome(scene: THREE.Scene) {
   }
 
   if (!scene.userData.__makerStars && !scene.getObjectByName('maker-stars')) {
-    const count = 480;
+    const count = 1100;
     const pos = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const starPalette = [
+      new THREE.Color('#FFFFFF'),
+      new THREE.Color('#D6E8FF'),
+      new THREE.Color('#FFF2D6'),
+      new THREE.Color('#BFD9FF'),
+      new THREE.Color('#FFE0B8'),
+    ];
+    const starR = 2200 * radiusScale;
     for (let i = 0; i < count; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.random() * Math.PI * 0.45;
-      const r = 2200;
-      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = r * Math.cos(phi) + 8;
-      pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+      // Deterministic golden-angle + seeded height so stars spread evenly at any density drawRange
+      const seed = (i * 0.61803398875) % 1;
+      const seed2 = ((i * 0.75487766624 + 0.17) % 1);
+      const theta = seed * Math.PI * 2;
+      const phi = Math.acos(1 - seed2 * 0.92) * 0.52;
+      pos[i * 3] = starR * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = starR * Math.cos(phi) + 8 * radiusScale;
+      pos[i * 3 + 2] = starR * Math.sin(phi) * Math.sin(theta);
+
+      const c = starPalette[i % starPalette.length];
+      const bright = 0.68 + ((i * 0.381966) % 1) * 0.32;
+      colors[i * 3] = c.r * bright;
+      colors[i * 3 + 1] = c.g * bright;
+      colors[i * 3 + 2] = c.b * bright;
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const starTex = getSharedStarSpriteTexture();
+    const baseSize = 11.5 * radiusScale;
     const mat = new THREE.PointsMaterial({
       color: '#FFFFFF',
-      size: 3.5,
+      map: starTex ?? undefined,
+      vertexColors: true,
+      size: baseSize,
       transparent: true,
       opacity: 0,
       fog: false,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
     const stars = new THREE.Points(geo, mat);
     stars.name = 'maker-stars';
     stars.frustumCulled = false;
     stars.visible = false;
+    stars.userData.maxCount = count;
+    stars.userData.baseSize = baseSize;
+    stars.userData.baseOpacity = 0;
     scene.userData.__makerStars = stars;
     scene.add(stars);
   } else if (!scene.userData.__makerStars) {
@@ -1237,23 +1776,62 @@ export function ensureSkyDome(scene: THREE.Scene) {
   if (!scene.userData.__makerClouds && !scene.getObjectByName('maker-clouds')) {
     const cloudsGroup = new THREE.Group();
     cloudsGroup.name = 'maker-clouds';
+    const uSoftness = uniform(0.68);
+    const uOpacity = uniform(0.88);
+    const uStorm = uniform(0.0);
+    const uCloudTime = uniform(0.0);
+
     const cloudMat = new MeshStandardNodeMaterial({
       color: '#FFFFFF',
-      roughness: 0.92,
+      roughness: 0.94,
       metalness: 0.0,
-      flatShading: true,
+      flatShading: false,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.FrontSide,
     });
-    attachBotwPainterlyShader(cloudMat, { rimStrengthScale: 0.9, shadowLiftScale: 0.72 });
+    attachBotwPainterlyShader(cloudMat, { rimStrengthScale: 0.82, shadowLiftScale: 0.68 });
+
+    // Soft Fresnel + organic world-space wispy edge feathering for high-res fluffy/storm clouds
+    cloudMat.opacityNode = Fn(() => {
+      const viewDir = normalize(cameraPosition.sub(positionWorld).add(vec3(0.0001)));
+      const ndv = clamp(abs(dot(normalize(normalWorld), viewDir)), 0.0, 1.0);
+      const softPow = mix(float(0.18), float(2.35), uSoftness);
+      const edgeFeather = pow(ndv, softPow);
+      const wispNoise = skyValueNoiseTsl(
+        positionWorld.xz.mul(0.075).add(vec2(uCloudTime.mul(0.05), positionWorld.y.mul(0.06)))
+      );
+      const wispyMask = mix(
+        float(1.0),
+        smoothstep(0.12, 0.84, wispNoise.mul(0.55).add(ndv.mul(0.68))),
+        uSoftness.mul(0.85)
+      );
+      const stormThickness = mix(float(1.0), float(1.18), uStorm);
+      return clamp(edgeFeather.mul(wispyMask).mul(uOpacity).mul(stormThickness), 0.0, 0.98);
+    })();
+
     cloudsGroup.userData.material = cloudMat;
+    cloudsGroup.userData.radiusScale = radiusScale;
+    cloudsGroup.userData.cloudUniforms = {
+      uSoftness,
+      uOpacity,
+      uStorm,
+      uTime: uCloudTime,
+    };
 
     const totalClouds = 48;
     for (let i = 0; i < totalClouds; i++) {
       const baseAngle = (i / totalClouds) * Math.PI * 2 + (i % 3) * 0.11;
       const band = i % 3;
-      const radius = band === 0 ? 130 + (i % 5) * 18 : band === 1 ? 228 + (i % 7) * 16 : 330 + (i % 5) * 18;
-      const baseY = band === 0 ? 48 + (i % 4) * 7 : band === 1 ? 64 + (i % 5) * 7 : 78 + (i % 4) * 8;
-      const baseScale = band === 0 ? 2.4 + (i % 3) * 0.6 : band === 1 ? 3.3 + (i % 3) * 0.8 : 4.2 + (i % 4) * 0.75;
-      // Golden-ratio priority spreads emerging clouds evenly around 360° as cloudDensity rises
+      const radius =
+        (band === 0 ? 130 + (i % 5) * 18 : band === 1 ? 228 + (i % 7) * 16 : 330 + (i % 5) * 18) *
+        radiusScale;
+      const baseY =
+        (band === 0 ? 48 + (i % 4) * 7 : band === 1 ? 64 + (i % 5) * 7 : 78 + (i % 4) * 8) *
+        radiusScale;
+      const baseScale =
+        (band === 0 ? 2.4 + (i % 3) * 0.6 : band === 1 ? 3.3 + (i % 3) * 0.8 : 4.2 + (i % 4) * 0.75) *
+        radiusScale;
       const priority = (i * 0.61803398875) % 1;
 
       const cloud = createFacetedCloudMesh(cloudMat, i);
@@ -6667,6 +7245,7 @@ function createScatterBuildPlan(
   const stylizedCanopyTrees: { item: ScatterItem; y: number; config: NonNullable<GameLevel['canopyEngine']> }[] = [];
   const rocks: ScatterItem[] = [];
   const flowers: ScatterItem[] = [];
+  const botanicalItems: ScatterItem[] = [];
   const bushes: ScatterItem[] = [];
   const berryBushes: ScatterItem[] = [];
   const ferns: ScatterItem[] = [];
@@ -6716,7 +7295,9 @@ function createScatterBuildPlan(
     }
     const { y } = groundAt(item.x, item.z);
     const minY =
-      item.kind === 'reed' || item.kind === 'cattail' || item.kind === 'rock'
+      item.kind === 'rock' && item.rockClass === 'pebble'
+        ? IslandTerrain.waterLevel - 1.38
+        : item.kind === 'reed' || item.kind === 'cattail' || item.kind === 'rock'
         ? IslandTerrain.waterLevel - 0.85
         : IslandTerrain.waterLevel + 0.15;
     if (y < minY) continue;
@@ -6777,7 +7358,15 @@ function createScatterBuildPlan(
         birches.push(item);
       }
     } else if (item.kind === 'rock') rocks.push(item);
-    else if (item.kind === 'flower') flowers.push(item);
+    else if (item.kind === 'flower') {
+      if (item.botanicalPresetId || item.customAssetId) {
+        botanicalItems.push(item);
+      } else {
+        flowers.push(item);
+      }
+    } else if (item.kind === 'plant') {
+      botanicalItems.push(item);
+    }
     else if (item.kind === 'bush') bushes.push(item);
     else if (item.kind === 'berryBush') berryBushes.push(item);
     else if (item.kind === 'fern') ferns.push(item);
@@ -7468,83 +8057,208 @@ function createScatterBuildPlan(
     });
   }
 
-  // 7. CHISELED FACETED BOULDERS & CLIFF STONES (BatchedMesh + EON matte diffuseRoughness)
+  // 7. CHISELED FACETED BOULDERS, INTERACTIVE STONES & PEBBLES (BatchedMesh + procedural noise/patterns)
   if (rocks.length > 0) {
     batchSteps.push({
       label: 'rocks',
       run: () => {
-    const rockGeoRaw = createFacetedRockGeometry(0.74, 1.24, 0.78, 1.06, 7);
-    rockGeoRaw.translate(0, 0.16, 0);
-    const rockNonIdx = rockGeoRaw.index ? rockGeoRaw.toNonIndexed() : rockGeoRaw;
-    if (rockNonIdx !== rockGeoRaw) rockGeoRaw.dispose();
-    rockNonIdx.computeVertexNormals();
+    const legacyRocks: ScatterItem[] = [];
+    const styledBuckets = new Map<
+      string,
+      {
+        shape: Exclude<RockShapeKind, 'mixed'>;
+        pattern: RockPatternKind;
+        primaryHex: string;
+        secondaryHex: string;
+        noise: number;
+        shapeVar: number;
+        items: ScatterItem[];
+      }
+    >();
 
-    const sideRockRaw = createFacetedRockGeometry(0.46, 0.92, 1.12, 0.88, 19);
-    sideRockRaw.translate(0.55, 0.12, 0.26);
-    const sideNonIdx = sideRockRaw.index ? sideRockRaw.toNonIndexed() : sideRockRaw;
-    if (sideNonIdx !== sideRockRaw) sideRockRaw.dispose();
-    sideNonIdx.computeVertexNormals();
+    for (const item of rocks) {
+      if (!item.rockShape && !item.rockPattern && !item.rockPrimaryColor && !item.rockClass) {
+        legacyRocks.push(item);
+        continue;
+      }
+      const shape: Exclude<RockShapeKind, 'mixed'> = item.rockShape ?? 'crag';
+      const pattern: RockPatternKind = item.rockPattern ?? 'speckled';
+      const primaryHex = item.rockPrimaryColor ?? item.rockColorHex ?? '#7A828C';
+      const secondaryHex = item.rockSecondaryColor ?? primaryHex;
+      const noise = typeof item.rockPatternNoise === 'number' ? item.rockPatternNoise : 0.5;
+      const shapeVar =
+        typeof item.rockShapeVariation === 'number' ? item.rockShapeVariation : 0.5;
+      const noiseQ = Math.round(noise * 5);
+      const varQ = Math.round(shapeVar * 4);
+      const key = `${shape}|${pattern}|${primaryHex.toLowerCase()}|${secondaryHex.toLowerCase()}|${noiseQ}|${varQ}`;
+      let bucket = styledBuckets.get(key);
+      if (!bucket) {
+        bucket = {
+          shape,
+          pattern,
+          primaryHex,
+          secondaryHex,
+          noise,
+          shapeVar,
+          items: [],
+        };
+        styledBuckets.set(key, bucket);
+      }
+      bucket.items.push(item);
+    }
 
-    const rockMat = makeBatchMat({
-      color: '#FFFFFF',
-      roughness: 0.86,
-      diffuseRoughness: 0.92,
-      slot: 'rocks',
-      preserveFlatShading: false,
-    });
-    const rockTintW = slotTintWeight('rocks', 0.12);
-    const entries: BatchInstanceSpec[] = [];
-    const rockMeta: { id: string; x: number; y: number; z: number; size: number; start: number; count: number }[] = [];
+    if (legacyRocks.length > 0) {
+      const rockGeoRaw = createFacetedRockGeometry(0.74, 1.24, 0.78, 1.06, 7);
+      rockGeoRaw.translate(0, 0.16, 0);
+      const rockNonIdx = rockGeoRaw.index ? rockGeoRaw.toNonIndexed() : rockGeoRaw;
+      if (rockNonIdx !== rockGeoRaw) rockGeoRaw.dispose();
+      rockNonIdx.computeVertexNormals();
 
-    rocks.forEach((item, i) => {
-      const { y } = groundAt(item.x, item.z, 0.45 * item.size);
-      dummy.position.set(item.x, y, item.z);
-      dummy.rotation.set(0, item.rotation, 0);
-      dummy.scale.setScalar(item.size);
-      dummy.updateMatrix();
-      const mat4 = dummy.matrix.clone();
-      const tone = 0.54 + (i % 4) * 0.055;
-      const start = entries.length;
-      entries.push({
-        geoIndex: 0,
-        matrix: mat4,
-        color: blendInstColor(col.setRGB(tone, tone + 0.03, tone + 0.08), rockTintW),
+      const sideRockRaw = createFacetedRockGeometry(0.46, 0.92, 1.12, 0.88, 19);
+      sideRockRaw.translate(0.55, 0.12, 0.26);
+      const sideNonIdx = sideRockRaw.index ? sideRockRaw.toNonIndexed() : sideRockRaw;
+      if (sideNonIdx !== sideRockRaw) sideRockRaw.dispose();
+      sideNonIdx.computeVertexNormals();
+
+      const rockMat = makeBatchMat({
+        color: '#FFFFFF',
+        roughness: 0.86,
+        diffuseRoughness: 0.92,
+        slot: 'rocks',
+        preserveFlatShading: false,
       });
-      if (i % 2 === 0) {
+      const rockTintW = slotTintWeight('rocks', 0.12);
+      const entries: BatchInstanceSpec[] = [];
+      const rockMeta: { id: string; x: number; y: number; z: number; size: number; start: number; count: number }[] = [];
+
+      legacyRocks.forEach((item, i) => {
+        const { y } = groundAt(item.x, item.z, 0.45 * item.size);
+        dummy.position.set(item.x, y, item.z);
+        dummy.rotation.set(0, item.rotation, 0);
+        dummy.scale.setScalar(item.size);
+        dummy.updateMatrix();
+        const mat4 = dummy.matrix.clone();
+        const tone = 0.54 + (i % 4) * 0.055;
+        const start = entries.length;
         entries.push({
-          geoIndex: 1,
+          geoIndex: 0,
           matrix: mat4,
-          color: blendInstColor(col.setRGB(tone - 0.04, tone, tone + 0.05), rockTintW),
+          color: blendInstColor(col.setRGB(tone, tone + 0.03, tone + 0.08), rockTintW),
+        });
+        if (i % 2 === 0) {
+          entries.push({
+            geoIndex: 1,
+            matrix: mat4,
+            color: blendInstColor(col.setRGB(tone - 0.04, tone, tone + 0.05), rockTintW),
+          });
+        }
+        rockMeta.push({ id: item.id, x: item.x, y, z: item.z, size: item.size, start, count: entries.length - start });
+      });
+
+      const rockBatch = buildBatchedGeometryInstances({
+        geometries: [
+          normalizeGeometryForBatch(rockNonIdx, 0, 0),
+          normalizeGeometryForBatch(sideNonIdx, 0, 0),
+        ],
+        material: rockMat,
+        entries,
+        castShadow: true,
+        receiveShadow: true,
+      });
+      addBatchMeshes(rockBatch.batchedMesh);
+      for (const rm of rockMeta) {
+        const batchedEntries: BatchEntryRef[] = [];
+        for (let k = 0; k < rm.count; k++) {
+          batchedEntries.push(rockBatch.entryRefs[rm.start + k]);
+        }
+        harvestableScatter.push({
+          id: rm.id,
+          scatterKind: 'rock',
+          rockClass: inferRockSizeClass(undefined, rm.size),
+          x: rm.x,
+          y: rm.y,
+          z: rm.z,
+          size: rm.size,
+          collected: false,
+          batchedEntries,
         });
       }
-      rockMeta.push({ id: item.id, x: item.x, y, z: item.z, size: item.size, start, count: entries.length - start });
-    });
+    }
 
-    const rockBatch = buildBatchedGeometryInstances({
-      geometries: [
-        normalizeGeometryForBatch(rockNonIdx, 0, 0),
-        normalizeGeometryForBatch(sideNonIdx, 0, 0),
-      ],
-      material: rockMat,
-      entries,
-      castShadow: true,
-      receiveShadow: true,
-    });
-    addBatchMeshes(rockBatch.batchedMesh);
-    for (const rm of rockMeta) {
-      const batchedEntries: BatchEntryRef[] = [];
-      for (let k = 0; k < rm.count; k++) {
-        batchedEntries.push(rockBatch.entryRefs[rm.start + k]);
-      }
-      harvestableScatter.push({
-        id: rm.id,
-        scatterKind: 'rock',
-        x: rm.x,
-        y: rm.y,
-        z: rm.z,
-        size: rm.size,
-        collected: false,
-        batchedEntries,
+    for (const bucket of styledBuckets.values()) {
+      const geoA = buildSculptedRockGeometry(bucket.shape, bucket.shapeVar, 17, 0.72, true);
+      const geoB = buildSculptedRockGeometry(bucket.shape, bucket.shapeVar, 43, 0.7, true);
+      const patternTex = getOrCreateRockPatternTexture(
+        bucket.pattern,
+        bucket.primaryHex,
+        bucket.secondaryHex,
+        bucket.noise
+      );
+      const bucketMat = makeBatchMat({
+        color: '#FFFFFF',
+        roughness: bucket.shape === 'cobble' ? 0.66 : 0.88,
+        diffuseRoughness: 0.9,
+        map: patternTex,
+        slot: 'rocks',
+        preserveFlatShading: false,
+      });
+      const rockTintW = slotTintWeight('rocks', 0.14);
+      const entries: BatchInstanceSpec[] = [];
+      const bMeta: {
+        id: string;
+        rockClass: RockSizeClass;
+        x: number;
+        y: number;
+        z: number;
+        size: number;
+      }[] = [];
+
+      bucket.items.forEach((item, idx) => {
+        const rc = inferRockSizeClass(item.rockClass, item.size);
+        const footprint = rc === 'pebble' ? 0.08 : 0.35 * item.size;
+        const { y } = groundAt(item.x, item.z, footprint);
+        dummy.position.set(item.x, y, item.z);
+        dummy.rotation.set(0, item.rotation, 0);
+        dummy.scale.setScalar(item.size);
+        dummy.updateMatrix();
+        entries.push({
+          geoIndex: idx % 2,
+          matrix: dummy.matrix.clone(),
+          color: blendInstColor(col.set('#FFFFFF'), rockTintW),
+        });
+        bMeta.push({
+          id: item.id,
+          rockClass: rc,
+          x: item.x,
+          y,
+          z: item.z,
+          size: item.size,
+        });
+      });
+
+      const styledBatch = buildBatchedGeometryInstances({
+        geometries: [
+          normalizeGeometryForBatch(geoA, 0, 0),
+          normalizeGeometryForBatch(geoB, 0, 0),
+        ],
+        material: bucketMat,
+        entries,
+        castShadow: bucket.items.some((i) => i.rockClass !== 'pebble'),
+        receiveShadow: true,
+      });
+      addBatchMeshes(styledBatch.batchedMesh);
+      bMeta.forEach((rm, idx) => {
+        harvestableScatter.push({
+          id: rm.id,
+          scatterKind: 'rock',
+          rockClass: rm.rockClass,
+          x: rm.x,
+          y: rm.y,
+          z: rm.z,
+          size: rm.size,
+          collected: false,
+          batchedEntries: [styledBatch.entryRefs[idx]],
+        });
       });
     }
       },
@@ -7997,6 +8711,79 @@ function createScatterBuildPlan(
       });
       addBatchMeshes(padBatch.batchedMesh);
     }
+      },
+    });
+  }
+
+  // 9b. PREMADE & FLOWER/PLANT-MAKER SCATTER INSTANCES
+  if (botanicalItems.length > 0) {
+    batchSteps.push({
+      label: 'botanicalScatter',
+      run: () => {
+        const protoCache = new Map<string, THREE.Group>();
+        const sharedBotanicalMats = new Set<THREE.Material>();
+
+        for (const item of botanicalItems) {
+          const cacheKey = item.customAssetId
+            ? `asset:${item.customAssetId}`
+            : item.botanicalPresetId ?? '';
+          if (!cacheKey) continue;
+
+          let proto = protoCache.get(cacheKey);
+          if (!proto) {
+            if (item.customAssetId) {
+              const meta = customAssets.find((a) => a.id === item.customAssetId);
+              if (meta?.objectRecipe && meta.objectRecipe.parts.length > 0) {
+                const built = buildObjectMakerSceneGroup(meta.objectRecipe);
+                proto = built.root;
+                applyBotwStyleToObject(proto, style, {
+                  rimStrengthScale: 0.78,
+                  shadowLiftScale: 0.85,
+                });
+                protoCache.set(cacheKey, proto);
+              } else {
+                customItems.push(item);
+                continue;
+              }
+            } else if (item.botanicalPresetId) {
+              const doc = buildBotanicalPresetDocByKey(item.botanicalPresetId);
+              if (!doc) continue;
+              const built = buildObjectMakerSceneGroup(doc);
+              proto = built.root;
+              applyBotwStyleToObject(proto, style, {
+                rimStrengthScale: 0.78,
+                shadowLiftScale: 0.85,
+              });
+              protoCache.set(cacheKey, proto);
+            }
+          }
+
+          if (!proto) continue;
+          const clone = proto.clone(true);
+          clone.traverse((ch) => {
+            const m = (ch as THREE.Mesh).material;
+            if (m && !Array.isArray(m)) sharedBotanicalMats.add(m);
+          });
+          const { y } = groundAt(item.x, item.z, 0.25 * item.size);
+          clone.position.set(item.x, y, item.z);
+          clone.rotation.set(0, item.rotation, 0);
+          clone.scale.setScalar(item.size);
+          _customScatterGroups.add(clone);
+
+          harvestableScatter.push({
+            id: item.id,
+            scatterKind: item.kind === 'plant' ? 'broadleaf' : 'flower',
+            x: item.x,
+            y,
+            z: item.z,
+            size: item.size,
+            collected: false,
+            hp: item.kind === 'plant' ? 2 : 1,
+            maxHp: item.kind === 'plant' ? 2 : 1,
+            batchedEntries: [],
+            group: clone,
+          });
+        }
       },
     });
   }
@@ -8626,9 +9413,10 @@ export function buildWeatherParticles(weather: GameLevel['weather']): THREE.Poin
   const atlas = getTerrainTextureAtlas();
   const isFireflies = weather === 'fireflies';
   const isLeaves = weather === 'leaves';
-  const isRain = weather === 'rain';
+  const isStorm = weather === 'storm';
+  const isRain = weather === 'rain' || isStorm;
 
-  const count = isRain ? 420 : isFireflies ? 140 : isLeaves ? 160 : 280;
+  const count = isStorm ? 640 : isRain ? 420 : isFireflies ? 140 : isLeaves ? 160 : 280;
   const spread = 120;
   const positions = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
@@ -8641,7 +9429,9 @@ export function buildWeatherParticles(weather: GameLevel['weather']): THREE.Poin
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
   const mat = new THREE.PointsMaterial({
-    color: isRain
+    color: isStorm
+      ? '#9CC8E8'
+      : isRain
       ? '#BAE6FD'
       : isFireflies
       ? '#FFE77A'
@@ -8649,9 +9439,9 @@ export function buildWeatherParticles(weather: GameLevel['weather']): THREE.Poin
       ? '#F59E0B'
       : '#FFFFFF',
     map: isFireflies ? atlas.glowSprite : null,
-    size: isRain ? 0.24 : isFireflies ? 0.72 : isLeaves ? 0.48 : 0.4,
+    size: isStorm ? 0.28 : isRain ? 0.24 : isFireflies ? 0.72 : isLeaves ? 0.48 : 0.4,
     transparent: true,
-    opacity: isRain ? 0.6 : isFireflies ? 0.92 : 0.85,
+    opacity: isStorm ? 0.74 : isRain ? 0.6 : isFireflies ? 0.92 : 0.85,
     blending: isFireflies ? THREE.AdditiveBlending : THREE.NormalBlending,
     depthWrite: false,
   });

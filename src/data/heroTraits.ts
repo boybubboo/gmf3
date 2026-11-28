@@ -536,7 +536,7 @@ export function evaluateHeroEnvironmentModifiers(
   if (envType === 'dungeon' || level.biome === 'cave' || isInsideCave) {
     envRatings.push(profile.environments.underground);
   }
-  if (level.weather === 'rain' || level.wind >= 0.75) {
+  if (level.weather === 'rain' || level.weather === 'storm' || level.wind >= 0.75) {
     envRatings.push(profile.environments.stormAndRain);
   }
   if (level.biome === 'night' || liveHour < 5.5 || liveHour > 19.5) {

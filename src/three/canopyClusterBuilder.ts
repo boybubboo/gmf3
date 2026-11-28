@@ -143,6 +143,7 @@ export function computeWeatherWindFactor(
 ): number {
   const w = THREE.MathUtils.clamp(wind ?? 0.5, 0, 2.5);
   const base = 0.32 + w * 1.15;
+  if (weather === 'storm') return base * 2.85;
   if (weather === 'rain') return base * 2.15;
   if (weather === 'leaves') return base * 1.85;
   if (weather === 'snow') return base * 1.32;

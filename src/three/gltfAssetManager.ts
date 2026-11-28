@@ -14,6 +14,7 @@ import type {
   CustomClipSlot,
   CustomMotionPreset,
   CustomRigSettings,
+  FlowerMakerRecipe,
   ObjectInteractionAttributeId,
   ObjectInteractionCalibration,
   ObjectMakerDoc,
@@ -178,6 +179,12 @@ export function autoMapAnimationClips(
 
 function computeNormalizedBounds(root: THREE.Object3D, category: AssetCategory) {
   root.updateMatrixWorld(true);
+  root.traverse((obj) => {
+    const sk = obj as THREE.SkinnedMesh;
+    if (sk.isSkinnedMesh && sk.skeleton) {
+      sk.skeleton.update();
+    }
+  });
   const box = new THREE.Box3().setFromObject(root);
   if (box.isEmpty()) {
     return { baseScale: 1, baseGroundOffset: 0 };
@@ -603,6 +610,8 @@ export async function registerGeneratedGlbAsset(opts: {
   keepMetricScale?: boolean;
   attachBodyPart?: ObjectAttachBodyPart | null;
   linkedInventoryItemId?: string | null;
+  plantSubKind?: 'plant' | 'flower';
+  flowerRecipe?: FlowerMakerRecipe;
 }): Promise<{ meta: CustomAssetMeta; buffer: ArrayBuffer }> {
   const gltf = await loader.parseAsync(opts.buffer, '');
   const cached = prepareGLTFScene(gltf, opts.category);
@@ -677,6 +686,8 @@ export async function registerGeneratedGlbAsset(opts: {
       : opts.existingMeta?.defaultScale ?? Number(cached.baseScale.toFixed(3)),
     animSpeed: opts.existingMeta?.animSpeed ?? 1,
     thumbnailDataUrl: thumbnailDataUrl ?? opts.existingMeta?.thumbnailDataUrl,
+    plantSubKind: opts.plantSubKind ?? opts.existingMeta?.plantSubKind,
+    flowerRecipe: opts.flowerRecipe ?? opts.existingMeta?.flowerRecipe,
     createdAt: opts.existingMeta?.createdAt ?? new Date().toISOString(),
   };
 
@@ -768,6 +779,12 @@ export function instantiateCustomModel(
 
   // Center horizontally around X/Z origin so rotation pivots cleanly
   clone.updateMatrixWorld(true);
+  clone.traverse((obj) => {
+    const sk = obj as THREE.SkinnedMesh;
+    if (sk.isSkinnedMesh && sk.skeleton) {
+      sk.skeleton.update();
+    }
+  });
   const rawBox = new THREE.Box3().setFromObject(clone);
   const rawCenter = new THREE.Vector3();
   rawBox.getCenter(rawCenter);

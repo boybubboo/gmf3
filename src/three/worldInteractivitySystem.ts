@@ -1,5 +1,15 @@
 import * as THREE from 'three';
-import type { GameLevel } from '../types/maker';
+import type {
+  GameLevel,
+  RockPatternKind,
+  RockShapeKind,
+  ScatterItem,
+} from '../types/maker';
+import {
+  buildSculptedRockGeometry,
+  getOrCreateRockPatternTexture,
+  inferRockSizeClass,
+} from './rockBuilder';
 import {
   getEnvironmentType,
   getTerrainRadius,
@@ -13,6 +23,7 @@ export type CarryRockKind = 'rock' | 'boulder';
 
 export interface PickupRockItem {
   id: string;
+  scatterId?: string;
   kind: CarryRockKind;
   mesh: THREE.Mesh;
   x: number;
@@ -583,37 +594,131 @@ export class WorldInteractivitySystem {
       });
     };
 
+    // 0. Spawn styled pickupable boulders (2-handed) & field rocks (1-handed) painted onto terrain
+    const concreteShapes: Exclude<RockShapeKind, 'mixed'>[] = [
+      'crag',
+      'cobble',
+      'slab',
+      'blocky',
+    ];
+    const styledGeoCache = new Map<string, THREE.BufferGeometry>();
+    const styledMatCache = new Map<string, THREE.MeshStandardMaterial>();
+    let scatteredSmallCount = 0;
+    let scatteredBoulderCount = 0;
+    const terrainScatter: ScatterItem[] = level.terrain?.scatter ?? [];
+
+    for (let si = 0; si < terrainScatter.length; si++) {
+      const item = terrainScatter[si];
+      if (item.kind !== 'rock') continue;
+      const rc = inferRockSizeClass(item.rockClass, item.size);
+      // Large boulders are sit-only & pebbles are tiny decorative detail; only boulder/rock are pickupable!
+      if (rc !== 'rock' && rc !== 'boulder') continue;
+      if (scatteredSmallCount + scatteredBoulderCount >= 96) break;
+
+      const shape: Exclude<RockShapeKind, 'mixed'> =
+        item.rockShape ?? concreteShapes[si % concreteShapes.length];
+      const shapeVar = item.rockShapeVariation ?? 0.5;
+      const geoKey = `${shape}|${Math.round(shapeVar * 10)}|${si % 3}`;
+      let geo = styledGeoCache.get(geoKey);
+      if (!geo) {
+        geo = buildSculptedRockGeometry(shape, shapeVar, 17 + (si % 3) * 29, 0.72, false);
+        // Center vertically so pickup rotation & ground offset match carried/thrown physics
+        geo.center();
+        geo.computeBoundingSphere();
+        this.ownedGeos.push(geo);
+        styledGeoCache.set(geoKey, geo);
+      }
+
+      const pattern: RockPatternKind = item.rockPattern ?? 'speckled';
+      const primaryHex = item.rockPrimaryColor ?? item.rockColorHex ?? '#7A828C';
+      const secondaryHex = item.rockSecondaryColor ?? primaryHex;
+      const noise = item.rockPatternNoise ?? 0.55;
+      const matKey = `${pattern}|${primaryHex}|${secondaryHex}|${Math.round(noise * 10)}|${shape}`;
+      let mat = styledMatCache.get(matKey);
+      if (!mat) {
+        const tex = getOrCreateRockPatternTexture(pattern, primaryHex, secondaryHex, noise);
+        mat = new THREE.MeshStandardMaterial({
+          color: '#FFFFFF',
+          map: tex,
+          roughness: shape === 'cobble' ? 0.68 : 0.88,
+          metalness: 0.04,
+        });
+        this.ownedMats.push(mat);
+        styledMatCache.set(matKey, mat);
+      }
+
+      const mesh = new THREE.Mesh(geo, mat);
+      const scale = Math.max(0.18, item.size);
+      mesh.scale.setScalar(scale);
+      const radius = Math.max(0.18, 0.52 * scale);
+      const gy = sampleLevelHeight(level, item.x, item.z);
+      mesh.position.set(item.x, gy + radius * 0.58, item.z);
+      mesh.rotation.set(0, item.rotation ?? 0, 0);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+
+      const carryKind: CarryRockKind = rc === 'boulder' ? 'boulder' : 'rock';
+      this.rocks.push({
+        id: `${carryKind}_scatter_${item.id}`,
+        scatterId: item.id,
+        kind: carryKind,
+        mesh,
+        x: item.x,
+        y: gy + radius * 0.58,
+        z: item.z,
+        radius,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        spinX: 0,
+        spinZ: 0,
+        state: 'ground',
+        bounces: 0,
+        throwGrace: 0,
+      });
+      if (carryKind === 'boulder') scatteredBoulderCount++;
+      else scatteredSmallCount++;
+    }
+
     // Place 2 friendly starter rocks & 1 starter carry-boulder reasonably near hero spawn so player sees them immediately!
     const nearAngles = [0.6, 2.35, -1.45, 3.9, 5.1];
     let nearSmall = 0;
     let nearBoulder = 0;
-    for (let k = 0; k < nearAngles.length; k++) {
-      const ang = nearAngles[k];
-      const d = 4.6 + (k % 3) * 2.2;
-      const cx = heroStartX + Math.cos(ang) * d;
-      const cz = heroStartZ + Math.sin(ang) * d;
-      if (nearSmall < 2 && isSpotClean(cx, cz, 0.45)) {
-        spawnRock('rock', cx, cz, this.rocks.length);
-        nearSmall++;
-      } else if (nearBoulder < 1 && isSpotClean(cx, cz, 0.72)) {
-        spawnRock('boulder', cx, cz, this.rocks.length);
-        nearBoulder++;
+    if (scatteredSmallCount < 2 || scatteredBoulderCount < 1) {
+      for (let k = 0; k < nearAngles.length; k++) {
+        const ang = nearAngles[k];
+        const d = 4.6 + (k % 3) * 2.2;
+        const cx = heroStartX + Math.cos(ang) * d;
+        const cz = heroStartZ + Math.sin(ang) * d;
+        if (scatteredSmallCount + nearSmall < 2 && isSpotClean(cx, cz, 0.45)) {
+          spawnRock('rock', cx, cz, this.rocks.length);
+          nearSmall++;
+        } else if (scatteredBoulderCount + nearBoulder < 1 && isSpotClean(cx, cz, 0.72)) {
+          spawnRock('boulder', cx, cz, this.rocks.length);
+          nearBoulder++;
+        }
       }
     }
 
-    // Scatter organic rocks (22 small one-handed + 10 two-handed boulders) naturally across the island/dungeon
-    const targetSmall = env === 'dungeon' ? 8 : 22;
-    const targetBoulders = env === 'dungeon' ? 4 : 10;
-    let smallCount = nearSmall;
-    let boulderCount = nearBoulder;
+    // Scatter procedural fallback rocks only if terrain scatter has few pickupable rocks/boulders
+    const targetSmall = env === 'dungeon' ? 8 : Math.max(scatteredSmallCount, 20);
+    const targetBoulders = env === 'dungeon' ? 4 : Math.max(scatteredBoulderCount, 10);
+    let smallCount = scatteredSmallCount + nearSmall;
+    let boulderCount = scatteredBoulderCount + nearBoulder;
 
-    for (let attempt = 0; attempt < 260 && (smallCount < targetSmall || boulderCount < targetBoulders); attempt++) {
+    for (
+      let attempt = 0;
+      attempt < 240 && (smallCount < targetSmall || boulderCount < targetBoulders);
+      attempt++
+    ) {
       const ang = rng() * Math.PI * 2;
       const rad = 5.5 + Math.sqrt(rng()) * (worldR * 0.78);
       const x = Math.cos(ang) * rad;
       const z = Math.sin(ang) * rad;
       if (Math.hypot(x - heroStartX, z - heroStartZ) < 3.6) continue;
-      const wantBoulder = boulderCount < targetBoulders && (smallCount >= targetSmall || attempt % 3 === 0);
+      const wantBoulder =
+        boulderCount < targetBoulders && (smallCount >= targetSmall || attempt % 3 === 0);
       if (isSpotClean(x, z, wantBoulder ? 0.72 : 0.42)) {
         spawnRock(wantBoulder ? 'boulder' : 'rock', x, z, this.rocks.length);
         if (wantBoulder) boulderCount++;

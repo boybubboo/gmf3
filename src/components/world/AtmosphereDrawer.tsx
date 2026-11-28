@@ -480,7 +480,7 @@ export const AtmosphereDrawer: React.FC<{ store: MakerStore }> = ({ store }) => 
                   <div className="flex justify-between text-[11px] font-semibold">
                     <span className="text-slate-600 dark:text-[#C8D0E4]">Mist Elevation</span>
                     <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
-                      {(currentLevel.volumetricFogHeight !== undefined ? currentLevel.volumetricFogHeight : 3.2).toFixed(1)}m
+                      {(currentLevel.volumetricFogHeight !== undefined ? currentLevel.volumetricFogHeight : 2.2).toFixed(1)}m
                     </span>
                   </div>
                   <input
@@ -488,7 +488,7 @@ export const AtmosphereDrawer: React.FC<{ store: MakerStore }> = ({ store }) => 
                     min={-4}
                     max={20}
                     step={0.5}
-                    value={currentLevel.volumetricFogHeight !== undefined ? currentLevel.volumetricFogHeight : 3.2}
+                    value={currentLevel.volumetricFogHeight !== undefined ? currentLevel.volumetricFogHeight : 2.2}
                     onChange={(e) =>
                       store.updateLevel(
                         'adjust mist elevation',
@@ -502,9 +502,9 @@ export const AtmosphereDrawer: React.FC<{ store: MakerStore }> = ({ store }) => 
 
                 <div className="space-y-1 pt-1">
                   <div className="flex justify-between text-[11px] font-semibold">
-                    <span className="text-slate-600 dark:text-[#C8D0E4]">Edge Softness (Thickness)</span>
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Edge Spread (Transition)</span>
                     <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
-                      {(currentLevel.volumetricFogSoftness ?? 8.0).toFixed(1)}m
+                      {(currentLevel.volumetricFogSoftness ?? 8.5).toFixed(1)}m
                     </span>
                   </div>
                   <input
@@ -512,10 +512,10 @@ export const AtmosphereDrawer: React.FC<{ store: MakerStore }> = ({ store }) => 
                     min={1}
                     max={25}
                     step={0.5}
-                    value={currentLevel.volumetricFogSoftness ?? 8.0}
+                    value={currentLevel.volumetricFogSoftness ?? 8.5}
                     onChange={(e) =>
                       store.updateLevel(
-                        'adjust fog softness',
+                        'adjust fog spread',
                         (lvl) => ({ ...lvl, volumetricFogSoftness: Number(e.target.value) }),
                         false
                       )
@@ -526,9 +526,33 @@ export const AtmosphereDrawer: React.FC<{ store: MakerStore }> = ({ store }) => 
 
                 <div className="space-y-1 pt-1">
                   <div className="flex justify-between text-[11px] font-semibold">
-                    <span className="text-slate-600 dark:text-[#C8D0E4]">Boundary Noise &amp; Undulation</span>
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Edge Blur &harr; Crispness</span>
                     <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
-                      {Math.round((currentLevel.volumetricFogNoise ?? 0.85) * 100)}%
+                      {Math.round((currentLevel.volumetricFogSharpness ?? 0.3) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1.0}
+                    step={0.05}
+                    value={currentLevel.volumetricFogSharpness ?? 0.3}
+                    onChange={(e) =>
+                      store.updateLevel(
+                        'adjust fog edge sharpness',
+                        (lvl) => ({ ...lvl, volumetricFogSharpness: Number(e.target.value) }),
+                        false
+                      )
+                    }
+                    className="w-full accent-[#38BDF8]"
+                  />
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <div className="flex justify-between text-[11px] font-semibold">
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Noise Breakup &amp; Undulation</span>
+                    <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
+                      {Math.round((currentLevel.volumetricFogNoise ?? 0.95) * 100)}%
                     </span>
                   </div>
                   <input
@@ -536,7 +560,7 @@ export const AtmosphereDrawer: React.FC<{ store: MakerStore }> = ({ store }) => 
                     min={0}
                     max={2.0}
                     step={0.05}
-                    value={currentLevel.volumetricFogNoise ?? 0.85}
+                    value={currentLevel.volumetricFogNoise ?? 0.95}
                     onChange={(e) =>
                       store.updateLevel(
                         'adjust fog noise',
@@ -574,14 +598,14 @@ export const AtmosphereDrawer: React.FC<{ store: MakerStore }> = ({ store }) => 
 
                 <div className="space-y-1 pt-1">
                   <div className="flex justify-between text-[11px] font-semibold">
-                    <span className="text-slate-600 dark:text-[#C8D0E4]">Drift &amp; Movement Speed</span>
+                    <span className="text-slate-600 dark:text-[#C8D0E4]">Slow Drift Speed</span>
                     <span className="tabular-nums font-mono text-[10px] text-slate-500 dark:text-[#949BB0]">
                       {Math.round((currentLevel.volumetricFogSpeed ?? 0.75) * 100)}%
                     </span>
                   </div>
                   <input
                     type="range"
-                    min={0.1}
+                    min={0}
                     max={3.0}
                     step={0.05}
                     value={currentLevel.volumetricFogSpeed ?? 0.75}

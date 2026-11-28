@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import type {
+  FlowerMakerRecipe,
   ObjectGroupSpec,
   ObjectMakerDoc,
   ObjectPartSpec,
@@ -1317,9 +1318,12 @@ function getOrCreatePlantPatternMaps(
   baseHex: string,
   accentHex: string,
   tipHex: string,
-  emissiveHex: string
+  emissiveHex: string,
+  textureNoise = 0.2,
+  noiseSeed = 0
 ): { colorMap: THREE.CanvasTexture; emissiveMap?: THREE.CanvasTexture } {
-  const key = `${pattern}|${baseHex}|${accentHex}|${tipHex}|${emissiveHex}`;
+  const noiseQ = Math.round(THREE.MathUtils.clamp(textureNoise, 0, 1) * 10);
+  const key = `${pattern}|${baseHex}|${accentHex}|${tipHex}|${emissiveHex}|${noiseQ}|${noiseSeed}`;
   const existing = patternTextureCache.get(key);
   if (existing) return existing;
 
@@ -1333,7 +1337,7 @@ function getOrCreatePlantPatternMaps(
   if (pattern === 'gradientTip' || pattern === 'variegated' || pattern === 'veins') {
     const grad = ctx.createLinearGradient(0, size, 0, 0);
     grad.addColorStop(0, baseHex);
-    grad.addColorStop(0.58, baseHex);
+    grad.addColorStop(0.55, baseHex);
     grad.addColorStop(1, tipHex);
     ctx.fillStyle = grad;
   } else {
@@ -1341,14 +1345,28 @@ function getOrCreatePlantPatternMaps(
   }
   ctx.fillRect(0, 0, size, size);
 
-  // Subtle organic chlorophyll speckle noise
+  // Subtle to rich organic speckle / fiber noise
   const rand = mulberry32(hashSeed(key));
-  ctx.globalAlpha = 0.08;
-  for (let i = 0; i < 240; i++) {
-    ctx.fillStyle = i % 2 === 0 ? '#FFFFFF' : '#0B1910';
+  const speckleCount = Math.round(160 + noiseQ * 42);
+  ctx.globalAlpha = 0.05 + noiseQ * 0.025;
+  for (let i = 0; i < speckleCount; i++) {
+    ctx.fillStyle = i % 3 === 0 ? accentHex : i % 2 === 0 ? '#FFFFFF' : '#0B1910';
     ctx.beginPath();
-    ctx.arc(rand() * size, rand() * size, 1.5 + rand() * 5, 0, Math.PI * 2);
+    ctx.arc(rand() * size, rand() * size, 1.2 + rand() * (3.5 + noiseQ * 0.55), 0, Math.PI * 2);
     ctx.fill();
+  }
+  if (noiseQ > 1) {
+    ctx.globalAlpha = 0.03 + noiseQ * 0.015;
+    for (let i = 0; i < 40 + noiseQ * 8; i++) {
+      const rx = rand() * size;
+      const ry = rand() * size;
+      ctx.strokeStyle = i % 2 === 0 ? tipHex : '#141A18';
+      ctx.lineWidth = 1.2 + rand() * 2;
+      ctx.beginPath();
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(rx + (rand() - 0.5) * 14, ry - 8 - rand() * 20);
+      ctx.stroke();
+    }
   }
   ctx.globalAlpha = 1;
 
@@ -1524,7 +1542,15 @@ export function createPlantPartMaterial(
         : accentHex
       : '#000000';
 
-  const maps = getOrCreatePlantPatternMaps(pattern, baseHex, accentHex, tipHex, emissiveHex);
+  const maps = getOrCreatePlantPatternMaps(
+    pattern,
+    baseHex,
+    accentHex,
+    tipHex,
+    emissiveHex,
+    plantParams?.textureNoise ?? 0.2,
+    plantParams?.noiseSeed ?? 0
+  );
 
   const mat = new THREE.MeshStandardMaterial({
     color: '#FFFFFF',
@@ -1977,3 +2003,285 @@ export const PLANT_STARTER_PRESETS: PlantStarterPreset[] = [
     },
   },
 ];
+
+// ---------------------------------------------------------------------------
+// PARAMETRIC FLOWER MAKER RECIPES & 4 BUILT-IN PREMADE FLOWERS
+// ---------------------------------------------------------------------------
+
+export const FLOWER_STARTER_RECIPES: FlowerMakerRecipe[] = [
+  {
+    id: 'meadowBlossom',
+    name: 'Meadow Blossom',
+    petalCount: 8,
+    petalShape: 'petalRuffled',
+    colorMode: 'gradient',
+    primaryColor: '#EC4899',
+    secondaryColor: '#FCE7F3',
+    petalPattern: 'gradientTip',
+    textureNoise: 0.3,
+    petalLength: 0.62,
+    petalWidth: 0.46,
+    petalDroop: 0.08,
+    petalCup: 0.36,
+    petalRuffle: 0.48,
+    stamenColor: '#F59E0B',
+    stamenSize: 1.0,
+    stemHeight: 1.12,
+    stemColor: '#3D8442',
+    stemDroop: 0.16,
+    leafColor: '#368C4D',
+    leafCountMin: 2,
+    leafCountMax: 4,
+    leafScale: 0.95,
+    seed: 319,
+  },
+  {
+    id: 'sunlitDaisy',
+    name: 'Sunlit Daisy',
+    petalCount: 12,
+    petalShape: 'petalRound',
+    colorMode: 'gradient',
+    primaryColor: '#F8FAFC',
+    secondaryColor: '#FEF3C7',
+    petalPattern: 'gradientTip',
+    textureNoise: 0.22,
+    petalLength: 0.56,
+    petalWidth: 0.3,
+    petalDroop: 0.12,
+    petalCup: 0.24,
+    petalRuffle: 0.12,
+    stamenColor: '#FACC15',
+    stamenSize: 1.25,
+    stemHeight: 0.96,
+    stemColor: '#488D44',
+    stemDroop: 0.12,
+    leafColor: '#429B52',
+    leafCountMin: 2,
+    leafCountMax: 3,
+    leafScale: 0.85,
+    seed: 412,
+  },
+  {
+    id: 'violetOrchid',
+    name: 'Violet Orchid',
+    petalCount: 6,
+    petalShape: 'petalOrchid',
+    colorMode: 'gradient',
+    primaryColor: '#9333EA',
+    secondaryColor: '#F5D0FE',
+    petalPattern: 'spotted',
+    textureNoise: 0.42,
+    petalLength: 0.68,
+    petalWidth: 0.5,
+    petalDroop: 0.18,
+    petalCup: 0.4,
+    petalRuffle: 0.36,
+    stamenColor: '#FDE047',
+    stamenSize: 0.95,
+    stemHeight: 1.28,
+    stemColor: '#2E7245',
+    stemDroop: 0.26,
+    leafColor: '#2B7D48',
+    leafCountMin: 2,
+    leafCountMax: 5,
+    leafScale: 1.05,
+    seed: 527,
+  },
+  {
+    id: 'crimsonTulip',
+    name: 'Crimson Tulip',
+    petalCount: 6,
+    petalShape: 'petalPointed',
+    colorMode: 'gradient',
+    primaryColor: '#E11D48',
+    secondaryColor: '#FDBA74',
+    petalPattern: 'striped',
+    textureNoise: 0.28,
+    petalLength: 0.64,
+    petalWidth: 0.4,
+    petalDroop: -0.22,
+    petalCup: 0.55,
+    petalRuffle: 0.08,
+    stamenColor: '#FDE68A',
+    stamenSize: 0.8,
+    stemHeight: 1.04,
+    stemColor: '#3A7D4C',
+    stemDroop: 0.06,
+    leafColor: '#368757',
+    leafCountMin: 2,
+    leafCountMax: 3,
+    leafScale: 1.0,
+    seed: 681,
+  },
+];
+
+export function createDefaultFlowerRecipe(): FlowerMakerRecipe {
+  return { ...FLOWER_STARTER_RECIPES[0], seed: Math.floor(Math.random() * 9000 + 100) };
+}
+
+export function buildFlowerDocFromRecipe(recipe: FlowerMakerRecipe): ObjectMakerDoc {
+  const rand = mulberry32(recipe.seed || 319);
+  const stemHeight = THREE.MathUtils.clamp(recipe.stemHeight, 0.38, 2.4);
+  const stemDroop = THREE.MathUtils.clamp(recipe.stemDroop, 0, 0.7);
+  const crownOffsetX = Math.sin(stemDroop * Math.PI * 0.45) * (stemHeight * 0.24);
+  const crownY = Math.max(0.28, stemHeight * (1 - stemDroop * 0.14));
+
+  const stemPart = createDefaultPlantPartSpec('stemCurved', {
+    name: 'Flower_Stem',
+    position: [0, 0, 0],
+    dimensions: [0.11, stemHeight, 0.11],
+    plantParams: {
+      pattern: 'solid',
+      droop: stemDroop,
+      twist: 0.08,
+      textureNoise: recipe.textureNoise * 0.35,
+      noiseSeed: recipe.seed,
+      doubleSided: false,
+    },
+    material: {
+      color: recipe.stemColor || '#3D8442',
+      roughness: 0.54,
+      metalness: 0.02,
+    },
+  });
+
+  const tipCol =
+    recipe.colorMode === 'single' ? recipe.primaryColor : recipe.secondaryColor;
+  const accentCol =
+    recipe.colorMode === 'single' ? recipe.stamenColor : recipe.secondaryColor;
+
+  const petalCluster = createClusterGroupAndParts(
+    {
+      target: 'petal',
+      shape: recipe.petalShape,
+      count: Math.max(3, Math.min(18, Math.round(recipe.petalCount))),
+      layout: 'fan',
+      symmetrical: true,
+      randomness: 0.14,
+      fanAngleDeg: recipe.petalDroop < -0.1 ? 38 : 66,
+      arcSpanDeg: 360,
+      centerRadius: 0.06,
+      hubHeight: crownY,
+      minScale: 0.92,
+      maxScale: 1.08,
+      tierLayers: recipe.petalCount >= 11 ? 2 : 1,
+      includeFlowerCore: true,
+      coreColor: recipe.stamenColor,
+      baseDimensions: [
+        Math.max(0.16, recipe.petalWidth),
+        0.16,
+        Math.max(0.24, recipe.petalLength),
+      ],
+      basePlant: {
+        pattern:
+          recipe.colorMode === 'single' && recipe.petalPattern === 'gradientTip'
+            ? 'solid'
+            : recipe.petalPattern,
+        accentColor: accentCol,
+        tipColor: tipCol,
+        droop: recipe.petalDroop,
+        cup: recipe.petalCup,
+        ruffle: recipe.petalRuffle,
+        asymSkew: recipe.petalShape === 'petalOrchid' ? 0.38 : 0,
+        textureNoise: recipe.textureNoise,
+        noiseSeed: recipe.seed,
+        doubleSided: true,
+      },
+      baseColor: recipe.primaryColor,
+      seed: recipe.seed,
+    },
+    'Flower_Crown'
+  );
+
+  // Offset flower crown & core along stem arch so petals always sit cleanly on stem tip
+  petalCluster.group.position[0] += crownOffsetX;
+  for (const part of petalCluster.parts) {
+    part.position = [
+      Number((part.position[0] + crownOffsetX).toFixed(4)),
+      part.position[1],
+      part.position[2],
+    ];
+    if (part.shape === 'flowerCenter') {
+      const s = THREE.MathUtils.clamp(recipe.stamenSize, 0.35, 2.0);
+      part.dimensions = [
+        Number((part.dimensions[0] * s).toFixed(3)),
+        Number((part.dimensions[1] * s).toFixed(3)),
+        Number((part.dimensions[2] * s).toFixed(3)),
+      ];
+      part.plantParams = {
+        ...part.plantParams,
+        textureNoise: recipe.textureNoise,
+        noiseSeed: recipe.seed + 7,
+      };
+    }
+  }
+
+  // Leaves distributed along the stem between min..max range
+  const minL = Math.max(0, Math.min(8, Math.round(recipe.leafCountMin)));
+  const maxL = Math.max(minL, Math.min(10, Math.round(recipe.leafCountMax)));
+  const leafCount = minL + Math.floor(rand() * (maxL - minL + 1));
+  const leafParts: ObjectPartSpec[] = [];
+  for (let i = 0; i < leafCount; i++) {
+    const t = leafCount === 1 ? 0.38 : 0.14 + (i / (leafCount - 1)) * 0.52;
+    const lx = Math.sin(stemDroop * Math.PI * 0.45 * t) * (stemHeight * 0.22);
+    const ly = stemHeight * t;
+    const yawDeg = Number(((i * 137.5 + rand() * 36) % 360).toFixed(1));
+    const ls = THREE.MathUtils.clamp(recipe.leafScale * (0.85 + rand() * 0.28), 0.35, 1.8);
+    leafParts.push(
+      createDefaultPlantPartSpec('leafTeardrop', {
+        name: `Stem_Leaf_${i + 1}`,
+        position: [Number(lx.toFixed(3)), Number(ly.toFixed(3)), 0],
+        rotation: [Number((-26 + rand() * 14).toFixed(1)), yawDeg, 0],
+        dimensions: [
+          Number((0.42 * ls).toFixed(3)),
+          Number((0.14 * ls).toFixed(3)),
+          Number((0.76 * ls).toFixed(3)),
+        ],
+        plantParams: {
+          pattern: 'veins',
+          accentColor: '#A2E382',
+          tipColor: recipe.leafColor,
+          droop: 0.34,
+          cup: 0.26,
+          ruffle: 0.08,
+          textureNoise: recipe.textureNoise * 0.65,
+          noiseSeed: recipe.seed + i * 13,
+          doubleSided: true,
+        },
+        material: {
+          color: recipe.leafColor || '#368C4D',
+          roughness: 0.48,
+          metalness: 0.02,
+        },
+      })
+    );
+  }
+
+  return {
+    version: 1,
+    groups: [petalCluster.group],
+    parts: [stemPart, ...petalCluster.parts, ...leafParts],
+  };
+}
+
+export interface BotanicalScatterOption {
+  key: string;
+  label: string;
+  kind: 'flower' | 'plant';
+  source: 'builtin' | 'custom';
+  customAssetId?: string;
+}
+
+export function buildBotanicalPresetDocByKey(key: string): ObjectMakerDoc | null {
+  if (key.startsWith('flower:')) {
+    const id = key.slice('flower:'.length);
+    const found = FLOWER_STARTER_RECIPES.find((f) => f.id === id);
+    return found ? buildFlowerDocFromRecipe(found) : null;
+  }
+  if (key.startsWith('plant:')) {
+    const id = key.slice('plant:'.length);
+    const found = PLANT_STARTER_PRESETS.find((p) => p.id === id);
+    return found ? found.build() : null;
+  }
+  return null;
+}

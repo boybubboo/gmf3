@@ -115,6 +115,7 @@ const SKY_MOOD_OPTIONS: { id: SkyPresetId; label: string }[] = [
 const WEATHER_OPTIONS: { id: WeatherKind; label: string }[] = [
   { id: 'none', label: 'Clear' },
   { id: 'rain', label: 'Rain' },
+  { id: 'storm', label: 'Stormy' },
   { id: 'snow', label: 'Snow' },
   { id: 'fireflies', label: 'Fireflies' },
   { id: 'leaves', label: 'Leaves' },
@@ -543,11 +544,82 @@ export const SkyboxLightingEditorModal: React.FC<SkyboxLightingEditorModalProps>
           </div>
 
           <SliderRow
-            icon={<Wind size={12} />}
-            label="Cloud Drift & Wind"
-            valueText={`${Math.round(wind * 100)}%`}
+            label="Edge Softness"
+            valueText={`${Math.round((level.cloudSoftness ?? 0.72) * 100)}%`}
             min={0}
             max={1}
+            step={0.02}
+            value={level.cloudSoftness ?? 0.72}
+            onChange={(v) => patchLevel('cloud softness', { cloudSoftness: v }, false)}
+          />
+
+          <SliderRow
+            label="Cloud Opacity"
+            valueText={`${Math.round((level.cloudOpacity ?? 0.85) * 100)}%`}
+            min={0}
+            max={1}
+            step={0.02}
+            value={level.cloudOpacity ?? 0.85}
+            onChange={(v) => patchLevel('cloud opacity', { cloudOpacity: v }, false)}
+          />
+
+          <SliderRow
+            label="Cloud Height"
+            valueText={`${Math.round(level.cloudHeight ?? 0)}m`}
+            min={-20}
+            max={60}
+            step={1}
+            value={level.cloudHeight ?? 0}
+            onChange={(v) => patchLevel('cloud height', { cloudHeight: v }, false)}
+          />
+
+          <SliderRow
+            icon={<Wind size={12} />}
+            label="Cloud Movement Speed"
+            valueText={`${Math.round((level.cloudSpeed ?? 1.0) * 100)}%`}
+            min={0}
+            max={3}
+            step={0.05}
+            value={level.cloudSpeed ?? 1.0}
+            onChange={(v) => patchLevel('cloud speed', { cloudSpeed: v }, false)}
+          />
+
+          <div className="grid grid-cols-2 gap-1.5 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                const next = !(level.stormClouds ?? (level.weather === 'storm' || level.sky === 'storm'));
+                patchLevel('toggle storm clouds', { stormClouds: next, stormLightning: next }, true);
+              }}
+              className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition-colors whitespace-nowrap ${
+                level.stormClouds ?? (level.weather === 'storm' || level.sky === 'storm')
+                  ? 'bg-[#6366F1] text-white'
+                  : 'bg-slate-100 dark:bg-[#1F2430] text-slate-600 dark:text-[#949BB0]'
+              }`}
+            >
+              Storm Clouds
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                patchLevel('toggle aurora borealis', { auroraEnabled: !(level.auroraEnabled ?? false) }, true)
+              }
+              className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition-colors whitespace-nowrap ${
+                level.auroraEnabled
+                  ? 'bg-[#10B981] text-white'
+                  : 'bg-slate-100 dark:bg-[#1F2430] text-slate-600 dark:text-[#949BB0]'
+              }`}
+            >
+              Aurora Borealis
+            </button>
+          </div>
+
+          <SliderRow
+            icon={<Wind size={12} />}
+            label="Wind Strength"
+            valueText={`${Math.round(wind * 100)}%`}
+            min={0}
+            max={2}
             step={0.05}
             value={wind}
             onChange={(v) => patchLevel('wind speed', { wind: v }, false)}
@@ -663,14 +735,31 @@ export const SkyboxLightingEditorModal: React.FC<SkyboxLightingEditorModalProps>
               <CloudRain size={12} />
               <span>Weather</span>
             </h3>
-            <div className="grid grid-cols-5 gap-1">
+            <div className="grid grid-cols-3 gap-1">
               {WEATHER_OPTIONS.map((w) => {
                 const active = level.weather === w.id;
                 return (
                   <button
                     key={w.id}
                     type="button"
-                    onClick={() => patchLevel(`weather: ${w.label}`, { weather: w.id }, true)}
+                    onClick={() =>
+                      patchLevel(
+                        `weather: ${w.label}`,
+                        w.id === 'storm'
+                          ? {
+                              weather: 'storm',
+                              wind: Math.max(level.wind ?? 0.45, 1.15),
+                              cloudDensity: Math.max(level.cloudDensity ?? 0.55, 0.88),
+                              stormClouds: true,
+                              stormLightning: level.stormLightning ?? true,
+                            }
+                          : {
+                              weather: w.id,
+                              stormClouds: level.weather === 'storm' ? undefined : level.stormClouds,
+                            },
+                        true
+                      )
+                    }
                     className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-colors whitespace-nowrap ${
                       active
                         ? 'bg-[#7C5CFF] text-white'

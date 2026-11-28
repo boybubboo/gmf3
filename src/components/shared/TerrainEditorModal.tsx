@@ -13,6 +13,7 @@ import {
   Redo2,
   RotateCcw,
   Sparkles,
+  Sprout,
   Trees,
   Undo2,
   Wand2,
@@ -121,6 +122,7 @@ const SCATTER_BRUSHES: { id: TerrainBrush; label: string; icon: React.ReactNode 
   { id: 'scatterTree', label: 'Trees', icon: <Trees size={13} /> },
   { id: 'scatterRock', label: 'Rocks', icon: <Mountain size={13} /> },
   { id: 'scatterFlower', label: 'Flowers', icon: <Flower2 size={13} /> },
+  { id: 'scatterPlant', label: 'Plants', icon: <Sprout size={13} /> },
   { id: 'scatterCustom', label: 'Custom GLB', icon: <Box size={13} /> },
 ];
 
@@ -224,6 +226,8 @@ export function getTerrainBrushLabel(brush: TerrainBrush): string {
       return 'Rocks';
     case 'scatterFlower':
       return 'Flowers';
+    case 'scatterPlant':
+      return 'Plants';
     case 'scatterCustom':
       return 'Custom GLB';
     default:
